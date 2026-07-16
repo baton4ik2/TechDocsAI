@@ -29,6 +29,7 @@ public class DocumentProcessingService {
     private final DocumentChunkRepository chunkRepository;
     private final FileStorage fileStorage;
     private final TextExtractor textExtractor;
+    private final OcrExtractor ocrExtractor;
     private final TextChunker textChunker;
     private final XlsxEquipmentExtractor equipmentExtractor;
     private final EquipmentRepository equipmentRepository;
@@ -57,20 +58,31 @@ public class DocumentProcessingService {
                 result = textExtractor.extract(document.getOriginalFilename(), document.getMimeType(), input);
             }
 
+            boolean ocrUsed = false;
+            List<PageText> pages = result.pages();
+
             if (result.needsOcr()) {
-                document.setStatus(Document.STATUS_NEEDS_OCR);
-                document.setErrorMessage("Не удалось извлечь текст. Возможно, документ является сканом — требуется OCR.");
-                document.setPageCount(result.pages().size());
-                documentRepository.save(document);
-                return;
+                if (!ocrExtractor.isAvailable()) {
+                    document.setStatus(Document.STATUS_NEEDS_OCR);
+                    document.setErrorMessage("Документ является сканом, а OCR недоступен: " +
+                            "установите tesseract-ocr и tesseract-ocr-rus, затем запустите повторную обработку.");
+                    document.setPageCount(result.pages().size());
+                    documentRepository.save(document);
+                    return;
+                }
+                log.info("Документ {} — скан, запускаю OCR", document.getName());
+                try (InputStream input = fileStorage.load(document.getStoragePath())) {
+                    pages = ocrExtractor.extract(document.getOriginalFilename(), input);
+                }
+                ocrUsed = true;
             }
 
-            List<PageText> pages = result.pages();
             for (PageText pageText : pages) {
                 DocumentPage page = new DocumentPage();
                 page.setDocumentId(documentId);
                 page.setPageNumber(pageText.pageNumber());
                 page.setText(pageText.text());
+                page.setOcrUsed(ocrUsed);
                 pageRepository.save(page);
             }
 

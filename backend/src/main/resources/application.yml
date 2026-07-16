@@ -40,6 +40,12 @@ techdocs:
   document:
     max-file-size-mb: 100
     max-pages: 500
+  ocr:
+    command: ${OCR_COMMAND:tesseract}
+    languages: ${OCR_LANGUAGES:rus+eng}
+    dpi: ${OCR_DPI:200}
+    max-pages: ${OCR_MAX_PAGES:100}
+    page-timeout-seconds: ${OCR_PAGE_TIMEOUT:120}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
 
