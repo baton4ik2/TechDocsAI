@@ -1,0 +1,124 @@
+import { FormEvent, useEffect, useRef, useState } from 'react'
+import { api } from '../api'
+import { ChatMessageDto } from '../types'
+
+interface Props {
+  facilityId?: number
+  systemId?: number
+  documentId?: number
+  placeholder?: string
+}
+
+export default function ChatPanel({ facilityId, systemId, documentId, placeholder }: Props) {
+  const [chatId, setChatId] = useState<number | null>(null)
+  const [messages, setMessages] = useState<ChatMessageDto[]>([])
+  const [question, setQuestion] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  // при смене области поиска начинаем новый диалог
+  useEffect(() => {
+    setChatId(null)
+    setMessages([])
+  }, [facilityId, systemId, documentId])
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, loading])
+
+  const send = async (e: FormEvent) => {
+    e.preventDefault()
+    const q = question.trim()
+    if (!q || loading) return
+    setQuestion('')
+    setError('')
+    setLoading(true)
+
+    const userMessage: ChatMessageDto = {
+      id: Date.now(), role: 'user', content: q, createdAt: new Date().toISOString(), sources: [],
+    }
+    setMessages((prev) => [...prev, userMessage])
+
+    try {
+      let id = chatId
+      if (!id) {
+        const chat = await api.post<{ id: number }>('/api/chats', {
+          facilityId, engineeringSystemId: systemId, documentId,
+        })
+        id = chat.id
+        setChatId(id)
+      }
+      const answer = await api.post<ChatMessageDto>(`/api/chats/${id}/messages`, { question: q })
+      setMessages((prev) => [...prev, answer])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col h-full min-h-[480px]">
+      <div className="flex-1 overflow-y-auto space-y-4 p-4">
+        {messages.length === 0 && (
+          <div className="text-center text-slate-400 py-16 text-sm">
+            Задайте вопрос по загруженной документации.<br />
+            Например: «Сколько дымовых извещателей на объекте?»
+          </div>
+        )}
+        {messages.map((m) => (
+          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div
+              className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm whitespace-pre-wrap ${
+                m.role === 'user'
+                  ? 'bg-primary-600 text-white rounded-br-md'
+                  : 'bg-white border border-slate-200 text-slate-800 rounded-bl-md shadow-sm'
+              }`}
+            >
+              {m.content}
+              {m.sources.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-slate-100 space-y-1">
+                  <div className="text-xs font-medium text-slate-500">Источники:</div>
+                  {m.sources.map((s, i) => (
+                    <a
+                      key={i}
+                      href={`/api/documents/${s.documentId}/download`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block text-xs text-primary-600 hover:underline"
+                    >
+                      {i + 1}. {s.documentName}{s.pageNumber ? `, стр. ${s.pageNumber}` : ''}
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div className="flex justify-start">
+            <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-md px-4 py-3 text-sm text-slate-400 shadow-sm">
+              Ищу ответ в документации…
+            </div>
+          </div>
+        )}
+        {error && <div className="text-sm text-red-600 text-center">{error}</div>}
+        <div ref={bottomRef} />
+      </div>
+
+      <form onSubmit={send} className="p-4 border-t border-slate-200 bg-white flex gap-2">
+        <input
+          className="input flex-1"
+          placeholder={placeholder ?? 'Введите вопрос…'}
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          disabled={loading}
+        />
+        <button type="submit" className="btn-primary" disabled={loading || !question.trim()}>
+          ➤
+        </button>
+      </form>
+    </div>
+  )
+}
