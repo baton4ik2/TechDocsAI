@@ -19,20 +19,57 @@ public class EquipmentController {
 
     private final EquipmentRepository equipmentRepository;
     private final EquipmentSourceRepository sourceRepository;
+    private final ru.techdocs.document.DocumentRepository documentRepository;
 
     public record EquipmentRequest(Long facilityId, Long engineeringSystemId, String manufacturer,
                                    @NotBlank String name, String model, String modification,
                                    BigDecimal quantity, String unit, String location,
                                    String comment, String status) {}
 
+    public record SourceRef(Long documentId, String documentName, Integer pageNumber) {}
+
+    public record EquipmentDto(Long id, Long facilityId, Long engineeringSystemId,
+                               String manufacturer, String name, String model, String modification,
+                               java.math.BigDecimal quantity, String unit, String location,
+                               String comment, String status, java.time.Instant createdAt,
+                               List<SourceRef> sources) {}
+
     @GetMapping
-    public List<Equipment> list(@RequestParam(required = false) Long facilityId,
-                                @RequestParam(required = false) Long systemId,
-                                @RequestParam(required = false) String search) {
-        if (search != null && !search.isBlank()) {
-            return equipmentRepository.searchByTerm(facilityId, systemId, search.trim());
-        }
-        return equipmentRepository.findFiltered(facilityId, systemId);
+    public List<EquipmentDto> list(@RequestParam(required = false) Long facilityId,
+                                   @RequestParam(required = false) Long systemId,
+                                   @RequestParam(required = false) String search) {
+        List<Equipment> items = (search != null && !search.isBlank())
+                ? equipmentRepository.searchByTerm(facilityId, systemId, search.trim())
+                : equipmentRepository.findFiltered(facilityId, systemId);
+        if (items.isEmpty()) return List.of();
+
+        // источники всех позиций одним запросом + имена документов
+        var sourcesByEquipment = sourceRepository
+                .findByEquipmentIdIn(items.stream().map(Equipment::getId).toList())
+                .stream()
+                .collect(java.util.stream.Collectors.groupingBy(EquipmentSource::getEquipmentId));
+        var documentNames = documentRepository
+                .findAllById(sourcesByEquipment.values().stream()
+                        .flatMap(List::stream)
+                        .map(EquipmentSource::getDocumentId)
+                        .distinct()
+                        .toList())
+                .stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        ru.techdocs.document.Document::getId,
+                        ru.techdocs.document.Document::getOriginalFilename));
+
+        return items.stream().map(e -> new EquipmentDto(
+                e.getId(), e.getFacilityId(), e.getEngineeringSystemId(),
+                e.getManufacturer(), e.getName(), e.getModel(), e.getModification(),
+                e.getQuantity(), e.getUnit(), e.getLocation(),
+                e.getComment(), e.getStatus(), e.getCreatedAt(),
+                sourcesByEquipment.getOrDefault(e.getId(), List.of()).stream()
+                        .map(s -> new SourceRef(s.getDocumentId(),
+                                documentNames.getOrDefault(s.getDocumentId(), "Документ #" + s.getDocumentId()),
+                                s.getPageNumber()))
+                        .toList()
+        )).toList();
     }
 
     @GetMapping("/{id}")

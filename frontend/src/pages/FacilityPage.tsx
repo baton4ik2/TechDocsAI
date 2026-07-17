@@ -546,6 +546,7 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
               <th className="px-3 py-3 font-medium">Наименование</th>
               <th className="px-3 py-3 font-medium">Модель</th>
               <th className="px-3 py-3 font-medium text-right">Кол-во</th>
+              <th className="px-3 py-3 font-medium">Источник</th>
               <th className="px-3 py-3 font-medium">Статус</th>
               <th className="px-3 py-3"></th>
             </tr>
@@ -560,6 +561,25 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
                 <td className="px-3 py-2 text-slate-800">{item.name ?? '—'}</td>
                 <td className="px-3 py-2 font-medium text-slate-800">{item.model ?? '—'}</td>
                 <td className="px-3 py-2 text-right text-slate-800">{item.quantity} {item.unit}</td>
+                <td className="px-3 py-2">
+                  {item.sources && item.sources.length > 0 ? (
+                    <div className="space-y-0.5">
+                      {item.sources.map((s, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => openDocument(s.documentId, s.pageNumber)}
+                          title={`Открыть ${s.documentName}${s.pageNumber ? ` на стр. ${s.pageNumber}` : ''}`}
+                          className="block text-xs text-primary-600 hover:underline text-left"
+                        >
+                          📄 {s.documentName}{s.pageNumber ? `, стр. ${s.pageNumber}` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-slate-300">вручную</span>
+                  )}
+                </td>
                 <td className="px-3 py-2"><StatusBadge status={item.status} /></td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
                   {item.status !== 'CONFIRMED' && (
@@ -574,7 +594,7 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
               </tr>
             ))}
             {items.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-12 text-center text-slate-400">
+              <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-400">
                 Оборудования нет. Загрузите Excel-спецификацию — данные будут извлечены автоматически, либо добавьте вручную.
               </td></tr>
             )}

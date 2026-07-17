@@ -42,6 +42,12 @@ export interface Doc {
   createdAt: string
 }
 
+export interface EquipmentSourceRef {
+  documentId: number
+  documentName: string
+  pageNumber?: number
+}
+
 export interface Equipment {
   id: number
   facilityId: number
@@ -55,6 +61,7 @@ export interface Equipment {
   location?: string
   comment?: string
   status: string
+  sources?: EquipmentSourceRef[]
 }
 
 export interface Chat {
