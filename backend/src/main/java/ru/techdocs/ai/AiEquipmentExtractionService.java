@@ -18,7 +18,6 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
  * Извлечение позиций оборудования из обработанных документов (включая OCR-сканы)
@@ -30,10 +29,6 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 @Slf4j
 public class AiEquipmentExtractionService {
-
-    private static final Pattern CANDIDATE_PAGE = Pattern.compile(
-            "(ведомост|спецификац|кол-во|кол\\.|количество|перечень оборудован|смонтированн)",
-            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     private static final int MAX_PAGES_PER_RUN = 10;
     private static final int MAX_PAGE_CHARS = 6000;
@@ -71,10 +66,16 @@ public class AiEquipmentExtractionService {
         Document document = documentRepository.findById(documentId).orElse(null);
         if (document == null) return;
 
+        // Ранжируем страницы по признакам ведомости/спецификации и берём самые
+        // насыщенные — «первые N по номеру» пропускали ведомость в конце документа.
         List<DocumentPage> candidates = pageRepository.findByDocumentIdOrderByPageNumber(documentId).stream()
                 .filter(p -> p.getText() != null && !p.getText().isBlank())
-                .filter(p -> CANDIDATE_PAGE.matcher(p.getText()).find())
+                .map(p -> Map.entry(p, candidateScore(p.getText())))
+                .filter(e -> e.getValue() > 0)
+                .sorted((a, b) -> b.getValue() - a.getValue())
                 .limit(MAX_PAGES_PER_RUN)
+                .map(Map.Entry::getKey)
+                .sorted(java.util.Comparator.comparingInt(DocumentPage::getPageNumber))
                 .toList();
 
         if (candidates.isEmpty()) {
@@ -109,6 +110,31 @@ public class AiEquipmentExtractionService {
     }
 
     private record PageResult(int created, int skippedDuplicates) {}
+
+    /**
+     * Оценка «похожести» страницы на ведомость/спецификацию оборудования.
+     * Сильные признаки — заголовки таблиц, слабые — упоминания единиц измерения.
+     */
+    private int candidateScore(String text) {
+        String lower = text.toLowerCase(Locale.ROOT);
+        int score = 0;
+        if (lower.contains("ведомост")) score += 5;
+        if (lower.contains("смонтированн")) score += 4;
+        if (lower.contains("спецификац")) score += 3;
+        if (lower.contains("перечень оборудован")) score += 3;
+        if (lower.contains("кол-во") || lower.contains("количество") || lower.contains("кол.")) score += 2;
+        // плотность единиц измерения: у таблиц с оборудованием "шт" встречается много раз
+        int idx = 0;
+        int count = 0;
+        while ((idx = lower.indexOf("шт", idx)) >= 0 && count < 10) {
+            count++;
+            idx += 2;
+        }
+        score += Math.min(count, 10);
+        // страницы без цифр бесполезны для количеств
+        if (lower.chars().noneMatch(Character::isDigit)) score = 0;
+        return score;
+    }
 
     private PageResult extractFromPage(Document document, DocumentPage page) throws Exception {
         String text = page.getText();

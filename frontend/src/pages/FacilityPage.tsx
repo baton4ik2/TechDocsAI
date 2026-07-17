@@ -221,6 +221,23 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
     })
   }, [onChange])
 
+  // восстановление прогресса после перезахода на вкладку или обновления страницы:
+  // извлечение продолжается на сервере, подтягиваем его состояние
+  useEffect(() => {
+    documents
+      .filter((d) => d.status === 'READY')
+      .forEach((d) => {
+        api.get<ExtractProgress>(`/api/documents/${d.id}/extract-equipment/status`).then((p) => {
+          if (p.status === 'NONE') return
+          setExtractProgress((prev) => ({ ...prev, [d.id]: p }))
+          if (p.status === 'RUNNING' && !extractTimers.current[d.id]) {
+            extractTimers.current[d.id] = window.setTimeout(() => pollExtractStatus(d.id), 2000)
+          }
+        })
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documents.map((d) => d.id).join(',')])
+
   useEffect(() => () => {
     Object.values(extractTimers.current).forEach((t) => window.clearTimeout(t))
   }, [])
