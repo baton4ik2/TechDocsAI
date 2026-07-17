@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { api } from '../api'
+import { api, openDocument } from '../api'
 import { Doc, DocumentType, EngineeringSystem, Equipment, Facility } from '../types'
 import ChatPanel from '../components/ChatPanel'
 import Modal from '../components/Modal'
@@ -233,10 +233,10 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
             {documents.map((d) => (
               <tr key={d.id} className="border-b border-slate-50 hover:bg-slate-50/50">
                 <td className="px-4 py-3">
-                  <a href={`/api/documents/${d.id}/download`} target="_blank" rel="noreferrer"
-                     className="text-slate-800 hover:text-primary-600 font-medium">
+                  <button type="button" onClick={() => openDocument(d.id)}
+                          className="text-slate-800 hover:text-primary-600 font-medium text-left">
                     📄 {d.originalFilename}
-                  </a>
+                  </button>
                   {d.errorMessage && <div className="text-xs text-red-500 mt-1">{d.errorMessage}</div>}
                 </td>
                 <td className="px-4 py-3 text-slate-500">

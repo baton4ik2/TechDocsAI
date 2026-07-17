@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
-import { api } from '../api'
+import { api, openDocument } from '../api'
 import { ChatMessageDto } from '../types'
 
 interface Props {
@@ -81,15 +81,14 @@ export default function ChatPanel({ facilityId, systemId, documentId, placeholde
                 <div className="mt-3 pt-3 border-t border-slate-100 space-y-1">
                   <div className="text-xs font-medium text-slate-500">Источники:</div>
                   {m.sources.map((s, i) => (
-                    <a
+                    <button
                       key={i}
-                      href={`/api/documents/${s.documentId}/download`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="block text-xs text-primary-600 hover:underline"
+                      type="button"
+                      onClick={() => openDocument(s.documentId, s.pageNumber).catch(() => setError('Не удалось открыть документ'))}
+                      className="block text-xs text-primary-600 hover:underline text-left"
                     >
                       {i + 1}. {s.documentName}{s.pageNumber ? `, стр. ${s.pageNumber}` : ''}
-                    </a>
+                    </button>
                   ))}
                 </div>
               )}

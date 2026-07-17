@@ -43,6 +43,23 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json()
 }
 
+/**
+ * Открывает документ в новой вкладке. Прямая ссылка на /download не работает —
+ * браузер не передаёт JWT из localStorage, поэтому качаем файл авторизованным
+ * запросом и открываем как blob. `page` — переход к странице PDF (#page=N).
+ */
+export async function openDocument(documentId: number, page?: number | null) {
+  const response = await fetch(`/api/documents/${documentId}/download`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  if (!response.ok) throw new ApiError(response.status, 'Не удалось открыть документ')
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  window.open(page ? `${url}#page=${page}` : url, '_blank')
+  // отложенная очистка: вкладка уже получила содержимое
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>
