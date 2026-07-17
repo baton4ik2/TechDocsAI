@@ -29,10 +29,10 @@ public class AiClient {
                 || baseUrl.contains("localhost") || baseUrl.contains("127.0.0.1")
                 || baseUrl.contains("ollama");
 
-        // локальные модели (Ollama) могут отвечать долго — щедрый таймаут чтения
+        // локальные модели (Ollama) на CPU могут отвечать очень долго — щедрый таймаут чтения
         var requestFactory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(5_000);
-        requestFactory.setReadTimeout(180_000);
+        requestFactory.setReadTimeout(600_000);
 
         RestClient.Builder builder = RestClient.builder()
                 .baseUrl(baseUrl)

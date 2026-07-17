@@ -15,6 +15,7 @@ interface ExtractProgress {
   processedPages: number
   created: number
   skippedDuplicates: number
+  failedPages?: number
   error: string | null
 }
 
@@ -412,16 +413,18 @@ function ExtractProgressBar({ progress }: { progress?: ExtractProgress }) {
   }
 
   // DONE
+  const hasResult = progress.created > 0 || progress.skippedDuplicates > 0
   return (
-    <div className="mt-1 text-xs">
-      {progress.error ? (
-        <span className="text-amber-600">{progress.error}</span>
-      ) : (
+    <div className="mt-1 text-xs space-y-0.5">
+      {hasResult && (
         <span className="text-emerald-600">
           ✓ Добавлено позиций: {progress.created}
           {progress.skippedDuplicates > 0 && `, пропущено дубликатов: ${progress.skippedDuplicates}`}
           {' '}— проверьте вкладку «Оборудование»
         </span>
+      )}
+      {progress.error && (
+        <div className="text-amber-600">⚠ {progress.error}</div>
       )}
     </div>
   )

@@ -45,8 +45,8 @@ public class AiEquipmentExtractionService {
             new java.util.concurrent.ConcurrentHashMap<>();
 
     public record Progress(String status, int totalPages, int processedPages,
-                           int created, int skippedDuplicates, String error) {
-        static Progress none() { return new Progress("NONE", 0, 0, 0, 0, null); }
+                           int created, int skippedDuplicates, int failedPages, String error) {
+        static Progress none() { return new Progress("NONE", 0, 0, 0, 0, 0, null); }
     }
 
     public boolean isAvailable() {
@@ -93,32 +93,50 @@ public class AiEquipmentExtractionService {
             String reason = (requestedPages != null && !requestedPages.isEmpty())
                     ? "На указанных страницах нет распознанного текста."
                     : "Страниц с ведомостями или спецификациями в документе не найдено.";
-            progressMap.put(documentId, new Progress("DONE", 0, 0, 0, 0, reason));
+            progressMap.put(documentId, new Progress("DONE", 0, 0, 0, 0, 0, reason));
             log.info("Извлечение оборудования из «{}»: {}", document.getName(), reason);
             return;
         }
 
-        progressMap.put(documentId, new Progress("RUNNING", candidates.size(), 0, 0, 0, null));
+        progressMap.put(documentId, new Progress("RUNNING", candidates.size(), 0, 0, 0, 0, null));
         int created = 0;
         int skipped = 0;
         int processed = 0;
+        int failed = 0;
+        String lastError = null;
         for (DocumentPage page : candidates) {
             try {
                 PageResult result = extractFromPage(document, page);
                 created += result.created();
                 skipped += result.skippedDuplicates();
             } catch (Exception e) {
+                failed++;
+                lastError = e.getMessage();
                 log.warn("Извлечение оборудования: страница {} документа «{}» пропущена: {}",
                         page.getPageNumber(), document.getName(), e.getMessage());
             }
             processed++;
             progressMap.put(documentId,
-                    new Progress("RUNNING", candidates.size(), processed, created, skipped, null));
+                    new Progress("RUNNING", candidates.size(), processed, created, skipped, failed, null));
+        }
+
+        // если позиций нет — объясняем причину, а не молчим
+        String summary = null;
+        if (created == 0 && skipped == 0) {
+            if (failed == processed) {
+                summary = "Ни одна страница не обработана (" + lastError + "). " +
+                        "Проверьте, что ИИ-провайдер работает, и попробуйте ещё раз.";
+            } else {
+                summary = "Модель не нашла перечня оборудования на обработанных страницах. " +
+                        "Проверьте номера страниц и качество распознавания текста.";
+            }
+        } else if (failed > 0) {
+            summary = failed + " из " + processed + " страниц не обработаны — можно повторить запуск.";
         }
         progressMap.put(documentId,
-                new Progress("DONE", candidates.size(), processed, created, skipped, null));
-        log.info("Извлечение оборудования из «{}» завершено: {} позиций добавлено, {} дубликатов пропущено",
-                document.getName(), created, skipped);
+                new Progress("DONE", candidates.size(), processed, created, skipped, failed, summary));
+        log.info("Извлечение оборудования из «{}» завершено: {} добавлено, {} дубликатов, {} страниц с ошибками",
+                document.getName(), created, skipped, failed);
     }
 
     private record PageResult(int created, int skippedDuplicates) {}
@@ -176,7 +194,11 @@ public class AiEquipmentExtractionService {
                 """;
         String answer = aiClient.complete(systemPrompt, "Текст страницы:\n\n" + text);
         if (answer == null) {
-            throw new IllegalStateException("ИИ-провайдер не ответил");
+            throw new IllegalStateException("ИИ-провайдер не ответил или превышено время ожидания");
+        }
+        if (!answer.contains("[")) {
+            log.debug("Ответ модели без JSON: {}", answer);
+            throw new IllegalStateException("модель вернула ответ не в формате JSON");
         }
 
         List<Map<String, Object>> items = parseJsonArray(answer);
