@@ -72,7 +72,7 @@ export default function DashboardPage() {
           <h2 className="text-base font-semibold text-slate-900 mb-3">Последние вопросы</h2>
           <div className="space-y-2">
             {data.recentChats.map((c) => (
-              <Link key={c.id} to="/chat" className="block text-sm text-slate-600 hover:text-primary-600 truncate">
+              <Link key={c.id} to={`/chat?chat=${c.id}`} className="block text-sm text-slate-600 hover:text-primary-600 truncate">
                 💬 {c.title || 'Диалог #' + c.id}
               </Link>
             ))}

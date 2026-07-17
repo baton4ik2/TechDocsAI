@@ -1,15 +1,17 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { api, openDocument } from '../api'
-import { ChatMessageDto } from '../types'
+import { Chat, ChatMessageDto } from '../types'
 
 interface Props {
   facilityId?: number
   systemId?: number
   documentId?: number
   placeholder?: string
+  /** Открыть конкретный диалог (например, из «последних вопросов» на главной). */
+  initialChatId?: number
 }
 
-export default function ChatPanel({ facilityId, systemId, documentId, placeholder }: Props) {
+export default function ChatPanel({ facilityId, systemId, documentId, placeholder, initialChatId }: Props) {
   const [chatId, setChatId] = useState<number | null>(null)
   const [messages, setMessages] = useState<ChatMessageDto[]>([])
   const [question, setQuestion] = useState('')
@@ -17,11 +19,43 @@ export default function ChatPanel({ facilityId, systemId, documentId, placeholde
   const [error, setError] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  // при смене области поиска начинаем новый диалог
+  // При смене области поиска продолжаем последний диалог этой области,
+  // чтобы история не «пропадала» при каждом заходе на вкладку.
   useEffect(() => {
     setChatId(null)
     setMessages([])
-  }, [facilityId, systemId, documentId])
+    let cancelled = false
+
+    const resume = async () => {
+      try {
+        let id = initialChatId ?? null
+        if (!id) {
+          const chats = await api.get<Chat[]>('/api/chats')
+          const match = chats.find((c) =>
+            (c.facilityId ?? null) === (facilityId ?? null) &&
+            (c.engineeringSystemId ?? null) === (systemId ?? null) &&
+            (c.documentId ?? null) === (documentId ?? null))
+          id = match?.id ?? null
+        }
+        if (!id) return
+        const history = await api.get<ChatMessageDto[]>(`/api/chats/${id}/messages`)
+        if (!cancelled) {
+          setChatId(id)
+          setMessages(history)
+        }
+      } catch {
+        // не удалось восстановить историю — просто начнём новый диалог
+      }
+    }
+    resume()
+    return () => { cancelled = true }
+  }, [facilityId, systemId, documentId, initialChatId])
+
+  const startNewChat = () => {
+    setChatId(null)
+    setMessages([])
+    setError('')
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -114,6 +148,12 @@ export default function ChatPanel({ facilityId, systemId, documentId, placeholde
       </div>
 
       <form onSubmit={send} className="p-4 border-t border-slate-200 bg-white flex gap-2">
+        {messages.length > 0 && (
+          <button type="button" className="btn-secondary shrink-0" title="Начать новый диалог"
+                  onClick={startNewChat}>
+            + Новый
+          </button>
+        )}
         <input
           className="input flex-1"
           placeholder={placeholder ?? 'Введите вопрос…'}
