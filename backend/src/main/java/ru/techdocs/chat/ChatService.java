@@ -161,11 +161,15 @@ public class ChatService {
         }
 
         String answer = null;
-        if (aiClient.isConfigured()) {
+        boolean aiConfigured = aiClient.isConfigured();
+        if (aiConfigured) {
             answer = askAi(question, hits);
         }
         if (answer == null) {
-            answer = extractiveAnswer(hits);
+            String reason = aiConfigured
+                    ? "ИИ-провайдер временно недоступен (проверьте, что Ollama запущен и модель загружена)"
+                    : "ИИ-провайдер не настроен";
+            answer = extractiveAnswer(reason, hits);
         }
 
         List<SourceDto> sources = new ArrayList<>();
@@ -200,9 +204,9 @@ public class ChatService {
         return aiClient.complete(systemPrompt, userPrompt);
     }
 
-    private String extractiveAnswer(List<SearchService.SearchHit> hits) {
+    private String extractiveAnswer(String reason, List<SearchService.SearchHit> hits) {
         StringBuilder sb = new StringBuilder(
-                "ИИ-провайдер не настроен, показываю наиболее релевантные фрагменты документации:\n\n");
+                reason + ", показываю наиболее релевантные фрагменты документации:\n\n");
         int i = 1;
         for (SearchService.SearchHit hit : hits.subList(0, Math.min(3, hits.size()))) {
             String snippet = hit.content().length() > 600

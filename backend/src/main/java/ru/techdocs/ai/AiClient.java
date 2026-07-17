@@ -29,7 +29,14 @@ public class AiClient {
                 || baseUrl.contains("localhost") || baseUrl.contains("127.0.0.1")
                 || baseUrl.contains("ollama");
 
-        RestClient.Builder builder = RestClient.builder().baseUrl(baseUrl);
+        // локальные модели (Ollama) могут отвечать долго — щедрый таймаут чтения
+        var requestFactory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(5_000);
+        requestFactory.setReadTimeout(180_000);
+
+        RestClient.Builder builder = RestClient.builder()
+                .baseUrl(baseUrl)
+                .requestFactory(requestFactory);
         if (apiKey != null && !apiKey.isBlank()) {
             builder.defaultHeader("Authorization", "Bearer " + apiKey);
         }
