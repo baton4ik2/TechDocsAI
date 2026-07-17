@@ -27,7 +27,9 @@ public class SearchService {
         String sql = """
                 SELECT c.id, c.document_id, d.name, d.original_filename,
                        c.page_from, c.page_to, c.content,
-                       ts_rank(c.content_tsv, q.tsq) AS rank
+                       -- нормализация 1 (деление на 1+log(длины)): короткие насыщенные
+                       -- фрагменты (таблицы, ведомости) не проигрывают длинным текстам
+                       ts_rank(c.content_tsv, q.tsq, 1) AS rank
                 FROM document_chunks c
                 JOIN documents d ON d.id = c.document_id,
                      -- OR-семантика: достаточно совпадения части слов, ранжирование по релевантности

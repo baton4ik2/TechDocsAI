@@ -184,7 +184,7 @@ public class ChatService {
 
         List<SourceDto> sources = new ArrayList<>();
         Set<Long> seenDocs = new HashSet<>();
-        for (SearchService.SearchHit hit : hits.subList(0, Math.min(4, hits.size()))) {
+        for (SearchService.SearchHit hit : hits.subList(0, Math.min(5, hits.size()))) {
             if (!seenDocs.add(hit.documentId() * 10000L + (hit.pageFrom() == null ? 0 : hit.pageFrom()))) continue;
             sources.add(new SourceDto(hit.documentId(), hit.originalFilename(), hit.pageFrom(), hit.chunkId(),
                     snippet(hit.content())));
@@ -210,6 +210,8 @@ public class ChatService {
                 2. В конце ответа укажи источники в формате: "Источники:" со списком (имя файла, страница).
                 3. Отвечай кратко и по делу, на русском языке.
                 4. Если источники противоречат друг другу — укажи это.
+                5. Числа и количества приводи ровно так, как они указаны в документах.
+                   Если суммируешь несколько чисел — обязательно перепроверь сумму по шагам.
                 """;
         String userPrompt = "Фрагменты документации:\n\n" + context + "\nВопрос: " + question;
         return aiClient.complete(systemPrompt, userPrompt);
