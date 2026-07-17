@@ -93,9 +93,17 @@ public class DocumentController {
             throw new ru.techdocs.common.BadRequestException(
                     "ИИ-провайдер не настроен — извлечение оборудования недоступно.");
         }
+        if (equipmentExtractionService.isRunning(id)) {
+            throw new ru.techdocs.common.BadRequestException(
+                    "Извлечение по этому документу уже выполняется.");
+        }
         equipmentExtractionService.extractAsync(id);
-        return ResponseEntity.accepted().body(Map.of("message",
-                "Извлечение запущено. Позиции появятся в реестре оборудования со статусом «Требует проверки» через несколько минут."));
+        return ResponseEntity.accepted().body(Map.of("message", "Извлечение запущено."));
+    }
+
+    @GetMapping("/{id}/extract-equipment/status")
+    public AiEquipmentExtractionService.Progress extractEquipmentStatus(@PathVariable Long id) {
+        return equipmentExtractionService.progressOf(id);
     }
 
     @PatchMapping("/{id}")

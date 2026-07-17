@@ -45,8 +45,25 @@ public class AiEquipmentExtractionService {
     private final EquipmentSourceRepository equipmentSourceRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /** Состояние извлечения по документам (в памяти — достаточно для MVP). */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Progress> progressMap =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    public record Progress(String status, int totalPages, int processedPages,
+                           int created, int skippedDuplicates, String error) {
+        static Progress none() { return new Progress("NONE", 0, 0, 0, 0, null); }
+    }
+
     public boolean isAvailable() {
         return aiClient.isConfigured();
+    }
+
+    public Progress progressOf(Long documentId) {
+        return progressMap.getOrDefault(documentId, Progress.none());
+    }
+
+    public boolean isRunning(Long documentId) {
+        return "RUNNING".equals(progressOf(documentId).status());
     }
 
     @Async("documentProcessingExecutor")
@@ -61,25 +78,39 @@ public class AiEquipmentExtractionService {
                 .toList();
 
         if (candidates.isEmpty()) {
+            progressMap.put(documentId, new Progress("DONE", 0, 0, 0, 0,
+                    "Страниц с ведомостями или спецификациями в документе не найдено."));
             log.info("Извлечение оборудования из «{}»: страниц с ведомостями/спецификациями не найдено",
                     document.getName());
             return;
         }
 
+        progressMap.put(documentId, new Progress("RUNNING", candidates.size(), 0, 0, 0, null));
         int created = 0;
+        int skipped = 0;
+        int processed = 0;
         for (DocumentPage page : candidates) {
             try {
-                created += extractFromPage(document, page);
+                PageResult result = extractFromPage(document, page);
+                created += result.created();
+                skipped += result.skippedDuplicates();
             } catch (Exception e) {
                 log.warn("Извлечение оборудования: страница {} документа «{}» пропущена: {}",
                         page.getPageNumber(), document.getName(), e.getMessage());
             }
+            processed++;
+            progressMap.put(documentId,
+                    new Progress("RUNNING", candidates.size(), processed, created, skipped, null));
         }
-        log.info("Извлечение оборудования из «{}» завершено: {} позиций добавлено в реестр",
-                document.getName(), created);
+        progressMap.put(documentId,
+                new Progress("DONE", candidates.size(), processed, created, skipped, null));
+        log.info("Извлечение оборудования из «{}» завершено: {} позиций добавлено, {} дубликатов пропущено",
+                document.getName(), created, skipped);
     }
 
-    private int extractFromPage(Document document, DocumentPage page) throws Exception {
+    private record PageResult(int created, int skippedDuplicates) {}
+
+    private PageResult extractFromPage(Document document, DocumentPage page) throws Exception {
         String text = page.getText();
         if (text.length() > MAX_PAGE_CHARS) {
             text = text.substring(0, MAX_PAGE_CHARS);
@@ -104,13 +135,17 @@ public class AiEquipmentExtractionService {
 
         List<Map<String, Object>> items = parseJsonArray(answer);
         int created = 0;
+        int skipped = 0;
         for (Map<String, Object> item : items) {
             String name = stringValue(item.get("name"));
             BigDecimal quantity = parseQuantity(item.get("quantity"));
             if (name == null || quantity == null || quantity.signum() <= 0) continue;
 
             String model = stringValue(item.get("model"));
-            if (isDuplicate(document.getFacilityId(), name, model)) continue;
+            if (isDuplicate(document.getFacilityId(), name, model)) {
+                skipped++;
+                continue;
+            }
 
             Equipment equipment = new Equipment();
             equipment.setFacilityId(document.getFacilityId());
@@ -134,7 +169,7 @@ public class AiEquipmentExtractionService {
             equipmentSourceRepository.save(source);
             created++;
         }
-        return created;
+        return new PageResult(created, skipped);
     }
 
     /** Модель может обернуть JSON в текст или ```-блок — вырезаем массив по скобкам. */

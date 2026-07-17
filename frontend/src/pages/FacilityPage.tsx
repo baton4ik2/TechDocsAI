@@ -8,6 +8,15 @@ import StatusBadge from '../components/StatusBadge'
 
 type Tab = 'overview' | 'systems' | 'documents' | 'equipment' | 'chat'
 
+interface ExtractProgress {
+  status: 'NONE' | 'RUNNING' | 'DONE'
+  totalPages: number
+  processedPages: number
+  created: number
+  skippedDuplicates: number
+  error: string | null
+}
+
 const tabs: { key: Tab; label: string }[] = [
   { key: 'overview', label: 'Обзор' },
   { key: 'systems', label: 'Системы' },
@@ -197,10 +206,34 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
     load()
   }
 
-  const extractEquipment = async (docId: number) => {
+  const [extractDoc, setExtractDoc] = useState<Doc | null>(null)
+  const [extractProgress, setExtractProgress] = useState<Record<number, ExtractProgress>>({})
+  const extractTimers = useRef<Record<number, number>>({})
+
+  const pollExtractStatus = useCallback((docId: number) => {
+    api.get<ExtractProgress>(`/api/documents/${docId}/extract-equipment/status`).then((p) => {
+      setExtractProgress((prev) => ({ ...prev, [docId]: p }))
+      if (p.status === 'RUNNING') {
+        extractTimers.current[docId] = window.setTimeout(() => pollExtractStatus(docId), 2000)
+      } else {
+        onChange() // обновить счётчики оборудования на карточке объекта
+      }
+    })
+  }, [onChange])
+
+  useEffect(() => () => {
+    Object.values(extractTimers.current).forEach((t) => window.clearTimeout(t))
+  }, [])
+
+  const startExtraction = async (doc: Doc) => {
+    setExtractDoc(null)
     try {
-      const result = await api.post<{ message: string }>(`/api/documents/${docId}/extract-equipment`)
-      alert(result.message)
+      await api.post(`/api/documents/${doc.id}/extract-equipment`)
+      setExtractProgress((prev) => ({
+        ...prev,
+        [doc.id]: { status: 'RUNNING', totalPages: 0, processedPages: 0, created: 0, skippedDuplicates: 0, error: null },
+      }))
+      pollExtractStatus(doc.id)
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Ошибка')
     }
@@ -247,6 +280,7 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
                     📄 {d.originalFilename}
                   </button>
                   {d.errorMessage && <div className="text-xs text-red-500 mt-1">{d.errorMessage}</div>}
+                  <ExtractProgressBar progress={extractProgress[d.id]} />
                 </td>
                 <td className="px-4 py-3 text-slate-500">
                   {types.find((t) => t.id === d.documentTypeId)?.name ?? '—'}
@@ -255,8 +289,8 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
                 <td className="px-4 py-3 text-slate-500">{d.pageCount ?? '—'}</td>
                 <td className="px-4 py-3"><StatusBadge status={d.status} /></td>
                 <td className="px-4 py-3 text-right whitespace-nowrap">
-                  {d.status === 'READY' && (
-                    <button onClick={() => extractEquipment(d.id)}
+                  {d.status === 'READY' && extractProgress[d.id]?.status !== 'RUNNING' && (
+                    <button onClick={() => setExtractDoc(d)}
                             title="Извлечь оборудование в реестр (ИИ)"
                             className="text-slate-400 hover:text-primary-600 mr-3">⚙</button>
                   )}
@@ -286,6 +320,73 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
           onClose={() => setShowUpload(false)}
           onUploaded={() => { setShowUpload(false); load(); onChange() }}
         />
+      )}
+
+      {extractDoc && (
+        <Modal title="Извлечь оборудование в реестр" onClose={() => setExtractDoc(null)}>
+          <div className="space-y-3 text-sm text-slate-600">
+            <p>
+              ИИ просканирует документ <span className="font-medium text-slate-900">«{extractDoc.originalFilename}»</span>,
+              найдёт страницы с ведомостями и спецификациями и добавит позиции оборудования
+              в реестр со статусом <span className="font-medium">«Требует проверки»</span>.
+            </p>
+            <ul className="list-disc pl-5 space-y-1 text-xs text-slate-500">
+              <li>Позиции, уже существующие в реестре (та же модель), будут пропущены — дубликаты не создаются.</li>
+              <li>Извлечение занимает от нескольких секунд до нескольких минут — прогресс будет виден в таблице.</li>
+              <li>После завершения проверьте и подтвердите позиции на вкладке «Оборудование».</li>
+            </ul>
+          </div>
+          <div className="flex justify-end gap-2 mt-5">
+            <button type="button" className="btn-secondary" onClick={() => setExtractDoc(null)}>Отмена</button>
+            <button type="button" className="btn-primary" onClick={() => startExtraction(extractDoc)}>
+              Запустить извлечение
+            </button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+function ExtractProgressBar({ progress }: { progress?: ExtractProgress }) {
+  if (!progress || progress.status === 'NONE') return null
+
+  if (progress.status === 'RUNNING') {
+    const percent = progress.totalPages > 0
+      ? Math.round((progress.processedPages / progress.totalPages) * 100)
+      : 5
+    return (
+      <div className="mt-1.5 max-w-xs">
+        <div className="flex justify-between text-xs text-slate-500 mb-0.5">
+          <span>Извлечение оборудования…</span>
+          <span>
+            {progress.totalPages > 0
+              ? `${progress.processedPages}/${progress.totalPages} стр.`
+              : 'поиск страниц…'}
+          </span>
+        </div>
+        <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+          <div className="h-full bg-primary-500 rounded-full transition-all duration-500"
+               style={{ width: `${Math.max(percent, 5)}%` }} />
+        </div>
+        {progress.created > 0 && (
+          <div className="text-xs text-slate-400 mt-0.5">найдено позиций: {progress.created}</div>
+        )}
+      </div>
+    )
+  }
+
+  // DONE
+  return (
+    <div className="mt-1 text-xs">
+      {progress.error ? (
+        <span className="text-amber-600">{progress.error}</span>
+      ) : (
+        <span className="text-emerald-600">
+          ✓ Добавлено позиций: {progress.created}
+          {progress.skippedDuplicates > 0 && `, пропущено дубликатов: ${progress.skippedDuplicates}`}
+          {' '}— проверьте вкладку «Оборудование»
+        </span>
       )}
     </div>
   )
