@@ -207,7 +207,14 @@ public class AiEquipmentExtractionService {
             throw new IllegalStateException("модель вернула ответ не в формате JSON");
         }
 
-        return saveItems(document, page, parseJsonArray(answer));
+        List<Map<String, Object>> items = parseJsonArray(answer);
+        if (items.isEmpty()) {
+            // пустой список — не ошибка, но для диагностики важно видеть, что именно ответила модель
+            log.info("Извлечение: модель не нашла позиций на стр. {} («{}»). Ответ модели: {}",
+                    page.getPageNumber(), document.getName(),
+                    answer.length() > 400 ? answer.substring(0, 400) + "…" : answer);
+        }
+        return saveItems(document, page, items);
     }
 
     private boolean isRenderable(String filename) {
