@@ -14,7 +14,7 @@ public record AppProperties(
 
     public record Storage(String endpoint, String accessKey, String secretKey, String bucket) {}
 
-    public record Ai(String baseUrl, String apiKey, String chatModel) {}
+    public record Ai(String baseUrl, String apiKey, String chatModel, String visionModel) {}
 
     public record Document(int maxFileSizeMb, int maxPages) {}
 

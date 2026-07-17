@@ -19,12 +19,14 @@ public class AiClient {
 
     private final RestClient restClient;
     private final String model;
+    private final String visionModel;
     private final boolean configured;
 
     public AiClient(AppProperties props) {
         String baseUrl = props.ai().baseUrl();
         String apiKey = props.ai().apiKey();
         this.model = props.ai().chatModel();
+        this.visionModel = props.ai().visionModel();
         this.configured = apiKey != null && !apiKey.isBlank()
                 || baseUrl.contains("localhost") || baseUrl.contains("127.0.0.1")
                 || baseUrl.contains("ollama");
@@ -47,17 +49,43 @@ public class AiClient {
         return configured;
     }
 
-    @SuppressWarnings("unchecked")
+    public boolean hasVisionModel() {
+        return configured && visionModel != null && !visionModel.isBlank();
+    }
+
+    /** Запрос к vision-модели: текстовый промпт + изображение страницы (PNG). */
+    public String completeVision(String systemPrompt, String userPrompt, byte[] pngImage) {
+        String dataUri = "data:image/png;base64," +
+                java.util.Base64.getEncoder().encodeToString(pngImage);
+        Map<String, Object> body = Map.of(
+                "model", visionModel,
+                "temperature", 0.1,
+                "messages", List.of(
+                        Map.of("role", "system", "content", systemPrompt),
+                        Map.of("role", "user", "content", List.of(
+                                Map.of("type", "text", "text", userPrompt),
+                                Map.of("type", "image_url", "image_url", Map.of("url", dataUri))
+                        ))
+                )
+        );
+        return execute(body);
+    }
+
     public String complete(String systemPrompt, String userPrompt) {
+        Map<String, Object> body = Map.of(
+                "model", model,
+                "temperature", 0.1,
+                "messages", List.of(
+                        Map.of("role", "system", "content", systemPrompt),
+                        Map.of("role", "user", "content", userPrompt)
+                )
+        );
+        return execute(body);
+    }
+
+    @SuppressWarnings("unchecked")
+    private String execute(Map<String, Object> body) {
         try {
-            Map<String, Object> body = Map.of(
-                    "model", model,
-                    "temperature", 0.1,
-                    "messages", List.of(
-                            Map.of("role", "system", "content", systemPrompt),
-                            Map.of("role", "user", "content", userPrompt)
-                    )
-            );
             Map<String, Object> response = restClient.post()
                     .uri("/chat/completions")
                     .body(body)

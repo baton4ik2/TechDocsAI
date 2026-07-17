@@ -37,6 +37,9 @@ techdocs:
     base-url: ${AI_BASE_URL:https://api.openai.com/v1}
     api-key: ${AI_API_KEY:}
     chat-model: ${AI_CHAT_MODEL:gpt-4o-mini}
+    # vision-модель для извлечения оборудования из сканов (читает картинку страницы
+    # напрямую, без OCR). Пусто — извлечение работает по распознанному тексту.
+    vision-model: ${AI_VISION_MODEL:}
   document:
     max-file-size-mb: 100
     max-pages: 500

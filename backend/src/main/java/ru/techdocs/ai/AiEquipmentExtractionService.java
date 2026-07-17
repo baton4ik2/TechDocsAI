@@ -33,11 +33,15 @@ public class AiEquipmentExtractionService {
     private static final int MAX_PAGES_PER_RUN = 10;
     private static final int MAX_PAGE_CHARS = 6000;
 
+    private static final int VISION_DPI = 160;
+
     private final AiClient aiClient;
     private final DocumentRepository documentRepository;
     private final DocumentPageRepository pageRepository;
     private final EquipmentRepository equipmentRepository;
     private final EquipmentSourceRepository equipmentSourceRepository;
+    private final ru.techdocs.processing.PageImageRenderer pageImageRenderer;
+    private final ru.techdocs.storage.FileStorage fileStorage;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** Состояние извлечения по документам (в памяти — достаточно для MVP). */
@@ -66,20 +70,22 @@ public class AiEquipmentExtractionService {
         Document document = documentRepository.findById(documentId).orElse(null);
         if (document == null) return;
 
-        List<DocumentPage> allPages = pageRepository.findByDocumentIdOrderByPageNumber(documentId).stream()
-                .filter(p -> p.getText() != null && !p.getText().isBlank())
-                .toList();
+        List<DocumentPage> allPages = pageRepository.findByDocumentIdOrderByPageNumber(documentId);
 
         List<DocumentPage> candidates;
         if (requestedPages != null && !requestedPages.isEmpty()) {
-            // пользователь указал точные страницы — обрабатываем только их, это быстро
+            // Пользователь указал точные страницы — обрабатываем только их, это быстро.
+            // С vision-моделью страница годится даже без распознанного текста.
+            boolean vision = aiClient.hasVisionModel();
             candidates = allPages.stream()
                     .filter(p -> requestedPages.contains(p.getPageNumber()))
+                    .filter(p -> vision || (p.getText() != null && !p.getText().isBlank()))
                     .limit(MAX_PAGES_PER_RUN)
                     .toList();
         } else {
             // авто-режим: ранжируем страницы по признакам ведомости/спецификации
             candidates = allPages.stream()
+                    .filter(p -> p.getText() != null && !p.getText().isBlank())
                     .map(p -> Map.entry(p, candidateScore(p.getText())))
                     .filter(e -> e.getValue() > 0)
                     .sorted((a, b) -> b.getValue() - a.getValue())
@@ -91,7 +97,7 @@ public class AiEquipmentExtractionService {
 
         if (candidates.isEmpty()) {
             String reason = (requestedPages != null && !requestedPages.isEmpty())
-                    ? "На указанных страницах нет распознанного текста."
+                    ? "Указанные страницы не найдены в документе или на них нет текста."
                     : "Страниц с ведомостями или спецификациями в документе не найдено.";
             progressMap.put(documentId, new Progress("DONE", 0, 0, 0, 0, 0, reason));
             log.info("Извлечение оборудования из «{}»: {}", document.getName(), reason);
@@ -167,7 +173,68 @@ public class AiEquipmentExtractionService {
     }
 
     private PageResult extractFromPage(Document document, DocumentPage page) throws Exception {
+        String answer = null;
+
+        // Vision-путь: модель читает картинку страницы напрямую, без OCR —
+        // на сканах это радикально точнее. При сбое откатываемся на текст.
+        if (aiClient.hasVisionModel() && isRenderable(document.getOriginalFilename())) {
+            try {
+                byte[] png;
+                try (java.io.InputStream input = fileStorage.load(document.getStoragePath())) {
+                    png = pageImageRenderer.renderPng(
+                            document.getOriginalFilename(), input, page.getPageNumber(), VISION_DPI);
+                }
+                answer = aiClient.completeVision(visionSystemPrompt(),
+                        "Извлеки перечень оборудования со страницы на изображении.", png);
+                if (answer != null) {
+                    log.info("Извлечение (vision): «{}», стр. {}", document.getName(), page.getPageNumber());
+                }
+            } catch (Exception e) {
+                log.warn("Vision-извлечение не удалось (стр. {}): {} — пробую по тексту",
+                        page.getPageNumber(), e.getMessage());
+            }
+        }
+
+        if (answer == null) {
+            answer = extractByText(page);
+        }
+        if (answer == null) {
+            throw new IllegalStateException("ИИ-провайдер не ответил или превышено время ожидания");
+        }
+        if (!answer.contains("[")) {
+            log.debug("Ответ модели без JSON: {}", answer);
+            throw new IllegalStateException("модель вернула ответ не в формате JSON");
+        }
+
+        return saveItems(document, page, parseJsonArray(answer));
+    }
+
+    private boolean isRenderable(String filename) {
+        String lower = filename.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".pdf") || lower.endsWith(".jpg")
+                || lower.endsWith(".jpeg") || lower.endsWith(".png");
+    }
+
+    private String visionSystemPrompt() {
+        return """
+                Ты извлекаешь перечень смонтированного оборудования со страницы
+                технического документа (ведомость, спецификация, акт) по её изображению.
+                Верни ТОЛЬКО JSON-массив объектов без пояснений, в формате:
+                [{"manufacturer": "...", "name": "...", "model": "...", "quantity": 0, "unit": "шт."}]
+                Правила:
+                - name — наименование оборудования, model — тип/марка, quantity — число.
+                - Извлекай КАЖДУЮ строку таблицы отдельной позицией, ничего не объединяй.
+                - Если производитель не указан, manufacturer = null.
+                - Не включай материалы (кабель, трубы, короба) и работы.
+                - Если перечня оборудования на странице нет — верни [].
+                """;
+    }
+
+    private String extractByText(DocumentPage page) {
         String text = page.getText();
+        if (text == null || text.isBlank()) {
+            return null;
+        }
         if (text.length() > MAX_PAGE_CHARS) {
             text = text.substring(0, MAX_PAGE_CHARS);
         }
@@ -192,16 +259,10 @@ public class AiEquipmentExtractionService {
                 - Если строка распознана нечитаемо и наименование восстановить нельзя — пропусти её.
                 - Если на странице нет перечня оборудования — верни [].
                 """;
-        String answer = aiClient.complete(systemPrompt, "Текст страницы:\n\n" + text);
-        if (answer == null) {
-            throw new IllegalStateException("ИИ-провайдер не ответил или превышено время ожидания");
-        }
-        if (!answer.contains("[")) {
-            log.debug("Ответ модели без JSON: {}", answer);
-            throw new IllegalStateException("модель вернула ответ не в формате JSON");
-        }
+        return aiClient.complete(systemPrompt, "Текст страницы:\n\n" + text);
+    }
 
-        List<Map<String, Object>> items = parseJsonArray(answer);
+    private PageResult saveItems(Document document, DocumentPage page, List<Map<String, Object>> items) {
         int created = 0;
         int skipped = 0;
         for (Map<String, Object> item : items) {
