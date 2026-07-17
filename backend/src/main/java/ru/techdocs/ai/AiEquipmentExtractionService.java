@@ -33,7 +33,8 @@ public class AiEquipmentExtractionService {
     private static final int MAX_PAGES_PER_RUN = 10;
     private static final int MAX_PAGE_CHARS = 6000;
 
-    private static final int VISION_DPI = 160;
+    @org.springframework.beans.factory.annotation.Value("${techdocs.ai.vision-dpi:220}")
+    private int visionDpi;
 
     private final AiClient aiClient;
     private final DocumentRepository documentRepository;
@@ -182,7 +183,7 @@ public class AiEquipmentExtractionService {
                 byte[] png;
                 try (java.io.InputStream input = fileStorage.load(document.getStoragePath())) {
                     png = pageImageRenderer.renderPng(
-                            document.getOriginalFilename(), input, page.getPageNumber(), VISION_DPI);
+                            document.getOriginalFilename(), input, page.getPageNumber(), visionDpi);
                 }
                 answer = aiClient.completeVision(visionSystemPrompt(),
                         "Извлеки перечень оборудования со страницы на изображении.", png);
