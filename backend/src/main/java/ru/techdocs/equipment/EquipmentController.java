@@ -109,6 +109,31 @@ public class EquipmentController {
         return ResponseEntity.noContent().build();
     }
 
+    public record IdsRequest(List<Long> ids) {}
+
+    /** Массовое подтверждение выбранных записей. */
+    @PostMapping("/confirm")
+    @Transactional
+    public List<Equipment> confirmBatch(@RequestBody IdsRequest request) {
+        if (request.ids() == null || request.ids().isEmpty()) {
+            throw new BadRequestException("Не выбраны записи");
+        }
+        List<Equipment> items = equipmentRepository.findAllById(request.ids());
+        items.forEach(e -> e.setStatus(Equipment.STATUS_CONFIRMED));
+        return equipmentRepository.saveAll(items);
+    }
+
+    /** Массовое удаление выбранных записей. */
+    @PostMapping("/delete-batch")
+    @Transactional
+    public ResponseEntity<Void> deleteBatch(@RequestBody IdsRequest request) {
+        if (request.ids() == null || request.ids().isEmpty()) {
+            throw new BadRequestException("Не выбраны записи");
+        }
+        equipmentRepository.deleteAllById(request.ids());
+        return ResponseEntity.noContent().build();
+    }
+
     public record MergeRequest(List<Long> ids) {}
 
     /** Объединяет несколько записей в одну: суммирует количество, переносит источники. */

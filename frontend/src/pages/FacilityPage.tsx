@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { api, openDocument } from '../api'
 import { Doc, DocumentType, EngineeringSystem, Equipment, Facility } from '../types'
 import ChatPanel from '../components/ChatPanel'
+import ConfirmDialog from '../components/ConfirmDialog'
 import Modal from '../components/Modal'
 import StatusBadge from '../components/StatusBadge'
 
@@ -503,27 +504,39 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
     api.get<EngineeringSystem[]>(`/api/facilities/${facilityId}/systems`).then(setSystems)
   }, [facilityId])
 
+  type PendingAction =
+    | { type: 'confirm'; ids: number[] }
+    | { type: 'merge'; ids: number[] }
+    | { type: 'delete'; ids: number[] }
+  const [pending, setPending] = useState<PendingAction | null>(null)
+
   const toggleSelect = (id: number) => {
     setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
   }
 
-  const merge = async () => {
-    if (selected.length < 2) return
-    if (!confirm(`Объединить ${selected.length} записи в одну? Количество будет просуммировано.`)) return
-    await api.post('/api/equipment/merge', { ids: selected })
-    setSelected([])
-    load()
+  const allSelected = items.length > 0 && selected.length === items.length
+  const toggleSelectAll = () => {
+    setSelected(allSelected ? [] : items.map((i) => i.id))
   }
 
-  const remove = async (id: number) => {
-    if (!confirm('Удалить запись оборудования?')) return
-    await api.delete(`/api/equipment/${id}`)
-    load()
+  const runPending = async () => {
+    if (!pending) return
+    const { type, ids } = pending
+    setPending(null)
+    try {
+      if (type === 'confirm') await api.post('/api/equipment/confirm', { ids })
+      if (type === 'merge') await api.post('/api/equipment/merge', { ids })
+      if (type === 'delete') await api.post('/api/equipment/delete-batch', { ids })
+      setSelected([])
+      load()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Ошибка')
+    }
   }
 
-  const confirmItem = async (item: Equipment) => {
-    await api.put(`/api/equipment/${item.id}`, { ...item, status: 'CONFIRMED' })
-    load()
+  const itemLabel = (id: number) => {
+    const item = items.find((i) => i.id === id)
+    return item ? (item.model || item.name || `#${id}`) : `#${id}`
   }
 
   return (
@@ -531,8 +544,23 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
       <div className="flex items-center gap-3 flex-wrap">
         <input className="input max-w-xs" placeholder="Поиск оборудования…" value={search} onChange={(e) => setSearch(e.target.value)} />
         <div className="flex-1" />
-        {selected.length >= 2 && (
-          <button className="btn-secondary" onClick={merge}>Объединить ({selected.length})</button>
+        {selected.length > 0 && (
+          <>
+            <button className="btn-secondary"
+                    onClick={() => setPending({ type: 'confirm', ids: selected })}>
+              ✓ Подтвердить ({selected.length})
+            </button>
+            {selected.length >= 2 && (
+              <button className="btn-secondary"
+                      onClick={() => setPending({ type: 'merge', ids: selected })}>
+                Объединить ({selected.length})
+              </button>
+            )}
+            <button className="btn-danger"
+                    onClick={() => setPending({ type: 'delete', ids: selected })}>
+              🗑 Удалить ({selected.length})
+            </button>
+          </>
         )}
         <button className="btn-primary" onClick={() => setShowAdd(true)}>+ Добавить</button>
       </div>
@@ -541,7 +569,10 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
-              <th className="px-3 py-3"></th>
+              <th className="px-3 py-3">
+                <input type="checkbox" checked={allSelected} onChange={toggleSelectAll}
+                       title={allSelected ? 'Снять выделение' : 'Выбрать все'} />
+              </th>
               <th className="px-3 py-3 font-medium">Производитель</th>
               <th className="px-3 py-3 font-medium">Наименование</th>
               <th className="px-3 py-3 font-medium">Модель</th>
@@ -583,12 +614,12 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
                 <td className="px-3 py-2"><StatusBadge status={item.status} /></td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
                   {item.status !== 'CONFIRMED' && (
-                    <button onClick={() => confirmItem(item)} title="Подтвердить"
+                    <button onClick={() => setPending({ type: 'confirm', ids: [item.id] })} title="Подтвердить"
                             className="text-slate-400 hover:text-emerald-600 mr-2">✓</button>
                   )}
                   <button onClick={() => setEditing(item)} title="Редактировать"
                           className="text-slate-400 hover:text-primary-600 mr-2">✎</button>
-                  <button onClick={() => remove(item.id)} title="Удалить"
+                  <button onClick={() => setPending({ type: 'delete', ids: [item.id] })} title="Удалить"
                           className="text-slate-400 hover:text-red-500">🗑</button>
                 </td>
               </tr>
@@ -609,6 +640,51 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
           item={editing}
           onClose={() => { setEditing(null); setShowAdd(false) }}
           onSaved={() => { setEditing(null); setShowAdd(false); load() }}
+        />
+      )}
+
+      {pending && (
+        <ConfirmDialog
+          title={
+            pending.type === 'delete' ? 'Удаление оборудования'
+              : pending.type === 'merge' ? 'Объединение записей'
+              : 'Подтверждение записей'
+          }
+          confirmLabel={
+            pending.type === 'delete' ? `Удалить (${pending.ids.length})`
+              : pending.type === 'merge' ? 'Объединить'
+              : 'Подтвердить'
+          }
+          danger={pending.type === 'delete'}
+          onClose={() => setPending(null)}
+          onConfirm={runPending}
+          message={
+            <div className="space-y-2">
+              {pending.type === 'delete' && (
+                <p>
+                  Удалить {pending.ids.length === 1 ? 'запись' : `${pending.ids.length} записи(ей)`} из
+                  реестра оборудования? Действие необратимо, источники записи также будут удалены.
+                </p>
+              )}
+              {pending.type === 'merge' && (
+                <p>
+                  Объединить {pending.ids.length} записи(ей) в одну? Количество будет просуммировано,
+                  источники всех записей сохранятся, результат получит статус «Требует проверки».
+                </p>
+              )}
+              {pending.type === 'confirm' && (
+                <p>
+                  Подтвердить {pending.ids.length === 1 ? 'запись' : `${pending.ids.length} записи(ей)`}?
+                  Подтверждённые данные считаются проверенными и используются для точных ответов
+                  на количественные вопросы в чате.
+                </p>
+              )}
+              <ul className="list-disc pl-5 text-xs text-slate-500 max-h-32 overflow-y-auto">
+                {pending.ids.slice(0, 10).map((id) => <li key={id}>{itemLabel(id)}</li>)}
+                {pending.ids.length > 10 && <li>…и ещё {pending.ids.length - 10}</li>}
+              </ul>
+            </div>
+          }
         />
       )}
     </div>
