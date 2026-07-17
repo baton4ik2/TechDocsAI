@@ -82,8 +82,11 @@ public class DocumentController {
         return ResponseEntity.accepted().build();
     }
 
+    public record ExtractRequest(String pages) {}
+
     @PostMapping("/{id}/extract-equipment")
-    public ResponseEntity<Map<String, String>> extractEquipment(@PathVariable Long id) {
+    public ResponseEntity<Map<String, String>> extractEquipment(@PathVariable Long id,
+                                                                @RequestBody(required = false) ExtractRequest request) {
         Document document = documentService.get(id);
         if (!Document.STATUS_READY.equals(document.getStatus())) {
             throw new ru.techdocs.common.BadRequestException(
@@ -97,8 +100,34 @@ public class DocumentController {
             throw new ru.techdocs.common.BadRequestException(
                     "Извлечение по этому документу уже выполняется.");
         }
-        equipmentExtractionService.extractAsync(id);
+        java.util.Set<Integer> pages = parsePagesSpec(request == null ? null : request.pages());
+        equipmentExtractionService.extractAsync(id, pages);
         return ResponseEntity.accepted().body(Map.of("message", "Извлечение запущено."));
+    }
+
+    /** Разбор строки вида «91-93, 96» в набор номеров страниц. */
+    private java.util.Set<Integer> parsePagesSpec(String spec) {
+        if (spec == null || spec.isBlank()) return null;
+        java.util.Set<Integer> pages = new java.util.TreeSet<>();
+        for (String part : spec.split(",")) {
+            String p = part.strip();
+            if (p.isEmpty()) continue;
+            try {
+                if (p.contains("-")) {
+                    String[] range = p.split("-", 2);
+                    int from = Integer.parseInt(range[0].strip());
+                    int to = Integer.parseInt(range[1].strip());
+                    if (from > to || to - from > 500) throw new NumberFormatException();
+                    for (int i = from; i <= to; i++) pages.add(i);
+                } else {
+                    pages.add(Integer.parseInt(p));
+                }
+            } catch (NumberFormatException e) {
+                throw new ru.techdocs.common.BadRequestException(
+                        "Не удалось разобрать страницы «" + p + "». Формат: 91-93 или 91, 95, 96.");
+            }
+        }
+        return pages.isEmpty() ? null : pages;
     }
 
     @GetMapping("/{id}/extract-equipment/status")

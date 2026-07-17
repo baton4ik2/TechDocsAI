@@ -62,27 +62,39 @@ public class AiEquipmentExtractionService {
     }
 
     @Async("documentProcessingExecutor")
-    public void extractAsync(Long documentId) {
+    public void extractAsync(Long documentId, java.util.Set<Integer> requestedPages) {
         Document document = documentRepository.findById(documentId).orElse(null);
         if (document == null) return;
 
-        // Ранжируем страницы по признакам ведомости/спецификации и берём самые
-        // насыщенные — «первые N по номеру» пропускали ведомость в конце документа.
-        List<DocumentPage> candidates = pageRepository.findByDocumentIdOrderByPageNumber(documentId).stream()
+        List<DocumentPage> allPages = pageRepository.findByDocumentIdOrderByPageNumber(documentId).stream()
                 .filter(p -> p.getText() != null && !p.getText().isBlank())
-                .map(p -> Map.entry(p, candidateScore(p.getText())))
-                .filter(e -> e.getValue() > 0)
-                .sorted((a, b) -> b.getValue() - a.getValue())
-                .limit(MAX_PAGES_PER_RUN)
-                .map(Map.Entry::getKey)
-                .sorted(java.util.Comparator.comparingInt(DocumentPage::getPageNumber))
                 .toList();
 
+        List<DocumentPage> candidates;
+        if (requestedPages != null && !requestedPages.isEmpty()) {
+            // пользователь указал точные страницы — обрабатываем только их, это быстро
+            candidates = allPages.stream()
+                    .filter(p -> requestedPages.contains(p.getPageNumber()))
+                    .limit(MAX_PAGES_PER_RUN)
+                    .toList();
+        } else {
+            // авто-режим: ранжируем страницы по признакам ведомости/спецификации
+            candidates = allPages.stream()
+                    .map(p -> Map.entry(p, candidateScore(p.getText())))
+                    .filter(e -> e.getValue() > 0)
+                    .sorted((a, b) -> b.getValue() - a.getValue())
+                    .limit(MAX_PAGES_PER_RUN)
+                    .map(Map.Entry::getKey)
+                    .sorted(java.util.Comparator.comparingInt(DocumentPage::getPageNumber))
+                    .toList();
+        }
+
         if (candidates.isEmpty()) {
-            progressMap.put(documentId, new Progress("DONE", 0, 0, 0, 0,
-                    "Страниц с ведомостями или спецификациями в документе не найдено."));
-            log.info("Извлечение оборудования из «{}»: страниц с ведомостями/спецификациями не найдено",
-                    document.getName());
+            String reason = (requestedPages != null && !requestedPages.isEmpty())
+                    ? "На указанных страницах нет распознанного текста."
+                    : "Страниц с ведомостями или спецификациями в документе не найдено.";
+            progressMap.put(documentId, new Progress("DONE", 0, 0, 0, 0, reason));
+            log.info("Извлечение оборудования из «{}»: {}", document.getName(), reason);
             return;
         }
 

@@ -243,10 +243,13 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
     Object.values(extractTimers.current).forEach((t) => window.clearTimeout(t))
   }, [])
 
+  const [extractPages, setExtractPages] = useState('')
+
   const startExtraction = async (doc: Doc) => {
     setExtractDoc(null)
     try {
-      await api.post(`/api/documents/${doc.id}/extract-equipment`)
+      await api.post(`/api/documents/${doc.id}/extract-equipment`,
+        extractPages.trim() ? { pages: extractPages.trim() } : {})
       setExtractProgress((prev) => ({
         ...prev,
         [doc.id]: { status: 'RUNNING', totalPages: 0, processedPages: 0, created: 0, skippedDuplicates: 0, error: null },
@@ -308,7 +311,7 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
                 <td className="px-4 py-3"><StatusBadge status={d.status} /></td>
                 <td className="px-4 py-3 text-right whitespace-nowrap">
                   {d.status === 'READY' && extractProgress[d.id]?.status !== 'RUNNING' && (
-                    <button onClick={() => setExtractDoc(d)}
+                    <button onClick={() => { setExtractDoc(d); setExtractPages('') }}
                             title="Извлечь оборудование в реестр (ИИ)"
                             className="text-slate-400 hover:text-primary-600 mr-3">⚙</button>
                   )}
@@ -348,9 +351,23 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
               найдёт страницы с ведомостями и спецификациями и добавит позиции оборудования
               в реестр со статусом <span className="font-medium">«Требует проверки»</span>.
             </p>
+            <div>
+              <label className="label">
+                Страницы файла (необязательно) — обработаются только они, это в разы быстрее
+              </label>
+              <input
+                className="input"
+                placeholder="Например: 91-93 или 91, 95, 96. Пусто — искать автоматически"
+                value={extractPages}
+                onChange={(e) => setExtractPages(e.target.value)}
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                Номера — это страницы файла (как в просмотре PDF), а не печатные номера листов.
+              </p>
+            </div>
             <ul className="list-disc pl-5 space-y-1 text-xs text-slate-500">
               <li>Позиции, уже существующие в реестре (та же модель), будут пропущены — дубликаты не создаются.</li>
-              <li>Извлечение занимает от нескольких секунд до нескольких минут — прогресс будет виден в таблице.</li>
+              <li>Без указания страниц ИИ сам ищет ведомости по всему документу — до 10 страниц, на медленном сервере это может занять 10–15 минут.</li>
               <li>После завершения проверьте и подтвердите позиции на вкладке «Оборудование».</li>
             </ul>
           </div>
