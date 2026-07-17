@@ -81,14 +81,21 @@ export default function ChatPanel({ facilityId, systemId, documentId, placeholde
                 <div className="mt-3 pt-3 border-t border-slate-100 space-y-1">
                   <div className="text-xs font-medium text-slate-500">Источники:</div>
                   {m.sources.map((s, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      onClick={() => openDocument(s.documentId, s.pageNumber).catch(() => setError('Не удалось открыть документ'))}
-                      className="block text-xs text-primary-600 hover:underline text-left"
-                    >
-                      {i + 1}. {s.documentName}{s.pageNumber ? `, стр. ${s.pageNumber}` : ''}
-                    </button>
+                    <div key={i}>
+                      <button
+                        type="button"
+                        onClick={() => openDocument(s.documentId, s.pageNumber).catch(() => setError('Не удалось открыть документ'))}
+                        className="block text-xs text-primary-600 hover:underline text-left"
+                      >
+                        {i + 1}. {s.documentName}
+                        {s.pageNumber ? `, стр. ${s.pageNumber} (страница файла)` : ''}
+                      </button>
+                      {s.snippet && (
+                        <div className="mt-0.5 pl-3 border-l-2 border-slate-200 text-xs text-slate-400 italic">
+                          «{s.snippet}»
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}

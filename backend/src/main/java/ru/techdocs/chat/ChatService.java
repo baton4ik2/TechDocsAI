@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.techdocs.ai.AiClient;
 import ru.techdocs.document.Document;
+import ru.techdocs.document.DocumentChunkRepository;
 import ru.techdocs.document.DocumentRepository;
 import ru.techdocs.equipment.Equipment;
 import ru.techdocs.equipment.EquipmentRepository;
@@ -41,9 +42,17 @@ public class ChatService {
     private final EquipmentRepository equipmentRepository;
     private final EquipmentSourceRepository equipmentSourceRepository;
     private final DocumentRepository documentRepository;
+    private final DocumentChunkRepository chunkRepository;
     private final FacilityRepository facilityRepository;
 
-    public record SourceDto(Long documentId, String documentName, Integer pageNumber, Long chunkId) {}
+    public record SourceDto(Long documentId, String documentName, Integer pageNumber, Long chunkId,
+                            String snippet) {}
+
+    private static String snippet(String text) {
+        if (text == null) return null;
+        String stripped = text.strip().replaceAll("\\s+", " ");
+        return stripped.length() > 260 ? stripped.substring(0, 260) + "…" : stripped;
+    }
 
     public record AnswerResult(ChatMessage message, List<SourceDto> sources) {}
 
@@ -142,7 +151,8 @@ public class ChatService {
                 if (!seen.add(key)) continue;
                 String docName = documentRepository.findById(src.getDocumentId())
                         .map(Document::getOriginalFilename).orElse("Документ #" + src.getDocumentId());
-                sources.add(new SourceDto(src.getDocumentId(), docName, src.getPageNumber(), null));
+                sources.add(new SourceDto(src.getDocumentId(), docName, src.getPageNumber(), null,
+                        snippet(src.getSourceText())));
             }
         }
 
@@ -176,7 +186,8 @@ public class ChatService {
         Set<Long> seenDocs = new HashSet<>();
         for (SearchService.SearchHit hit : hits.subList(0, Math.min(4, hits.size()))) {
             if (!seenDocs.add(hit.documentId() * 10000L + (hit.pageFrom() == null ? 0 : hit.pageFrom()))) continue;
-            sources.add(new SourceDto(hit.documentId(), hit.originalFilename(), hit.pageFrom(), hit.chunkId()));
+            sources.add(new SourceDto(hit.documentId(), hit.originalFilename(), hit.pageFrom(), hit.chunkId(),
+                    snippet(hit.content())));
         }
         return saveAnswer(chat, answer, sources);
     }
@@ -244,7 +255,10 @@ public class ChatService {
                                 .map(Document::getOriginalFilename)
                                 .orElse("Документ #" + src.getDocumentId()),
                         src.getPageNumber(),
-                        src.getChunkId()))
+                        src.getChunkId(),
+                        src.getChunkId() == null ? null
+                                : chunkRepository.findById(src.getChunkId())
+                                        .map(c -> snippet(c.getContent())).orElse(null)))
                 .toList();
     }
 

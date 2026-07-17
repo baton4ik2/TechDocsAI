@@ -71,6 +71,7 @@ export interface AnswerSource {
   documentName: string
   pageNumber?: number
   chunkId?: number
+  snippet?: string
 }
 
 export interface ChatMessageDto {
