@@ -161,6 +161,10 @@ public class AiEquipmentExtractionService {
                 [{"manufacturer": "...", "name": "...", "model": "...", "quantity": 0, "unit": "шт."}]
                 Правила:
                 - name — наименование оборудования, model — тип/марка, quantity — число.
+                - Извлекай КАЖДУЮ строку таблицы отдельной позицией. Разные позиции могут
+                  иметь одинаковый тип (например, ОПОП 1-8 с надписями «ВЫХОД»,
+                  «Стрелка влево», звуковой) — обязательно сохраняй отличительные
+                  признаки в name и не объединяй такие строки.
                 - Если производитель не указан, manufacturer = null.
                 - Включай только реальные позиции оборудования с количеством.
                 - Не включай материалы (кабель, трубы, короба) и работы.
@@ -225,10 +229,15 @@ public class AiEquipmentExtractionService {
         return objectMapper.readValue(answer.substring(start, end + 1), List.class);
     }
 
+    /**
+     * Дубликат — совпадение и наименования, и модели. Сравнивать только по модели
+     * нельзя: в ведомостях бывают разные позиции с одним типом (например, ОПОП 1-8
+     * с надписями «ВЫХОД», «Стрелка влево», звуковой) — это разные строки.
+     */
     private boolean isDuplicate(Long facilityId, String name, String model) {
-        String needle = normalize(model != null ? model : name);
+        String needle = normalize(name) + "|" + normalize(model);
         return equipmentRepository.findFiltered(facilityId, null).stream()
-                .anyMatch(e -> normalize(e.getModel() != null ? e.getModel() : e.getName()).equals(needle));
+                .anyMatch(e -> (normalize(e.getName()) + "|" + normalize(e.getModel())).equals(needle));
     }
 
     private String normalize(String value) {
