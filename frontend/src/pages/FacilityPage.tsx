@@ -197,6 +197,15 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
     load()
   }
 
+  const extractEquipment = async (docId: number) => {
+    try {
+      const result = await api.post<{ message: string }>(`/api/documents/${docId}/extract-equipment`)
+      alert(result.message)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Ошибка')
+    }
+  }
+
   const formatSize = (bytes: number) => {
     if (bytes > 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' МБ'
     return Math.max(1, Math.round(bytes / 1024)) + ' КБ'
@@ -246,6 +255,11 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
                 <td className="px-4 py-3 text-slate-500">{d.pageCount ?? '—'}</td>
                 <td className="px-4 py-3"><StatusBadge status={d.status} /></td>
                 <td className="px-4 py-3 text-right whitespace-nowrap">
+                  {d.status === 'READY' && (
+                    <button onClick={() => extractEquipment(d.id)}
+                            title="Извлечь оборудование в реестр (ИИ)"
+                            className="text-slate-400 hover:text-primary-600 mr-3">⚙</button>
+                  )}
                   {(d.status === 'ERROR' || d.status === 'NEEDS_OCR' || d.status === 'READY') && (
                     <button onClick={() => reprocess(d.id)} title="Повторная обработка"
                             className="text-slate-400 hover:text-primary-600 mr-3">↻</button>

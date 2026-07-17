@@ -33,7 +33,9 @@ public class ChatService {
             "сколько", "количество", "кол-во", "как", "много", "есть", "установлено", "установлен",
             "установлена", "используется", "используются", "на", "в", "по", "объекте", "объектах",
             "объект", "системе", "система", "какие", "какое", "какой", "что", "где", "этом", "для",
-            "штук", "всего", "и", "или", "ли", "документе", "документах");
+            "штук", "всего", "и", "или", "ли", "документе", "документах",
+            "привет", "здравствуйте", "здравствуй", "добрый", "день", "пожалуйста", "скажи",
+            "подскажи", "друг", "спасибо");
 
     private final ChatMessageRepository messageRepository;
     private final AnswerSourceRepository answerSourceRepository;
@@ -92,14 +94,19 @@ public class ChatService {
                 found.put(eq.getId(), eq);
             }
         }
-        // оставляем только записи, совпавшие со ВСЕМИ ключевыми словами вопроса:
-        // "дымовых извещателей" не должно считать ручные извещатели
-        found.values().removeIf(eq -> {
+        // Оставляем записи с максимальным числом совпавших ключевых слов:
+        // "дымовых извещателей" не считает ручные извещатели (2 совпадения против 1),
+        // а лишние слова в вопросе не обнуляют результат.
+        Map<Long, Integer> matchCount = new LinkedHashMap<>();
+        for (Equipment eq : found.values()) {
             String haystack = ((eq.getManufacturer() == null ? "" : eq.getManufacturer()) + " "
                     + (eq.getName() == null ? "" : eq.getName()) + " "
                     + (eq.getModel() == null ? "" : eq.getModel())).toLowerCase();
-            return !keywords.stream().allMatch(haystack::contains);
-        });
+            matchCount.put(eq.getId(), (int) keywords.stream().filter(haystack::contains).count());
+        }
+        int best = matchCount.values().stream().max(Integer::compare).orElse(0);
+        if (best == 0) return null;
+        found.keySet().removeIf(id -> matchCount.get(id) < best);
         if (found.isEmpty()) return null;
 
         // группировка по модели/наименованию

@@ -11,6 +11,9 @@ import org.springframework.web.multipart.MultipartFile;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
+
+import ru.techdocs.ai.AiEquipmentExtractionService;
 
 @RestController
 @RequestMapping("/api/documents")
@@ -20,6 +23,7 @@ public class DocumentController {
     private final DocumentService documentService;
     private final DocumentTypeRepository typeRepository;
     private final DocumentRepository documentRepository;
+    private final AiEquipmentExtractionService equipmentExtractionService;
 
     @PostMapping("/upload")
     public List<Document> upload(@RequestParam Long facilityId,
@@ -76,6 +80,22 @@ public class DocumentController {
     public ResponseEntity<Void> reprocess(@PathVariable Long id) {
         documentService.reprocess(id);
         return ResponseEntity.accepted().build();
+    }
+
+    @PostMapping("/{id}/extract-equipment")
+    public ResponseEntity<Map<String, String>> extractEquipment(@PathVariable Long id) {
+        Document document = documentService.get(id);
+        if (!Document.STATUS_READY.equals(document.getStatus())) {
+            throw new ru.techdocs.common.BadRequestException(
+                    "Документ ещё не обработан. Дождитесь статуса «Готов».");
+        }
+        if (!equipmentExtractionService.isAvailable()) {
+            throw new ru.techdocs.common.BadRequestException(
+                    "ИИ-провайдер не настроен — извлечение оборудования недоступно.");
+        }
+        equipmentExtractionService.extractAsync(id);
+        return ResponseEntity.accepted().body(Map.of("message",
+                "Извлечение запущено. Позиции появятся в реестре оборудования со статусом «Требует проверки» через несколько минут."));
     }
 
     @PatchMapping("/{id}")
