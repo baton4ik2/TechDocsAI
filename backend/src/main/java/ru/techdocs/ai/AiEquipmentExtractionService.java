@@ -152,6 +152,10 @@ public class AiEquipmentExtractionService {
                 - Если производитель не указан, manufacturer = null.
                 - Включай только реальные позиции оборудования с количеством.
                 - Не включай материалы (кабель, трубы, короба) и работы.
+                - Текст получен OCR-распознаванием скана. Исправляй очевидные ошибки:
+                  перепутанные латинские и кириллические буквы, лишние символы | _ из таблиц.
+                  Пиши термины правильно: "Оповещатель", "Громкоговоритель", "исп." и т.д.
+                - Если строка распознана нечитаемо и наименование восстановить нельзя — пропусти её.
                 - Если на странице нет перечня оборудования — верни [].
                 """;
         String answer = aiClient.complete(systemPrompt, "Текст страницы:\n\n" + text);
@@ -221,8 +225,48 @@ public class AiEquipmentExtractionService {
 
     private String stringValue(Object value) {
         if (value == null) return null;
-        String s = String.valueOf(value).strip();
-        return s.isEmpty() || "null".equals(s) ? null : s;
+        String s = cleanOcrArtifacts(String.valueOf(value));
+        return s == null || s.isEmpty() || "null".equals(s) ? null : s;
+    }
+
+    // Латиница ↔ кириллица: пары букв, неотличимые визуально (гомоглифы).
+    private static final String LATIN_LOOKALIKES = "ABCEHKMOPTXYaceopxy";
+    private static final String CYRILLIC_LOOKALIKES = "АВСЕНКМОРТХУасеорху";
+
+    /**
+     * Чистка артефактов OCR в извлечённых полях: обрезка символов таблиц (| _ и т.п.)
+     * и починка слов со смешанными алфавитами — «LPA-6С» (кириллическая С) → «LPA-6C»,
+     * «ОПОП» с латинскими O/П-подменами → кириллица.
+     */
+    private String cleanOcrArtifacts(String value) {
+        if (value == null) return null;
+        String s = value.strip()
+                .replaceAll("^[|_\\-–—•.,;:\\s]+", "")
+                .replaceAll("[|_•\\s]+$", "")
+                .replaceAll("\\s{2,}", " ")
+                .replaceAll("\\s*\\|\\s*", " ");
+        StringBuilder result = new StringBuilder();
+        for (String token : s.split(" ")) {
+            if (!result.isEmpty()) result.append(' ');
+            result.append(normalizeToken(token));
+        }
+        return result.toString().strip();
+    }
+
+    /** Внутри одного слова приводим буквы-двойники к преобладающему алфавиту. */
+    private String normalizeToken(String token) {
+        long cyrillic = token.chars().filter(c -> Character.UnicodeBlock.of(c) == Character.UnicodeBlock.CYRILLIC).count();
+        long latin = token.chars().filter(c -> c < 128 && Character.isLetter(c)).count();
+        if (cyrillic == 0 || latin == 0) return token; // алфавиты не смешаны
+        boolean toCyrillic = cyrillic >= latin;
+        String from = toCyrillic ? LATIN_LOOKALIKES : CYRILLIC_LOOKALIKES;
+        String to = toCyrillic ? CYRILLIC_LOOKALIKES : LATIN_LOOKALIKES;
+        StringBuilder sb = new StringBuilder(token.length());
+        for (char c : token.toCharArray()) {
+            int idx = from.indexOf(c);
+            sb.append(idx >= 0 ? to.charAt(idx) : c);
+        }
+        return sb.toString();
     }
 
     private BigDecimal parseQuantity(Object value) {

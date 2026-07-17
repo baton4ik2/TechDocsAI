@@ -43,7 +43,8 @@ techdocs:
   ocr:
     command: ${OCR_COMMAND:tesseract}
     languages: ${OCR_LANGUAGES:rus+eng}
-    dpi: ${OCR_DPI:200}
+    # 300 dpi заметно точнее для кириллицы (двуязычные сканы), но медленнее
+    dpi: ${OCR_DPI:300}
     max-pages: ${OCR_MAX_PAGES:100}
     page-timeout-seconds: ${OCR_PAGE_TIMEOUT:120}
   cors:
