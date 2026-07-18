@@ -507,6 +507,8 @@ interface ImportPreviewItem {
   model?: string
   quantity: number
   unit: string
+  systemName?: string
+  quantityMissing?: boolean
   duplicateGroup?: number
   existsInRegistry: boolean
 }
@@ -837,7 +839,7 @@ function ImportModal({ facilityId, systems, onClose, onImported }: {
     setLoading(true)
     setError('')
     try {
-      const items: { manufacturer?: string; name: string; model?: string; quantity: number; unit: string; comment?: string }[] = []
+      const items: { manufacturer?: string; name: string; model?: string; quantity: number; unit: string; comment?: string; systemName?: string }[] = []
       const mergedGroups = new Set<number>()
       preview.forEach((item, idx) => {
         if (!include[idx]) return
@@ -849,12 +851,15 @@ function ImportModal({ facilityId, systems, onClose, onImported }: {
           items.push({
             manufacturer: item.manufacturer, name: item.name, model: item.model,
             quantity: rows.reduce((s, r) => s + r.quantity, 0), unit: item.unit,
+            systemName: item.systemName,
             comment: `Объединено из ${rows.length} строк файла`,
           })
         } else {
           items.push({
             manufacturer: item.manufacturer, name: item.name, model: item.model,
             quantity: item.quantity, unit: item.unit,
+            systemName: item.systemName,
+            comment: item.quantityMissing ? 'Кол-во в файле не указано — проверьте' : undefined,
           })
         }
       })
@@ -883,13 +888,20 @@ function ImportModal({ facilityId, systems, onClose, onImported }: {
   return (
     <Modal title="Импорт оборудования из Excel" onClose={onClose}>
       <div className="space-y-4 max-h-[70vh] overflow-y-auto">
-        <div>
-          <label className="label">Инженерная система (для всех позиций файла)</label>
-          <select className="input" value={systemId} onChange={(e) => setSystemId(e.target.value)}>
-            <option value="">Не указана</option>
-            {systems.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </div>
+        {preview?.some((i) => i.systemName) ? (
+          <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800">
+            Файл распознан как реестр с разбивкой по системам — каждая позиция попадёт
+            в свою систему автоматически. Отсутствующие системы будут созданы на объекте.
+          </div>
+        ) : (
+          <div>
+            <label className="label">Инженерная система (для всех позиций файла)</label>
+            <select className="input" value={systemId} onChange={(e) => setSystemId(e.target.value)}>
+              <option value="">Не указана</option>
+              {systems.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+        )}
         <div>
           <label className="label">Файл Excel (нужны колонки «Наименование» и «Кол-во»)</label>
           <input type="file" accept=".xlsx,.xls" className="input"
@@ -929,6 +941,9 @@ function ImportModal({ facilityId, systems, onClose, onImported }: {
                   <th className="py-1 pr-2"></th>
                   <th className="py-1 pr-2 font-medium">Наименование</th>
                   <th className="py-1 pr-2 font-medium">Модель</th>
+                  {preview.some((i) => i.systemName) && (
+                    <th className="py-1 pr-2 font-medium">Система</th>
+                  )}
                   <th className="py-1 font-medium text-right">Кол-во</th>
                 </tr>
               </thead>
@@ -948,7 +963,15 @@ function ImportModal({ facilityId, systems, onClose, onImported }: {
                       )}
                     </td>
                     <td className="py-1 pr-2 text-slate-600">{item.model ?? '—'}</td>
-                    <td className="py-1 text-right text-slate-800">{item.quantity} {item.unit}</td>
+                    {preview.some((i) => i.systemName) && (
+                      <td className="py-1 pr-2 text-slate-500">{item.systemName ?? '—'}</td>
+                    )}
+                    <td className="py-1 text-right text-slate-800">
+                      {item.quantity} {item.unit}
+                      {item.quantityMissing && (
+                        <span className="text-amber-600" title="Кол-во в файле не указано">*</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

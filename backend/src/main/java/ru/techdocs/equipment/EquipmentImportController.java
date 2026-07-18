@@ -21,11 +21,18 @@ import java.util.*;
 public class EquipmentImportController {
 
     private final XlsxEquipmentExtractor extractor;
+    private final WideRegistryParser wideParser;
     private final EquipmentRepository equipmentRepository;
+    private final ru.techdocs.engineeringsystem.EngineeringSystemRepository systemRepository;
 
     public record PreviewItem(String manufacturer, String name, String model,
-                              BigDecimal quantity, String unit,
+                              BigDecimal quantity, String unit, String systemName,
+                              boolean quantityMissing,
                               Integer duplicateGroup, boolean existsInRegistry) {}
+
+    /** Промежуточное представление строки из любого парсера. */
+    private record ParsedRow(String systemName, String manufacturer, String name,
+                             String model, BigDecimal quantity, String unit) {}
 
     @PostMapping("/preview")
     public List<PreviewItem> preview(@RequestParam Long facilityId,
@@ -35,11 +42,26 @@ public class EquipmentImportController {
             throw new BadRequestException("Поддерживаются только файлы Excel (.xlsx, .xls)");
         }
 
-        List<XlsxEquipmentExtractor.ExtractedItem> parsed;
+        // сначала пробуем «широкий» формат (системы горизонтальными блоками),
+        // затем обычную плоскую таблицу
+        List<ParsedRow> parsed = new ArrayList<>();
         try (InputStream input = file.getInputStream()) {
-            parsed = extractor.extract(file.getOriginalFilename(), input);
+            for (var w : wideParser.parse(file.getOriginalFilename(), input)) {
+                parsed.add(new ParsedRow(w.systemName(), w.manufacturer(), w.name(),
+                        w.model(), w.quantity(), w.unit()));
+            }
         } catch (Exception e) {
             throw new BadRequestException("Не удалось прочитать файл: " + e.getMessage());
+        }
+        if (parsed.isEmpty()) {
+            try (InputStream input = file.getInputStream()) {
+                for (var f : extractor.extract(file.getOriginalFilename(), input)) {
+                    parsed.add(new ParsedRow(null, f.manufacturer(), f.name(),
+                            f.model(), f.quantity(), f.unit()));
+                }
+            } catch (Exception e) {
+                throw new BadRequestException("Не удалось прочитать файл: " + e.getMessage());
+            }
         }
         if (parsed.isEmpty()) {
             throw new BadRequestException(
@@ -47,17 +69,25 @@ public class EquipmentImportController {
                     "«Наименование», «Кол-во» (опционально «Модель/Тип», «Производитель», «Ед. изм.»).");
         }
 
-        // существующий реестр объекта — для пометки «уже есть»
+        // существующий реестр объекта: ключ включает систему, чтобы одинаковая
+        // модель в разных системах не считалась дублем
+        Map<Long, String> systemNames = new HashMap<>();
+        for (var s : systemRepository.findByFacilityIdOrderById(facilityId)) {
+            systemNames.put(s.getId(), s.getName());
+        }
         Set<String> registryKeys = new HashSet<>();
         for (Equipment e : equipmentRepository.findFiltered(facilityId, null)) {
-            registryKeys.add(key(e.getName(), e.getModel()));
+            String sysName = e.getEngineeringSystemId() == null ? null
+                    : systemNames.get(e.getEngineeringSystemId());
+            registryKeys.add(key(sysName, e.getName(), e.getModel()));
         }
 
-        // группировка дублей внутри файла
+        // группировка дублей внутри файла (в пределах системы)
         Map<String, List<Integer>> byKey = new LinkedHashMap<>();
         for (int i = 0; i < parsed.size(); i++) {
             var item = parsed.get(i);
-            byKey.computeIfAbsent(key(item.name(), item.model()), k -> new ArrayList<>()).add(i);
+            byKey.computeIfAbsent(key(item.systemName(), item.name(), item.model()),
+                    k -> new ArrayList<>()).add(i);
         }
         Map<Integer, Integer> groupOf = new HashMap<>();
         int groupCounter = 0;
@@ -75,15 +105,18 @@ public class EquipmentImportController {
             var item = parsed.get(i);
             result.add(new PreviewItem(
                     blankToNull(item.manufacturer()), item.name(), blankToNull(item.model()),
-                    item.quantity(), item.unit(),
+                    item.quantity() == null ? BigDecimal.ONE : item.quantity(),
+                    item.unit(), item.systemName(),
+                    item.quantity() == null,
                     groupOf.get(i),
-                    registryKeys.contains(key(item.name(), item.model()))));
+                    registryKeys.contains(key(item.systemName(), item.name(), item.model()))));
         }
         return result;
     }
 
     public record ImportItem(String manufacturer, String name, String model,
-                             BigDecimal quantity, String unit, String comment) {}
+                             BigDecimal quantity, String unit, String comment,
+                             String systemName) {}
 
     public record ImportRequest(Long facilityId, Long engineeringSystemId,
                                 String fileName, List<ImportItem> items) {}
@@ -97,15 +130,31 @@ public class EquipmentImportController {
         if (request.items() == null || request.items().isEmpty()) {
             throw new BadRequestException("Нет позиций для импорта");
         }
+
+        // системы объекта: ищем по имени (без регистра), отсутствующие создаём
+        Map<String, Long> systemByName = new HashMap<>();
+        for (var s : systemRepository.findByFacilityIdOrderById(request.facilityId())) {
+            systemByName.put(normalize(s.getName()), s.getId());
+        }
+
         int created = 0;
         for (ImportItem item : request.items()) {
             if (item.name() == null || item.name().isBlank()
                     || item.quantity() == null || item.quantity().signum() <= 0) {
                 continue;
             }
+            Long systemId = request.engineeringSystemId();
+            if (item.systemName() != null && !item.systemName().isBlank()) {
+                systemId = systemByName.computeIfAbsent(normalize(item.systemName()), k -> {
+                    var system = new ru.techdocs.engineeringsystem.EngineeringSystem();
+                    system.setFacilityId(request.facilityId());
+                    system.setName(item.systemName().strip());
+                    return systemRepository.save(system).getId();
+                });
+            }
             Equipment equipment = new Equipment();
             equipment.setFacilityId(request.facilityId());
-            equipment.setEngineeringSystemId(request.engineeringSystemId());
+            equipment.setEngineeringSystemId(systemId);
             equipment.setManufacturer(blankToNull(item.manufacturer()));
             equipment.setName(item.name().strip());
             equipment.setModel(blankToNull(item.model()));
@@ -121,8 +170,8 @@ public class EquipmentImportController {
         return Map.of("created", created);
     }
 
-    private static String key(String name, String model) {
-        return normalize(name) + "|" + normalize(model);
+    private static String key(String systemName, String name, String model) {
+        return normalize(systemName) + "|" + normalize(name) + "|" + normalize(model);
     }
 
     private static String normalize(String value) {
