@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="004-01-facility-drive-folder" author="techdocs">
+        <sql>
+            ALTER TABLE facilities ADD COLUMN drive_folder_id VARCHAR(255);
+            ALTER TABLE facilities ADD COLUMN drive_synced_at TIMESTAMP;
+        </sql>
+    </changeSet>
+
+    <changeSet id="004-02-document-drive-provenance" author="techdocs">
+        <sql>
+            ALTER TABLE documents ADD COLUMN drive_file_id VARCHAR(255);
+            ALTER TABLE documents ADD COLUMN drive_modified_time VARCHAR(64);
+            CREATE INDEX idx_documents_drive_file ON documents(drive_file_id);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

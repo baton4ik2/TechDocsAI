@@ -8,5 +8,6 @@
     <include file="db/changelog/changes/001-init-schema.xml" relativeToChangelogFile="false"/>
     <include file="db/changelog/changes/002-seed-reference-data.xml" relativeToChangelogFile="false"/>
     <include file="db/changelog/changes/003-fulltext-search.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/004-google-drive.xml" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

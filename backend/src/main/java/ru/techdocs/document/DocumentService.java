@@ -59,6 +59,48 @@ public class DocumentService {
         return document;
     }
 
+    /** Сохранение файла из произвольного потока (например, из Google Drive). */
+    public Document saveFromBytes(Long facilityId, Long systemId, String originalFilename,
+                                  byte[] data, String mimeType,
+                                  String driveFileId, String driveModifiedTime) {
+        String extension = extension(originalFilename);
+        if (!ALLOWED_EXTENSIONS.contains(extension)) {
+            throw new BadRequestException("Формат ." + extension + " не поддерживается.");
+        }
+        String storagePath = "facility-" + facilityId + "/" + UUID.randomUUID() + "-" + sanitize(originalFilename);
+        fileStorage.save(storagePath, new java.io.ByteArrayInputStream(data), data.length, mimeType);
+
+        Document document = new Document();
+        document.setFacilityId(facilityId);
+        document.setEngineeringSystemId(systemId);
+        document.setName(stripExtension(originalFilename));
+        document.setOriginalFilename(originalFilename);
+        document.setStoragePath(storagePath);
+        document.setMimeType(mimeType);
+        document.setSize(data.length);
+        document.setChecksum(sha256(data));
+        document.setDriveFileId(driveFileId);
+        document.setDriveModifiedTime(driveModifiedTime);
+        document.setStatus(Document.STATUS_UPLOADED);
+        document = documentRepository.save(document);
+
+        processingService.processAsync(document.getId());
+        return document;
+    }
+
+    private String sha256(byte[] data) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(data));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public boolean isSupportedExtension(String filename) {
+        return ALLOWED_EXTENSIONS.contains(extension(filename));
+    }
+
     public List<Document> list(Long facilityId, Long systemId, Long typeId, String status) {
         return documentRepository.findFiltered(facilityId, systemId, typeId, status);
     }

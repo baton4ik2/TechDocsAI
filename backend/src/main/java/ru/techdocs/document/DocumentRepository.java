@@ -17,6 +17,8 @@ public interface DocumentRepository extends JpaRepository<Document, Long>, JpaSp
 
     long countByEngineeringSystemId(Long systemId);
 
+    java.util.Optional<Document> findByDriveFileId(String driveFileId);
+
     @Modifying
     @Transactional
     @Query("UPDATE Document d SET d.engineeringSystemId = :target WHERE d.engineeringSystemId = :source")

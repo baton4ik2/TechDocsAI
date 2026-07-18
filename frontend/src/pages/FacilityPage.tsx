@@ -76,7 +76,7 @@ export default function FacilityPage() {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {tab === 'overview' && <OverviewTab facility={facility} />}
+        {tab === 'overview' && <OverviewTab facility={facility} onChange={load} />}
         {tab === 'systems' && <SystemsTab facilityId={facilityId} onChange={load} />}
         {tab === 'documents' && <DocumentsTab facilityId={facilityId} onChange={load} />}
         {tab === 'equipment' && <EquipmentTab facilityId={facilityId} />}
@@ -90,7 +90,7 @@ export default function FacilityPage() {
   )
 }
 
-function OverviewTab({ facility }: { facility: Facility }) {
+function OverviewTab({ facility, onChange }: { facility: Facility; onChange: () => void }) {
   const stats = [
     { label: 'Документов', value: facility.documentCount },
     { label: 'Систем', value: facility.systemCount },
@@ -112,6 +112,98 @@ function OverviewTab({ facility }: { facility: Facility }) {
         <div className="card p-5">
           <h3 className="font-medium text-slate-900 mb-2">Описание</h3>
           <p className="text-sm text-slate-600 whitespace-pre-wrap">{facility.description}</p>
+        </div>
+      )}
+      <DriveCard facilityId={facility.id} onSynced={onChange} />
+    </div>
+  )
+}
+
+interface DriveStatus {
+  available: boolean
+  folderId: string | null
+  syncedAt: string | null
+}
+
+function DriveCard({ facilityId, onSynced }: { facilityId: number; onSynced: () => void }) {
+  const [status, setStatus] = useState<DriveStatus | null>(null)
+  const [folder, setFolder] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+
+  const load = useCallback(() => {
+    api.get<DriveStatus>(`/api/facilities/${facilityId}/drive`).then((s) => {
+      setStatus(s)
+      setFolder(s.folderId ?? '')
+    })
+  }, [facilityId])
+
+  useEffect(() => { load() }, [load])
+
+  const saveFolder = async () => {
+    setSaving(true)
+    try {
+      await api.put(`/api/facilities/${facilityId}/drive/folder`, { folder })
+      toast('Папка Google Drive сохранена', 'success')
+      load()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Ошибка', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const sync = async () => {
+    setSyncing(true)
+    try {
+      const r = await api.post<{ added: number; updated: number; skipped: number; failed: number }>(
+        `/api/facilities/${facilityId}/drive/sync`)
+      toast(`Синхронизация: +${r.added} новых, ${r.updated} обновлено, ${r.skipped} без изменений${r.failed ? `, ${r.failed} ошибок` : ''}`, 'success')
+      load()
+      onSynced()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Ошибка синхронизации', 'error')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  if (!status) return null
+
+  return (
+    <div className="card p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-lg">📁</span>
+        <h3 className="font-medium text-slate-900">Google Drive</h3>
+        {status.syncedAt && (
+          <span className="text-xs text-slate-400 ml-auto">
+            Синхронизировано: {new Date(status.syncedAt).toLocaleString('ru')}
+          </span>
+        )}
+      </div>
+
+      {!status.available ? (
+        <p className="text-sm text-slate-500">
+          Интеграция не настроена. Администратору нужно указать ключ сервисного аккаунта Google
+          (переменная <code className="text-xs bg-slate-100 px-1 rounded">DRIVE_SERVICE_ACCOUNT_KEY</code>)
+          и расшарить папки Drive на его email.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          <p className="text-xs text-slate-500">
+            Укажите папку объекта в Google Drive (ссылку или ID). Подпапки внутри неё станут
+            инженерными системами. Папку нужно расшарить на email сервисного аккаунта.
+          </p>
+          <div className="flex gap-2">
+            <input className="input" placeholder="Ссылка на папку или её ID"
+                   value={folder} onChange={(e) => setFolder(e.target.value)} />
+            <button className="btn-secondary shrink-0" onClick={saveFolder} disabled={saving}>
+              Сохранить
+            </button>
+          </div>
+          <button className="btn-primary" onClick={sync} disabled={syncing || !status.folderId}>
+            {syncing ? 'Синхронизация…' : '🔄 Синхронизировать'}
+          </button>
         </div>
       )}
     </div>

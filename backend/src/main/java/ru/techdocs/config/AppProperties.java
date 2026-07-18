@@ -8,7 +8,8 @@ public record AppProperties(
         Storage storage,
         Ai ai,
         Document document,
-        Cors cors
+        Cors cors,
+        Drive drive
 ) {
     public record Auth(String adminEmail, String adminPassword, String jwtSecret, int jwtExpirationMinutes) {}
 
@@ -20,4 +21,6 @@ public record AppProperties(
     public record Document(int maxFileSizeMb, int maxPages) {}
 
     public record Cors(String allowedOrigins) {}
+
+    public record Drive(String serviceAccountKeyPath) {}
 }

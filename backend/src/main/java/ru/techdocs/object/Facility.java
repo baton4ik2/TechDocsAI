@@ -31,6 +31,12 @@ public class Facility {
     @Column(nullable = false)
     private String status = "ACTIVE";
 
+    @Column(name = "drive_folder_id")
+    private String driveFolderId;
+
+    @Column(name = "drive_synced_at")
+    private Instant driveSyncedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 }
