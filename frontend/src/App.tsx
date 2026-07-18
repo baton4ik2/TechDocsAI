@@ -6,6 +6,7 @@ import DashboardPage from './pages/DashboardPage'
 import FacilitiesPage from './pages/FacilitiesPage'
 import FacilityPage from './pages/FacilityPage'
 import ChatPage from './pages/ChatPage'
+import ToastHost from './components/Toast'
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   if (!getToken()) return <Navigate to="/login" replace />
@@ -14,22 +15,25 @@ function RequireAuth({ children }: { children: JSX.Element }) {
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route
-        path="/"
-        element={
-          <RequireAuth>
-            <Layout />
-          </RequireAuth>
-        }
-      >
-        <Route index element={<DashboardPage />} />
-        <Route path="facilities" element={<FacilitiesPage />} />
-        <Route path="facilities/:id" element={<FacilityPage />} />
-        <Route path="chat" element={<ChatPage />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/"
+          element={
+            <RequireAuth>
+              <Layout />
+            </RequireAuth>
+          }
+        >
+          <Route index element={<DashboardPage />} />
+          <Route path="facilities" element={<FacilitiesPage />} />
+          <Route path="facilities/:id" element={<FacilityPage />} />
+          <Route path="chat" element={<ChatPage />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      <ToastHost />
+    </>
   )
 }

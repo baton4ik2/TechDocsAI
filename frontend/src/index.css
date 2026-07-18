@@ -29,3 +29,8 @@ body {
 .label {
   @apply block text-sm font-medium text-slate-600 mb-1;
 }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}

@@ -6,6 +6,7 @@ import ChatPanel from '../components/ChatPanel'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Modal from '../components/Modal'
 import StatusBadge from '../components/StatusBadge'
+import { toast } from '../components/Toast'
 
 type Tab = 'overview' | 'systems' | 'documents' | 'equipment' | 'chat'
 
@@ -282,9 +283,12 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
     return () => { if (pollRef.current) window.clearTimeout(pollRef.current) }
   }, [facilityId, load])
 
-  const remove = async (docId: number) => {
-    if (!confirm('Удалить документ?')) return
-    await api.delete(`/api/documents/${docId}`)
+  const [deleteDoc, setDeleteDoc] = useState<Doc | null>(null)
+  const remove = async () => {
+    if (!deleteDoc) return
+    const id = deleteDoc.id
+    setDeleteDoc(null)
+    await api.delete(`/api/documents/${id}`)
     load()
     onChange()
   }
@@ -343,7 +347,7 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
       }))
       pollExtractStatus(doc.id)
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Ошибка')
+      toast(err instanceof Error ? err.message : 'Ошибка', 'error')
     }
   }
 
@@ -406,7 +410,7 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
                     <button onClick={() => reprocess(d.id)} title="Повторная обработка"
                             className="text-slate-400 hover:text-primary-600 mr-3">↻</button>
                   )}
-                  <button onClick={() => remove(d.id)} title="Удалить"
+                  <button onClick={() => setDeleteDoc(d)} title="Удалить"
                           className="text-slate-400 hover:text-red-500">🗑</button>
                 </td>
               </tr>
@@ -427,6 +431,22 @@ function DocumentsTab({ facilityId, onChange }: { facilityId: number; onChange: 
           types={types}
           onClose={() => setShowUpload(false)}
           onUploaded={() => { setShowUpload(false); load(); onChange() }}
+        />
+      )}
+
+      {deleteDoc && (
+        <ConfirmDialog
+          title="Удаление документа"
+          confirmLabel="Удалить"
+          danger
+          onClose={() => setDeleteDoc(null)}
+          onConfirm={remove}
+          message={
+            <p>
+              Удалить документ <span className="font-medium">«{deleteDoc.originalFilename}»</span>?
+              Файл, распознанный текст и связанные записи будут удалены. Действие необратимо.
+            </p>
+          }
         />
       )}
 
@@ -666,7 +686,7 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
       setSelected([])
       load()
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Ошибка')
+      toast(err instanceof Error ? err.message : 'Ошибка', 'error')
     }
   }
 
@@ -1011,7 +1031,7 @@ function ImportModal({ facilityId, systems, onClose, onImported }: {
         fileName,
         items,
       })
-      alert(`Импортировано позиций: ${result.created}`)
+      toast(`Импортировано позиций: ${result.created}`, 'success')
       onImported()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ошибка импорта')
