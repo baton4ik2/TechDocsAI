@@ -535,9 +535,11 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
     return () => clearTimeout(timer)
   }, [load])
 
-  useEffect(() => {
+  const loadSystems = useCallback(() => {
     api.get<EngineeringSystem[]>(`/api/facilities/${facilityId}/systems`).then(setSystems)
   }, [facilityId])
+
+  useEffect(() => { loadSystems() }, [loadSystems])
 
   type PendingAction =
     | { type: 'confirm'; ids: number[] }
@@ -736,7 +738,7 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
           facilityId={facilityId}
           systems={systems}
           onClose={() => setShowImport(false)}
-          onImported={() => { setShowImport(false); load() }}
+          onImported={() => { setShowImport(false); load(); loadSystems() }}
         />
       )}
 
@@ -788,6 +790,22 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
   )
 }
 
+// Синонимы названий систем: как в файлах ⇄ как принято на объектах
+const SYSTEM_ALIASES: Record<string, string> = {
+  'пожарнаясигнализация': 'АПС',
+  'автоматическаяпожарнаясигнализация': 'АПС',
+  'спс': 'АПС',
+  'аупс': 'АПС',
+  'пс': 'АПС',
+  'охраннаясигнализация': 'ОС',
+  'энергоучет': 'АСКУЭ',
+  'учетэнергоресурсов': 'АСКУЭ',
+  'видеонаблюдение': 'Видеонаблюдение',
+  'ктсо': 'СКУД',
+}
+
+const normalizeSystemName = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
+
 function ImportModal({ facilityId, systems, onClose, onImported }: {
   facilityId: number
   systems: EngineeringSystem[]
@@ -799,8 +817,22 @@ function ImportModal({ facilityId, systems, onClose, onImported }: {
   const [preview, setPreview] = useState<ImportPreviewItem[] | null>(null)
   const [include, setInclude] = useState<boolean[]>([])
   const [mergeGroup, setMergeGroup] = useState<Record<number, boolean>>({})
+  // сопоставление «система из файла» → id существующей системы или 'new'
+  const [sysMapping, setSysMapping] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  const defaultMapping = (fileSystem: string): string => {
+    const norm = normalizeSystemName(fileSystem)
+    const exact = systems.find((s) => normalizeSystemName(s.name) === norm)
+    if (exact) return String(exact.id)
+    const aliasTarget = SYSTEM_ALIASES[norm]
+    if (aliasTarget) {
+      const aliased = systems.find((s) => normalizeSystemName(s.name) === normalizeSystemName(aliasTarget))
+      if (aliased) return String(aliased.id)
+    }
+    return 'new'
+  }
 
   const onFile = async (file: File | null) => {
     if (!file) return
@@ -818,6 +850,14 @@ function ImportModal({ facilityId, systems, onClose, onImported }: {
       const groups: Record<number, boolean> = {}
       items.forEach((i) => { if (i.duplicateGroup) groups[i.duplicateGroup] = true })
       setMergeGroup(groups)
+      // сопоставление систем файла с системами объекта (синонимы учтены)
+      const mapping: Record<string, string> = {}
+      items.forEach((i) => {
+        if (i.systemName && !(i.systemName in mapping)) {
+          mapping[i.systemName] = defaultMapping(i.systemName)
+        }
+      })
+      setSysMapping(mapping)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ошибка чтения файла')
       setPreview(null)
@@ -832,6 +872,14 @@ function ImportModal({ facilityId, systems, onClose, onImported }: {
     // ни одна строка группы не включена — показываем сумму всей группы для ориентира
     return (preview ?? []).filter((i) => i.duplicateGroup === group)
         .reduce((s, r) => s + r.quantity, 0)
+  }
+
+  // имя системы для импорта: выбранная существующая или исходное (будет создана)
+  const mappedSystemName = (name?: string) => {
+    if (!name) return undefined
+    const target = sysMapping[name]
+    if (!target || target === 'new') return name
+    return systems.find((s) => String(s.id) === target)?.name ?? name
   }
 
   const submit = async () => {
@@ -851,14 +899,14 @@ function ImportModal({ facilityId, systems, onClose, onImported }: {
           items.push({
             manufacturer: item.manufacturer, name: item.name, model: item.model,
             quantity: rows.reduce((s, r) => s + r.quantity, 0), unit: item.unit,
-            systemName: item.systemName,
+            systemName: mappedSystemName(item.systemName),
             comment: `Объединено из ${rows.length} строк файла`,
           })
         } else {
           items.push({
             manufacturer: item.manufacturer, name: item.name, model: item.model,
             quantity: item.quantity, unit: item.unit,
-            systemName: item.systemName,
+            systemName: mappedSystemName(item.systemName),
             comment: item.quantityMissing ? 'Кол-во в файле не указано — проверьте' : undefined,
           })
         }
@@ -889,9 +937,25 @@ function ImportModal({ facilityId, systems, onClose, onImported }: {
     <Modal title="Импорт оборудования из Excel" onClose={onClose}>
       <div className="space-y-4 max-h-[70vh] overflow-y-auto">
         {preview?.some((i) => i.systemName) ? (
-          <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800">
-            Файл распознан как реестр с разбивкой по системам — каждая позиция попадёт
-            в свою систему автоматически. Отсутствующие системы будут созданы на объекте.
+          <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 space-y-2">
+            <div className="text-xs font-medium text-emerald-800">
+              Файл распознан как реестр с разбивкой по системам. Проверьте сопоставление
+              с системами объекта — при необходимости измените:
+            </div>
+            {Object.keys(sysMapping).map((fileSystem) => (
+              <div key={fileSystem} className="flex items-center gap-2 text-xs">
+                <span className="w-44 truncate text-slate-700" title={fileSystem}>{fileSystem}</span>
+                <span className="text-slate-400">→</span>
+                <select
+                  className="input py-1 text-xs flex-1"
+                  value={sysMapping[fileSystem]}
+                  onChange={(e) => setSysMapping({ ...sysMapping, [fileSystem]: e.target.value })}
+                >
+                  {systems.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  <option value="new">➕ Создать новую «{fileSystem}»</option>
+                </select>
+              </div>
+            ))}
           </div>
         ) : (
           <div>
