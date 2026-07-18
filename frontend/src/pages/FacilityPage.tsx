@@ -501,13 +501,26 @@ function UploadModal({ facilityId, systems, types, onClose, onUploaded }: {
   )
 }
 
+interface ImportPreviewItem {
+  manufacturer?: string
+  name: string
+  model?: string
+  quantity: number
+  unit: string
+  duplicateGroup?: number
+  existsInRegistry: boolean
+}
+
 function EquipmentTab({ facilityId }: { facilityId: number }) {
   const [items, setItems] = useState<Equipment[]>([])
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<number[]>([])
   const [editing, setEditing] = useState<Equipment | null>(null)
   const [showAdd, setShowAdd] = useState(false)
+  const [showImport, setShowImport] = useState(false)
   const [systems, setSystems] = useState<EngineeringSystem[]>([])
+  // фильтр по инженерной системе: '' — все, 'none' — без системы, иначе id
+  const [systemFilter, setSystemFilter] = useState('')
 
   const load = useCallback(() => {
     const params = new URLSearchParams({ facilityId: String(facilityId) })
@@ -534,9 +547,22 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
     setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
   }
 
-  const allSelected = items.length > 0 && selected.length === items.length
+  // клиентский фильтр по системе (список объекта уже загружен целиком)
+  const visibleItems = items.filter((i) => {
+    if (systemFilter === '') return true
+    if (systemFilter === 'none') return !i.engineeringSystemId
+    return String(i.engineeringSystemId) === systemFilter
+  })
+
+  const systemName = (id?: number) =>
+    id ? (systems.find((s) => s.id === id)?.name ?? `#${id}`) : null
+
+  const countBySystem = (filter: string) =>
+    items.filter((i) => filter === 'none' ? !i.engineeringSystemId : String(i.engineeringSystemId) === filter).length
+
+  const allSelected = visibleItems.length > 0 && selected.length === visibleItems.length
   const toggleSelectAll = () => {
-    setSelected(allSelected ? [] : items.map((i) => i.id))
+    setSelected(allSelected ? [] : visibleItems.map((i) => i.id))
   }
 
   const runPending = async () => {
@@ -582,8 +608,46 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
             </button>
           </>
         )}
+        <button className="btn-secondary" onClick={() => setShowImport(true)}>⬆ Из файла</button>
         <button className="btn-primary" onClick={() => setShowAdd(true)}>+ Добавить</button>
       </div>
+
+      {(systems.length > 0 || items.some((i) => !i.engineeringSystemId)) && (
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={() => { setSystemFilter(''); setSelected([]) }}
+            className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+              systemFilter === '' ? 'bg-primary-600 text-white border-primary-600'
+                : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
+            }`}
+          >
+            Все ({items.length})
+          </button>
+          {systems.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => { setSystemFilter(String(s.id)); setSelected([]) }}
+              className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+                systemFilter === String(s.id) ? 'bg-primary-600 text-white border-primary-600'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
+              }`}
+            >
+              {s.name} ({countBySystem(String(s.id))})
+            </button>
+          ))}
+          {items.some((i) => !i.engineeringSystemId) && (
+            <button
+              onClick={() => { setSystemFilter('none'); setSelected([]) }}
+              className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+                systemFilter === 'none' ? 'bg-primary-600 text-white border-primary-600'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
+              }`}
+            >
+              Без системы ({countBySystem('none')})
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
@@ -596,6 +660,7 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
               <th className="px-3 py-3 font-medium">Производитель</th>
               <th className="px-3 py-3 font-medium">Наименование</th>
               <th className="px-3 py-3 font-medium">Модель</th>
+              <th className="px-3 py-3 font-medium">Система</th>
               <th className="px-3 py-3 font-medium text-right">Кол-во</th>
               <th className="px-3 py-3 font-medium">Источник</th>
               <th className="px-3 py-3 font-medium">Статус</th>
@@ -603,7 +668,7 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
             </tr>
           </thead>
           <tbody>
-            {items.map((item) => (
+            {visibleItems.map((item) => (
               <tr key={item.id} className="border-b border-slate-50 hover:bg-slate-50/50">
                 <td className="px-3 py-2">
                   <input type="checkbox" checked={selected.includes(item.id)} onChange={() => toggleSelect(item.id)} />
@@ -611,6 +676,7 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
                 <td className="px-3 py-2 text-slate-500">{item.manufacturer ?? '—'}</td>
                 <td className="px-3 py-2 text-slate-800">{item.name ?? '—'}</td>
                 <td className="px-3 py-2 font-medium text-slate-800">{item.model ?? '—'}</td>
+                <td className="px-3 py-2 text-slate-500 text-xs">{systemName(item.engineeringSystemId) ?? '—'}</td>
                 <td className="px-3 py-2 text-right text-slate-800">{item.quantity} {item.unit}</td>
                 <td className="px-3 py-2">
                   {item.sources && item.sources.length > 0 ? (
@@ -645,7 +711,7 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
               </tr>
             ))}
             {items.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-400">
+              <tr><td colSpan={9} className="px-4 py-12 text-center text-slate-400">
                 Оборудования нет. Загрузите Excel-спецификацию — данные будут извлечены автоматически, либо добавьте вручную.
               </td></tr>
             )}
@@ -660,6 +726,15 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
           item={editing}
           onClose={() => { setEditing(null); setShowAdd(false) }}
           onSaved={() => { setEditing(null); setShowAdd(false); load() }}
+        />
+      )}
+
+      {showImport && (
+        <ImportModal
+          facilityId={facilityId}
+          systems={systems}
+          onClose={() => setShowImport(false)}
+          onImported={() => { setShowImport(false); load() }}
         />
       )}
 
@@ -708,6 +783,191 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
         />
       )}
     </div>
+  )
+}
+
+function ImportModal({ facilityId, systems, onClose, onImported }: {
+  facilityId: number
+  systems: EngineeringSystem[]
+  onClose: () => void
+  onImported: () => void
+}) {
+  const [systemId, setSystemId] = useState('')
+  const [fileName, setFileName] = useState('')
+  const [preview, setPreview] = useState<ImportPreviewItem[] | null>(null)
+  const [include, setInclude] = useState<boolean[]>([])
+  const [mergeGroup, setMergeGroup] = useState<Record<number, boolean>>({})
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const onFile = async (file: File | null) => {
+    if (!file) return
+    setError('')
+    setLoading(true)
+    setFileName(file.name)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const items = await api.postForm<ImportPreviewItem[]>(
+        `/api/equipment/import/preview?facilityId=${facilityId}`, form)
+      setPreview(items)
+      // по умолчанию: всё включено, кроме уже существующих в реестре; дубли — объединять
+      setInclude(items.map((i) => !i.existsInRegistry))
+      const groups: Record<number, boolean> = {}
+      items.forEach((i) => { if (i.duplicateGroup) groups[i.duplicateGroup] = true })
+      setMergeGroup(groups)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка чтения файла')
+      setPreview(null)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const groupSum = (group: number) => {
+    const rows = (preview ?? []).filter((item, idx) => item.duplicateGroup === group && include[idx])
+    if (rows.length > 0) return rows.reduce((s, r) => s + r.quantity, 0)
+    // ни одна строка группы не включена — показываем сумму всей группы для ориентира
+    return (preview ?? []).filter((i) => i.duplicateGroup === group)
+        .reduce((s, r) => s + r.quantity, 0)
+  }
+
+  const submit = async () => {
+    if (!preview) return
+    setLoading(true)
+    setError('')
+    try {
+      const items: { manufacturer?: string; name: string; model?: string; quantity: number; unit: string; comment?: string }[] = []
+      const mergedGroups = new Set<number>()
+      preview.forEach((item, idx) => {
+        if (!include[idx]) return
+        const group = item.duplicateGroup
+        if (group && mergeGroup[group]) {
+          if (mergedGroups.has(group)) return // группа уже добавлена одной строкой
+          mergedGroups.add(group)
+          const rows = preview.filter((p, i) => p.duplicateGroup === group && include[i])
+          items.push({
+            manufacturer: item.manufacturer, name: item.name, model: item.model,
+            quantity: rows.reduce((s, r) => s + r.quantity, 0), unit: item.unit,
+            comment: `Объединено из ${rows.length} строк файла`,
+          })
+        } else {
+          items.push({
+            manufacturer: item.manufacturer, name: item.name, model: item.model,
+            quantity: item.quantity, unit: item.unit,
+          })
+        }
+      })
+      if (items.length === 0) {
+        setError('Не выбрано ни одной позиции')
+        setLoading(false)
+        return
+      }
+      const result = await api.post<{ created: number }>(`/api/equipment/import`, {
+        facilityId,
+        engineeringSystemId: systemId ? Number(systemId) : null,
+        fileName,
+        items,
+      })
+      alert(`Импортировано позиций: ${result.created}`)
+      onImported()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка импорта')
+      setLoading(false)
+    }
+  }
+
+  const duplicateGroups = [...new Set((preview ?? [])
+    .map((i) => i.duplicateGroup).filter((g): g is number => !!g))]
+
+  return (
+    <Modal title="Импорт оборудования из Excel" onClose={onClose}>
+      <div className="space-y-4 max-h-[70vh] overflow-y-auto">
+        <div>
+          <label className="label">Инженерная система (для всех позиций файла)</label>
+          <select className="input" value={systemId} onChange={(e) => setSystemId(e.target.value)}>
+            <option value="">Не указана</option>
+            {systems.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="label">Файл Excel (нужны колонки «Наименование» и «Кол-во»)</label>
+          <input type="file" accept=".xlsx,.xls" className="input"
+                 onChange={(e) => onFile(e.target.files?.[0] ?? null)} />
+        </div>
+
+        {loading && <div className="text-sm text-slate-400">Обработка…</div>}
+        {error && <div className="text-sm text-red-600">{error}</div>}
+
+        {preview && (
+          <>
+            {duplicateGroups.length > 0 && (
+              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 space-y-2">
+                <div className="text-xs font-medium text-amber-800">
+                  В файле найдены повторяющиеся позиции — решите, что с ними делать:
+                </div>
+                {duplicateGroups.map((group) => {
+                  const first = preview.find((i) => i.duplicateGroup === group)!
+                  const count = preview.filter((i) => i.duplicateGroup === group).length
+                  return (
+                    <label key={group} className="flex items-center gap-2 text-xs text-amber-900">
+                      <input type="checkbox" checked={mergeGroup[group] ?? true}
+                             onChange={(e) => setMergeGroup({ ...mergeGroup, [group]: e.target.checked })} />
+                      <span>
+                        Объединить {count} строки «{first.name}{first.model ? ` ${first.model}` : ''}»
+                        в одну ({groupSum(group)} {first.unit})
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-slate-400 border-b border-slate-100">
+                  <th className="py-1 pr-2"></th>
+                  <th className="py-1 pr-2 font-medium">Наименование</th>
+                  <th className="py-1 pr-2 font-medium">Модель</th>
+                  <th className="py-1 font-medium text-right">Кол-во</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.map((item, idx) => (
+                  <tr key={idx} className={`border-b border-slate-50 ${
+                    item.duplicateGroup ? 'bg-amber-50' : item.existsInRegistry ? 'bg-sky-50' : ''
+                  }`}>
+                    <td className="py-1 pr-2">
+                      <input type="checkbox" checked={include[idx] ?? false}
+                             onChange={() => setInclude(include.map((v, i) => i === idx ? !v : v))} />
+                    </td>
+                    <td className="py-1 pr-2 text-slate-800">
+                      {item.name}
+                      {item.existsInRegistry && (
+                        <span className="ml-1 text-sky-600">(уже в реестре)</span>
+                      )}
+                    </td>
+                    <td className="py-1 pr-2 text-slate-600">{item.model ?? '—'}</td>
+                    <td className="py-1 text-right text-slate-800">{item.quantity} {item.unit}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-xs text-slate-400">
+              Жёлтым — дубли внутри файла, голубым — позиции, уже существующие в реестре
+              (по умолчанию не импортируются). Снимите или поставьте галочки по необходимости.
+            </p>
+          </>
+        )}
+      </div>
+
+      <div className="flex justify-end gap-2 mt-4">
+        <button type="button" className="btn-secondary" onClick={onClose}>Отмена</button>
+        <button type="button" className="btn-primary" disabled={!preview || loading} onClick={submit}>
+          Импортировать
+        </button>
+      </div>
+    </Modal>
   )
 }
 

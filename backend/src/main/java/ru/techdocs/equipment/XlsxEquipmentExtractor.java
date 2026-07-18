@@ -29,6 +29,10 @@ public class XlsxEquipmentExtractor {
     private static final List<String> UNIT_HEADERS = List.of("ед. изм", "ед.изм", "единица");
 
     public List<ExtractedItem> extract(Document document, InputStream input) {
+        return extract(document.getOriginalFilename(), input);
+    }
+
+    public List<ExtractedItem> extract(String label, InputStream input) {
         List<ExtractedItem> items = new ArrayList<>();
         try (Workbook workbook = WorkbookFactory.create(input)) {
             DataFormatter formatter = new DataFormatter();
@@ -37,7 +41,7 @@ public class XlsxEquipmentExtractor {
                 extractFromSheet(sheet, sheetIndex + 1, formatter, items);
             }
         } catch (Exception e) {
-            log.warn("Не удалось извлечь оборудование из {}: {}", document.getOriginalFilename(), e.getMessage());
+            log.warn("Не удалось извлечь оборудование из {}: {}", label, e.getMessage());
         }
         return items;
     }
