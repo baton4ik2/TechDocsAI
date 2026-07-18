@@ -145,7 +145,15 @@ public class EquipmentImportController {
             }
             Long systemId = request.engineeringSystemId();
             if (item.systemName() != null && !item.systemName().isBlank()) {
-                systemId = systemByName.computeIfAbsent(normalize(item.systemName()), k -> {
+                String key = normalize(item.systemName());
+                // синонимы: «Пожарная сигнализация» из файла = существующая «АПС»
+                if (!systemByName.containsKey(key)) {
+                    String alias = SYSTEM_ALIASES.get(key);
+                    if (alias != null && systemByName.containsKey(alias)) {
+                        key = alias;
+                    }
+                }
+                systemId = systemByName.computeIfAbsent(key, k -> {
                     var system = new ru.techdocs.engineeringsystem.EngineeringSystem();
                     system.setFacilityId(request.facilityId());
                     system.setName(item.systemName().strip());
@@ -169,6 +177,19 @@ public class EquipmentImportController {
         }
         return Map.of("created", created);
     }
+
+    /** Синонимы названий систем (нормализованные): вариант из файла → принятое имя. */
+    private static final Map<String, String> SYSTEM_ALIASES = Map.ofEntries(
+            Map.entry("пожарнаясигнализация", "апс"),
+            Map.entry("автоматическаяпожарнаясигнализация", "апс"),
+            Map.entry("аупс", "апс"),
+            Map.entry("спс", "апс"),
+            Map.entry("охраннаясигнализация", "ос"),
+            Map.entry("энергоучет", "аскуэ"),
+            Map.entry("учетэнергоресурсов", "аскуэ"),
+            Map.entry("ктсо", "скуд"),
+            Map.entry("видеонаблюдениеcctv", "видеонаблюдение"),
+            Map.entry("cctv", "видеонаблюдение"));
 
     private static String key(String systemName, String name, String model) {
         return normalize(systemName) + "|" + normalize(name) + "|" + normalize(model);
