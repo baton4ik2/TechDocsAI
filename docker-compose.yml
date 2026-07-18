@@ -49,7 +49,9 @@ services:
       - ollama
     environment:
       OLLAMA_HOST: http://ollama:11434
-    entrypoint: ["/bin/sh", "-c", "sleep 5 && ollama pull ${AI_CHAT_MODEL:-qwen2.5:7b} && if [ -n \"${AI_VISION_MODEL:-}\" ]; then ollama pull ${AI_VISION_MODEL}; fi"]
+    # vision-модель качаем только если она локальная (vision-провайдер не задан
+    # или указывает на ollama) — облачные модели типа gemini скачивать не нужно
+    entrypoint: ["/bin/sh", "-c", "sleep 5 && ollama pull ${AI_CHAT_MODEL:-qwen2.5:7b} && case \"${AI_VISION_BASE_URL:-}\" in ''|*ollama*) if [ -n \"${AI_VISION_MODEL:-}\" ]; then ollama pull ${AI_VISION_MODEL}; fi;; esac"]
     restart: "no"
 
   backend:
@@ -68,7 +70,10 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-http://ollama:11434/v1}
       AI_API_KEY: ${AI_API_KEY:-}
       AI_CHAT_MODEL: ${AI_CHAT_MODEL:-qwen2.5:7b}
+      AI_VISION_BASE_URL: ${AI_VISION_BASE_URL:-}
+      AI_VISION_API_KEY: ${AI_VISION_API_KEY:-}
       AI_VISION_MODEL: ${AI_VISION_MODEL:-}
+      AI_VISION_DPI: ${AI_VISION_DPI:-160}
       CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
     depends_on:
       postgres:

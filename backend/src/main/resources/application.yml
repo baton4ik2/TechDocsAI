@@ -37,8 +37,13 @@ techdocs:
     base-url: ${AI_BASE_URL:https://api.openai.com/v1}
     api-key: ${AI_API_KEY:}
     chat-model: ${AI_CHAT_MODEL:gpt-4o-mini}
-    # vision-модель для извлечения оборудования из сканов (читает картинку страницы
+    # Vision-модель для извлечения оборудования из сканов (читает картинку страницы
     # напрямую, без OCR). Пусто — извлечение работает по распознанному тексту.
+    # Провайдер vision может отличаться от чатового: например, чат — локальный
+    # Ollama, а извлечение — облачный Gemini. Если vision-base-url пуст,
+    # используется основной провайдер (base-url).
+    vision-base-url: ${AI_VISION_BASE_URL:}
+    vision-api-key: ${AI_VISION_API_KEY:}
     vision-model: ${AI_VISION_MODEL:}
     # Разрешение картинки для vision. 160 — проверенный баланс: на 220 qwen2.5vl:7b
     # начинает возвращать пустые ответы (изображение переполняет контекст модели).

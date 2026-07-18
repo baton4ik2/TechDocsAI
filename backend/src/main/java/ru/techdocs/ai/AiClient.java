@@ -18,22 +18,43 @@ import java.util.Map;
 public class AiClient {
 
     private final RestClient restClient;
+    private final RestClient visionRestClient;
     private final String model;
     private final String visionModel;
     private final boolean configured;
+    private final boolean visionConfigured;
 
     public AiClient(AppProperties props) {
         String baseUrl = props.ai().baseUrl();
         String apiKey = props.ai().apiKey();
         this.model = props.ai().chatModel();
         this.visionModel = props.ai().visionModel();
-        this.configured = apiKey != null && !apiKey.isBlank()
+        this.configured = isUsable(baseUrl, apiKey);
+        this.restClient = buildClient(baseUrl, apiKey);
+
+        // vision может ходить к другому провайдеру (например, чат — локальный Ollama,
+        // извлечение — облачный Gemini). Пустой vision-base-url = основной провайдер.
+        String visionBaseUrl = props.ai().visionBaseUrl();
+        String visionApiKey = props.ai().visionApiKey();
+        if (visionBaseUrl != null && !visionBaseUrl.isBlank()) {
+            this.visionRestClient = buildClient(visionBaseUrl, visionApiKey);
+            this.visionConfigured = isUsable(visionBaseUrl, visionApiKey);
+        } else {
+            this.visionRestClient = this.restClient;
+            this.visionConfigured = this.configured;
+        }
+    }
+
+    private static boolean isUsable(String baseUrl, String apiKey) {
+        return (apiKey != null && !apiKey.isBlank())
                 || baseUrl.contains("localhost") || baseUrl.contains("127.0.0.1")
                 || baseUrl.contains("ollama");
+    }
 
+    private static RestClient buildClient(String baseUrl, String apiKey) {
         // локальные модели (Ollama) на CPU могут отвечать очень долго — щедрый таймаут чтения
         var requestFactory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(5_000);
+        requestFactory.setConnectTimeout(10_000);
         requestFactory.setReadTimeout(600_000);
 
         RestClient.Builder builder = RestClient.builder()
@@ -42,7 +63,7 @@ public class AiClient {
         if (apiKey != null && !apiKey.isBlank()) {
             builder.defaultHeader("Authorization", "Bearer " + apiKey);
         }
-        this.restClient = builder.build();
+        return builder.build();
     }
 
     public boolean isConfigured() {
@@ -50,7 +71,7 @@ public class AiClient {
     }
 
     public boolean hasVisionModel() {
-        return configured && visionModel != null && !visionModel.isBlank();
+        return visionConfigured && visionModel != null && !visionModel.isBlank();
     }
 
     /** Запрос к vision-модели: текстовый промпт + изображение страницы (PNG). */
@@ -68,7 +89,7 @@ public class AiClient {
                         ))
                 )
         );
-        return execute(body);
+        return execute(visionRestClient, body);
     }
 
     public String complete(String systemPrompt, String userPrompt) {
@@ -80,13 +101,13 @@ public class AiClient {
                         Map.of("role", "user", "content", userPrompt)
                 )
         );
-        return execute(body);
+        return execute(restClient, body);
     }
 
     @SuppressWarnings("unchecked")
-    private String execute(Map<String, Object> body) {
+    private String execute(RestClient client, Map<String, Object> body) {
         try {
-            Map<String, Object> response = restClient.post()
+            Map<String, Object> response = client.post()
                     .uri("/chat/completions")
                     .body(body)
                     .retrieve()

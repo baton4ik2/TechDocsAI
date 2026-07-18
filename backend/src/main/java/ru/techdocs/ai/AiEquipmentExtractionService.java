@@ -55,7 +55,8 @@ public class AiEquipmentExtractionService {
     }
 
     public boolean isAvailable() {
-        return aiClient.isConfigured();
+        // извлечение работает, если доступен хотя бы один провайдер: текстовый или vision
+        return aiClient.isConfigured() || aiClient.hasVisionModel();
     }
 
     public Progress progressOf(Long documentId) {
