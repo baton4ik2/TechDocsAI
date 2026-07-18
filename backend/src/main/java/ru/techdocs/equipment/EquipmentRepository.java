@@ -1,8 +1,10 @@
 package ru.techdocs.equipment;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -10,6 +12,11 @@ import java.util.List;
 public interface EquipmentRepository extends JpaRepository<Equipment, Long> {
 
     long countByFacilityId(Long facilityId);
+
+    @Modifying
+    @Transactional
+    @Query("UPDATE Equipment e SET e.engineeringSystemId = :target WHERE e.engineeringSystemId = :source")
+    void reassignSystem(@Param("source") Long source, @Param("target") Long target);
 
     @Query("SELECT COALESCE(SUM(e.quantity), 0) FROM Equipment e WHERE e.facilityId = :facilityId")
     BigDecimal sumQuantityByFacility(@Param("facilityId") Long facilityId);

@@ -4,10 +4,14 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import ru.techdocs.common.BadRequestException;
 import ru.techdocs.common.NotFoundException;
+import ru.techdocs.document.DocumentRepository;
 import ru.techdocs.engineeringsystem.EngineeringSystem;
 import ru.techdocs.engineeringsystem.EngineeringSystemRepository;
+import ru.techdocs.equipment.EquipmentRepository;
 
 import java.util.List;
 
@@ -18,6 +22,8 @@ public class FacilityController {
 
     private final FacilityRepository facilityRepository;
     private final EngineeringSystemRepository systemRepository;
+    private final EquipmentRepository equipmentRepository;
+    private final DocumentRepository documentRepository;
     private final FacilityStatsService statsService;
 
     public record FacilityRequest(@NotBlank String name, String address, String description,
@@ -101,6 +107,36 @@ public class FacilityController {
         system.setCode(request.code());
         system.setDescription(request.description());
         return systemRepository.save(system);
+    }
+
+    @PatchMapping("/{id}/systems/{systemId}")
+    public EngineeringSystem renameSystem(@PathVariable Long id, @PathVariable Long systemId,
+                                          @Valid @RequestBody SystemRequest request) {
+        EngineeringSystem system = systemRepository.findById(systemId)
+                .orElseThrow(() -> new NotFoundException("Система не найдена"));
+        system.setName(request.name().trim());
+        return systemRepository.save(system);
+    }
+
+    public record MergeSystemRequest(Long targetSystemId) {}
+
+    /** Переносит оборудование и документы из системы в целевую, затем удаляет исходную. */
+    @PostMapping("/{id}/systems/{systemId}/merge")
+    @Transactional
+    public ResponseEntity<Void> mergeSystem(@PathVariable Long id, @PathVariable Long systemId,
+                                            @RequestBody MergeSystemRequest request) {
+        if (request.targetSystemId() == null || request.targetSystemId().equals(systemId)) {
+            throw new BadRequestException("Не выбрана целевая система для объединения");
+        }
+        systemRepository.findById(systemId)
+                .orElseThrow(() -> new NotFoundException("Система не найдена"));
+        systemRepository.findById(request.targetSystemId())
+                .orElseThrow(() -> new NotFoundException("Целевая система не найдена"));
+
+        equipmentRepository.reassignSystem(systemId, request.targetSystemId());
+        documentRepository.reassignSystem(systemId, request.targetSystemId());
+        systemRepository.deleteById(systemId);
+        return ResponseEntity.noContent().build();
     }
 
     @DeleteMapping("/{id}/systems/{systemId}")

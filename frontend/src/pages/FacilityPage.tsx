@@ -120,6 +120,10 @@ function OverviewTab({ facility }: { facility: Facility }) {
 function SystemsTab({ facilityId, onChange }: { facilityId: number; onChange: () => void }) {
   const [systems, setSystems] = useState<EngineeringSystem[]>([])
   const [name, setName] = useState('')
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editName, setEditName] = useState('')
+  const [mergeSource, setMergeSource] = useState<EngineeringSystem | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<EngineeringSystem | null>(null)
 
   const load = useCallback(() => {
     api.get<EngineeringSystem[]>(`/api/facilities/${facilityId}/systems`).then(setSystems)
@@ -136,33 +140,115 @@ function SystemsTab({ facilityId, onChange }: { facilityId: number; onChange: ()
     onChange()
   }
 
-  const remove = async (systemId: number) => {
-    if (!confirm('Удалить систему?')) return
-    await api.delete(`/api/facilities/${facilityId}/systems/${systemId}`)
+  const saveRename = async (systemId: number) => {
+    if (editName.trim()) {
+      await api.patch(`/api/facilities/${facilityId}/systems/${systemId}`, { name: editName.trim() })
+    }
+    setEditingId(null)
+    load()
+    onChange()
+  }
+
+  const doMerge = async (targetId: number) => {
+    if (!mergeSource) return
+    await api.post(`/api/facilities/${facilityId}/systems/${mergeSource.id}/merge`, { targetSystemId: targetId })
+    setMergeSource(null)
+    load()
+    onChange()
+  }
+
+  const doDelete = async () => {
+    if (!confirmDelete) return
+    await api.delete(`/api/facilities/${facilityId}/systems/${confirmDelete.id}`)
+    setConfirmDelete(null)
     load()
     onChange()
   }
 
   return (
-    <div className="p-8 space-y-4">
+    <div className="p-8 space-y-5">
       <form onSubmit={add} className="flex gap-2 max-w-md">
         <input className="input" placeholder="Название системы (например, АПС)" value={name} onChange={(e) => setName(e.target.value)} />
         <button type="submit" className="btn-primary shrink-0">Добавить</button>
       </form>
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {systems.map((s) => (
-          <div key={s.id} className="card p-4 flex items-start justify-between gap-2">
-            <div>
-              <div className="font-medium text-slate-900">{s.name}</div>
-              <div className="text-xs text-slate-500 mt-1">{s.documentCount ?? 0} документов</div>
-            </div>
-            <button onClick={() => remove(s.id)} className="text-slate-300 hover:text-red-500">×</button>
+          <div key={s.id} className="card p-4">
+            {editingId === s.id ? (
+              <div className="flex gap-2">
+                <input className="input py-1" value={editName} autoFocus
+                       onChange={(e) => setEditName(e.target.value)}
+                       onKeyDown={(e) => { if (e.key === 'Enter') saveRename(s.id) }} />
+                <button className="btn-primary py-1 px-3 shrink-0" onClick={() => saveRename(s.id)}>✓</button>
+                <button className="btn-secondary py-1 px-3 shrink-0" onClick={() => setEditingId(null)}>×</button>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="font-medium text-slate-900">{s.name}</div>
+                  <span className="text-xs text-slate-400 shrink-0">{s.documentCount ?? 0} док.</span>
+                </div>
+                <div className="flex gap-3 mt-3 text-xs">
+                  <button className="text-slate-400 hover:text-primary-600"
+                          onClick={() => { setEditingId(s.id); setEditName(s.name) }}>
+                    ✎ Переименовать
+                  </button>
+                  {systems.length > 1 && (
+                    <button className="text-slate-400 hover:text-primary-600"
+                            onClick={() => setMergeSource(s)}>
+                      ⛙ Объединить
+                    </button>
+                  )}
+                  <button className="text-slate-400 hover:text-red-500"
+                          onClick={() => setConfirmDelete(s)}>
+                    🗑 Удалить
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         ))}
         {systems.length === 0 && (
           <div className="col-span-full text-sm text-slate-400">Систем пока нет.</div>
         )}
       </div>
+
+      {mergeSource && (
+        <Modal title="Объединить систему" onClose={() => setMergeSource(null)}>
+          <p className="text-sm text-slate-600 mb-3">
+            Всё оборудование и документы системы <span className="font-medium">«{mergeSource.name}»</span> будут
+            перенесены в выбранную систему, а «{mergeSource.name}» — удалена. Действие необратимо.
+          </p>
+          <label className="label">Перенести в систему:</label>
+          <div className="space-y-1 max-h-64 overflow-y-auto">
+            {systems.filter((s) => s.id !== mergeSource.id).map((s) => (
+              <button key={s.id}
+                      onClick={() => doMerge(s.id)}
+                      className="w-full text-left rounded-lg border border-slate-200 px-3 py-2 text-sm hover:border-primary-400 hover:bg-primary-50 transition-colors">
+                {s.name}
+              </button>
+            ))}
+          </div>
+        </Modal>
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Удаление системы"
+          confirmLabel="Удалить"
+          danger
+          onClose={() => setConfirmDelete(null)}
+          onConfirm={doDelete}
+          message={
+            <p>
+              Удалить систему <span className="font-medium">«{confirmDelete.name}»</span>?
+              Оборудование и документы этой системы останутся на объекте, но без привязки к системе.
+              Чтобы сохранить привязку, используйте «Объединить».
+            </p>
+          }
+        />
+      )}
     </div>
   )
 }
@@ -616,42 +702,45 @@ function EquipmentTab({ facilityId }: { facilityId: number }) {
         <button className="btn-primary" onClick={() => setShowAdd(true)}>+ Добавить</button>
       </div>
 
-      {(systems.length > 0 || items.some((i) => !i.engineeringSystemId)) && (
-        <div className="flex gap-2 flex-wrap">
+      {(() => {
+        // показываем только непустые системы — пустые лишь захламляют фильтр
+        const nonEmpty = systems.filter((s) => countBySystem(String(s.id)) > 0)
+        const hasNoSystem = items.some((i) => !i.engineeringSystemId)
+        if (nonEmpty.length === 0 && !hasNoSystem) return null
+
+        const Chip = ({ active, onClick, label, count }: {
+          active: boolean; onClick: () => void; label: string; count: number
+        }) => (
           <button
-            onClick={() => { setSystemFilter(''); setSelected([]) }}
-            className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
-              systemFilter === '' ? 'bg-primary-600 text-white border-primary-600'
-                : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
+            onClick={onClick}
+            className={`inline-flex items-center gap-1.5 rounded-full pl-3 pr-1.5 py-1 text-xs font-medium transition-colors ${
+              active ? 'bg-primary-600 text-white shadow-sm'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
-            Все ({items.length})
+            {label}
+            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+              active ? 'bg-white/25 text-white' : 'bg-white text-slate-500'
+            }`}>{count}</span>
           </button>
-          {systems.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => { setSystemFilter(String(s.id)); setSelected([]) }}
-              className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
-                systemFilter === String(s.id) ? 'bg-primary-600 text-white border-primary-600'
-                  : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
-              }`}
-            >
-              {s.name} ({countBySystem(String(s.id))})
-            </button>
-          ))}
-          {items.some((i) => !i.engineeringSystemId) && (
-            <button
-              onClick={() => { setSystemFilter('none'); setSelected([]) }}
-              className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
-                systemFilter === 'none' ? 'bg-primary-600 text-white border-primary-600'
-                  : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
-              }`}
-            >
-              Без системы ({countBySystem('none')})
-            </button>
-          )}
-        </div>
-      )}
+        )
+
+        return (
+          <div className="flex gap-2 flex-wrap items-center">
+            <Chip active={systemFilter === ''} label="Все" count={items.length}
+                  onClick={() => { setSystemFilter(''); setSelected([]) }} />
+            {nonEmpty.map((s) => (
+              <Chip key={s.id} active={systemFilter === String(s.id)}
+                    label={s.name} count={countBySystem(String(s.id))}
+                    onClick={() => { setSystemFilter(String(s.id)); setSelected([]) }} />
+            ))}
+            {hasNoSystem && (
+              <Chip active={systemFilter === 'none'} label="Без системы" count={countBySystem('none')}
+                    onClick={() => { setSystemFilter('none'); setSelected([]) }} />
+            )}
+          </div>
+        )
+      })()}
 
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
