@@ -1,0 +1,41 @@
+spring:
+  datasource:
+    # для CI/локали можно переопределить через TEST_DB_URL и т.п.
+    url: ${TEST_DB_URL:jdbc:postgresql://localhost:5432/techdocs_test}
+    username: ${TEST_DB_USERNAME:techdocs}
+    password: ${TEST_DB_PASSWORD:techdocs}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.xml
+
+techdocs:
+  storage:
+    type: file
+    local-path: ./target/test-documents
+  auth:
+    admin-email: admin@techdocs.local
+    admin-password: admin123
+    jwt-secret: test-secret-key-long-enough-for-hmac-sha-384-signing-please
+    jwt-expiration-minutes: 60
+  ai:
+    base-url: https://example.invalid/v1
+    api-key: ""
+    chat-model: none
+    vision-base-url: ""
+    vision-api-key: ""
+    vision-model: ""
+  document:
+    max-file-size-mb: 100
+    max-pages: 500
+  cors:
+    allowed-origins: http://localhost:5173
+  drive:
+    service-account-key-path: ""
+
+logging:
+  level:
+    liquibase: WARN
+    org.hibernate: WARN

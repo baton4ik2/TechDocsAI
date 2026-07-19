@@ -58,6 +58,21 @@ AI:         Любой OpenAI-совместимый API (OpenAI, Ollama, LM Stu
 Deployment: Docker Compose
 ```
 
+## Тесты
+
+Юнит-тесты (парсеры, чанкер, JWT, OCR-чистка, логика синхронизации Drive) не
+требуют инфраструктуры. Интеграционные (`@SpringBootTest`) поднимают полный
+контекст и работают с PostgreSQL — заведите тестовую БД:
+
+```bash
+createdb techdocs_test          # владелец — пользователь techdocs
+cd backend && mvn test
+```
+
+Параметры БД для тестов можно переопределить: `TEST_DB_URL`,
+`TEST_DB_USERNAME`, `TEST_DB_PASSWORD`. Сборка Docker-образа идёт с
+`-DskipTests`, так что БД для неё не нужна.
+
 ## Разработка без Docker
 
 Backend (нужны PostgreSQL и MinIO, либо `techdocs.storage.type=file`):
