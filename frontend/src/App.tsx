@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import FacilitiesPage from './pages/FacilitiesPage'
 import FacilityPage from './pages/FacilityPage'
+import NormativesPage from './pages/NormativesPage'
 import ChatPage from './pages/ChatPage'
 import ToastHost from './components/Toast'
 
@@ -29,6 +30,7 @@ export default function App() {
           <Route index element={<DashboardPage />} />
           <Route path="facilities" element={<FacilitiesPage />} />
           <Route path="facilities/:id" element={<FacilityPage />} />
+          <Route path="normatives" element={<NormativesPage />} />
           <Route path="chat" element={<ChatPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

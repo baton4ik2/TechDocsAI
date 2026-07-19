@@ -60,6 +60,18 @@ export async function openDocument(documentId: number, page?: number | null) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
+/** Открывает PDF сборника нормативов в новой вкладке (авторизованным запросом). */
+export async function openNormative(sourcebookId: number, page?: number | null) {
+  const response = await fetch(`/api/normatives/${sourcebookId}/download`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  if (!response.ok) throw new ApiError(response.status, 'Не удалось открыть сборник')
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  window.open(page ? `${url}#page=${page}` : url, '_blank')
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>

@@ -89,6 +89,33 @@ export interface ChatMessageDto {
   sources: AnswerSource[]
 }
 
+export interface NormativeSourcebook {
+  id: number
+  name: string
+  code?: string
+  originalFilename?: string
+  pageCount?: number
+  rateCount: number
+  status: string
+  errorMessage?: string
+  createdAt: string
+}
+
+export interface NormativeRate {
+  id: number
+  sourcebookId: number
+  code: string
+  name: string
+  unit?: string
+  workComposition?: string
+  laborCost?: number
+  machineCost?: number
+  machineLabor?: number
+  materialCost?: number
+  laborHours?: number
+  pageNumber?: number
+}
+
 export interface Dashboard {
   facilityCount: number
   documentCount: number

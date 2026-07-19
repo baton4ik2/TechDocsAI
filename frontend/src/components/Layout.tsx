@@ -4,6 +4,7 @@ import { setToken } from '../api'
 const navItems = [
   { to: '/', label: 'Главная', icon: '🏠', end: true },
   { to: '/facilities', label: 'Объекты', icon: '🏢' },
+  { to: '/normatives', label: 'Нормативы', icon: '📚' },
   { to: '/chat', label: 'Чат с ИИ', icon: '💬' },
 ]
 
