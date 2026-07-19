@@ -116,6 +116,17 @@ export interface NormativeRate {
   pageNumber?: number
 }
 
+export interface NormativeMatch {
+  rate: NormativeRate
+  reason?: string
+}
+
+export interface NormativeMatchResult {
+  matches: NormativeMatch[]
+  candidates: NormativeRate[]
+  aiUsed: boolean
+}
+
 export interface Dashboard {
   facilityCount: number
   documentCount: number

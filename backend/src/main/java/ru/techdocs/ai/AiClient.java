@@ -19,10 +19,13 @@ public class AiClient {
 
     private final RestClient restClient;
     private final RestClient visionRestClient;
+    private final RestClient matchRestClient;
     private final String model;
     private final String visionModel;
+    private final String matchModel;
     private final boolean configured;
     private final boolean visionConfigured;
+    private final boolean matchConfigured;
 
     public AiClient(AppProperties props) {
         String baseUrl = props.ai().baseUrl();
@@ -42,6 +45,19 @@ public class AiClient {
         } else {
             this.visionRestClient = this.restClient;
             this.visionConfigured = this.configured;
+        }
+
+        // подбор расценок в сметах: отдельный текстовый провайдер (например, облачный
+        // Gemini 2.5). Пустой match-base-url = основной провайдер.
+        this.matchModel = props.ai().matchModel();
+        String matchBaseUrl = props.ai().matchBaseUrl();
+        String matchApiKey = props.ai().matchApiKey();
+        if (matchBaseUrl != null && !matchBaseUrl.isBlank()) {
+            this.matchRestClient = buildClient(matchBaseUrl, matchApiKey);
+            this.matchConfigured = isUsable(matchBaseUrl, matchApiKey);
+        } else {
+            this.matchRestClient = this.restClient;
+            this.matchConfigured = this.configured;
         }
     }
 
@@ -93,6 +109,19 @@ public class AiClient {
     }
 
     public String complete(String systemPrompt, String userPrompt) {
+        return complete(restClient, model, systemPrompt, userPrompt);
+    }
+
+    public boolean hasMatchModel() {
+        return matchConfigured && matchModel != null && !matchModel.isBlank();
+    }
+
+    /** Запрос к модели подбора расценок (текстовый, отдельный провайдер для смет). */
+    public String completeMatch(String systemPrompt, String userPrompt) {
+        return complete(matchRestClient, matchModel, systemPrompt, userPrompt);
+    }
+
+    private String complete(RestClient client, String model, String systemPrompt, String userPrompt) {
         Map<String, Object> body = Map.of(
                 "model", model,
                 "temperature", 0.1,
@@ -101,7 +130,7 @@ public class AiClient {
                         Map.of("role", "user", "content", userPrompt)
                 )
         );
-        return execute(restClient, body);
+        return execute(client, body);
     }
 
     @SuppressWarnings("unchecked")

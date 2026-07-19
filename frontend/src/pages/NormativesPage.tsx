@@ -1,6 +1,6 @@
-import { FormEvent, useEffect, useRef, useState } from 'react'
+import { Fragment, FormEvent, useEffect, useRef, useState } from 'react'
 import { api, openNormative } from '../api'
-import { NormativeRate, NormativeSourcebook } from '../types'
+import { NormativeMatch, NormativeMatchResult, NormativeRate, NormativeSourcebook } from '../types'
 import Modal from '../components/Modal'
 import StatusBadge from '../components/StatusBadge'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -10,6 +10,7 @@ export default function NormativesPage() {
   const [books, setBooks] = useState<NormativeSourcebook[]>([])
   const [showUpload, setShowUpload] = useState(false)
   const [deleting, setDeleting] = useState<NormativeSourcebook | null>(null)
+  const [aiAvailable, setAiAvailable] = useState(false)
   const [error, setError] = useState('')
 
   const load = () => {
@@ -18,7 +19,12 @@ export default function NormativesPage() {
       .catch((e) => setError(e.message))
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+    api.get<{ aiMatchAvailable: boolean }>('/api/normatives/ai-status')
+      .then((s) => setAiAvailable(s.aiMatchAvailable))
+      .catch(() => setAiAvailable(false))
+  }, [])
 
   // пока есть обрабатываемые сборники — периодически обновляем статус
   useEffect(() => {
@@ -63,6 +69,7 @@ export default function NormativesPage() {
 
       {error && <div className="text-red-600 text-sm">{error}</div>}
 
+      <AiMatchPanel available={aiAvailable} />
       <RateSearch />
 
       <div className="card divide-y divide-slate-100">
@@ -185,7 +192,87 @@ function UploadModal({ onClose, onUploaded }: { onClose: () => void; onUploaded:
   )
 }
 
-/** Проверка каталога: полнотекстовый поиск расценок по всем сборникам. */
+/** ИИ-подбор расценки: описание работы → Gemini выбирает подходящие расценки. */
+function AiMatchPanel({ available }: { available: boolean }) {
+  const [query, setQuery] = useState('')
+  const [result, setResult] = useState<NormativeMatchResult | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const run = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!query.trim()) return
+    setLoading(true)
+    setError('')
+    setResult(null)
+    try {
+      const r = await api.post<NormativeMatchResult>('/api/normatives/rates/ai-match', { query })
+      setResult(r)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка подбора')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="card p-5 space-y-3">
+      <div className="flex items-center gap-2">
+        <span className="text-lg">🤖</span>
+        <h2 className="font-semibold text-slate-900">ИИ-подбор расценки</h2>
+        {!available && (
+          <span className="text-xs text-amber-600">
+            ИИ-провайдер для смет не настроен — покажем кандидатов из поиска
+          </span>
+        )}
+      </div>
+      <p className="text-sm text-slate-500">
+        Опишите работу или оборудование — ИИ подберёт подходящие расценки из каталога.
+        Дёшево: модель видит только короткий список найденных расценок, а не весь сборник.
+      </p>
+      <form onSubmit={run} className="flex gap-2">
+        <input
+          className="input"
+          placeholder="напр. техобслуживание дымового пожарного извещателя ИП 212"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <button type="submit" className="btn-primary shrink-0" disabled={loading || !query.trim()}>
+          {loading ? 'Подбираем…' : 'Подобрать'}
+        </button>
+      </form>
+      {error && <div className="text-sm text-red-600">{error}</div>}
+
+      {result && result.matches.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-emerald-700 mb-1">Подобрано ИИ:</div>
+          <RateTable rows={result.matches.map((m) => m.rate)} reasons={reasonsOf(result.matches)} highlight />
+        </div>
+      )}
+      {result && result.matches.length === 0 && result.candidates.length > 0 && (
+        <div>
+          <div className="text-xs text-slate-500 mb-1">
+            {result.aiUsed
+              ? 'ИИ не выбрал точного совпадения. Кандидаты из поиска:'
+              : 'Кандидаты из полнотекстового поиска:'}
+          </div>
+          <RateTable rows={result.candidates} />
+        </div>
+      )}
+      {result && result.matches.length === 0 && result.candidates.length === 0 && !loading && (
+        <div className="text-sm text-slate-400">Ничего не найдено. Загрузите сборник или измените описание.</div>
+      )}
+    </div>
+  )
+}
+
+function reasonsOf(matches: NormativeMatch[]): Record<number, string> {
+  const map: Record<number, string> = {}
+  for (const m of matches) if (m.reason) map[m.rate.id] = m.reason
+  return map
+}
+
+/** Полнотекстовый поиск расценок по каталогу. */
 function RateSearch() {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<NormativeRate[] | null>(null)
@@ -207,8 +294,6 @@ function RateSearch() {
     return () => clearTimeout(t)
   }, [query])
 
-  const money = (v?: number) => (v == null ? '—' : v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
-
   return (
     <div className="card p-5 space-y-3">
       <div>
@@ -224,36 +309,83 @@ function RateSearch() {
       {results && results.length === 0 && !loading && (
         <div className="text-sm text-slate-400">Ничего не найдено. Загрузите сборник или измените запрос.</div>
       )}
-      {results && results.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                <th className="py-2 pr-3 font-medium">Шифр</th>
-                <th className="py-2 pr-3 font-medium">Наименование</th>
-                <th className="py-2 pr-3 font-medium">Изм.</th>
-                <th className="py-2 pr-3 font-medium text-right">ЗП</th>
-                <th className="py-2 pr-3 font-medium text-right">ЭМ</th>
-                <th className="py-2 pr-3 font-medium text-right">МР</th>
-                <th className="py-2 pr-3 font-medium text-right">Труд, ч</th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.map((r) => (
-                <tr key={r.id} className="border-b border-slate-50 align-top">
-                  <td className="py-2 pr-3 font-mono text-xs whitespace-nowrap">{r.code}</td>
+      {results && results.length > 0 && <RateTable rows={results} />}
+    </div>
+  )
+}
+
+const money = (v?: number) =>
+  v == null ? '—' : v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+/** Таблица расценок с раскрытием состава работ по клику на строку. */
+function RateTable({ rows, reasons, highlight }: {
+  rows: NormativeRate[]
+  reasons?: Record<number, string>
+  highlight?: boolean
+}) {
+  const [expanded, setExpanded] = useState<number | null>(null)
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+            <th className="py-2 pr-3 font-medium">Шифр</th>
+            <th className="py-2 pr-3 font-medium">Наименование</th>
+            <th className="py-2 pr-3 font-medium">Изм.</th>
+            <th className="py-2 pr-3 font-medium text-right">ЗП</th>
+            <th className="py-2 pr-3 font-medium text-right">ЭМ</th>
+            <th className="py-2 pr-3 font-medium text-right">ЗПМ</th>
+            <th className="py-2 pr-3 font-medium text-right">МР</th>
+            <th className="py-2 pr-3 font-medium text-right">Труд, ч</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const isOpen = expanded === r.id
+            return (
+              <Fragment key={r.id}>
+                <tr
+                  onClick={() => setExpanded(isOpen ? null : r.id)}
+                  className={`border-b border-slate-50 align-top cursor-pointer hover:bg-slate-50 ${
+                    highlight ? 'bg-emerald-50/40' : ''
+                  }`}
+                >
+                  <td className="py-2 pr-3 font-mono text-xs whitespace-nowrap">
+                    <span className="text-slate-400 mr-1">{isOpen ? '▾' : '▸'}</span>{r.code}
+                  </td>
                   <td className="py-2 pr-3">{r.name}</td>
                   <td className="py-2 pr-3 text-xs text-slate-500 whitespace-nowrap">{r.unit || '—'}</td>
                   <td className="py-2 pr-3 text-right whitespace-nowrap">{money(r.laborCost)}</td>
                   <td className="py-2 pr-3 text-right whitespace-nowrap">{money(r.machineCost)}</td>
+                  <td className="py-2 pr-3 text-right whitespace-nowrap text-slate-500">{money(r.machineLabor)}</td>
                   <td className="py-2 pr-3 text-right whitespace-nowrap">{money(r.materialCost)}</td>
                   <td className="py-2 pr-3 text-right whitespace-nowrap">{money(r.laborHours)}</td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                {isOpen && (
+                  <tr className="bg-slate-50/60">
+                    <td colSpan={8} className="px-3 py-3">
+                      {reasons?.[r.id] && (
+                        <div className="mb-2 text-xs text-emerald-700">
+                          <span className="font-medium">Почему подходит: </span>{reasons[r.id]}
+                        </div>
+                      )}
+                      <div className="text-xs font-medium text-slate-500 mb-1">Состав работ</div>
+                      <div className="text-sm text-slate-700 whitespace-pre-line">
+                        {r.workComposition || 'Состав работ не распознан в этой расценке.'}
+                      </div>
+                      <div className="mt-2 text-xs text-slate-400">
+                        в т.ч. ЗПМ (оплата труда машинистов): {money(r.machineLabor)} ₽
+                        {r.pageNumber ? ` · стр. ${r.pageNumber}` : ''}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
 }

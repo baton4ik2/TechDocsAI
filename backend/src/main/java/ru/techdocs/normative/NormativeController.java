@@ -19,6 +19,7 @@ import java.util.List;
 public class NormativeController {
 
     private final NormativeService normativeService;
+    private final NormativeAiMatchService aiMatchService;
 
     @PostMapping("/upload")
     public NormativeSourcebook upload(@RequestParam(required = false) String name,
@@ -57,6 +58,19 @@ public class NormativeController {
     public List<NormativeRate> search(@RequestParam String query,
                                       @RequestParam(defaultValue = "10") int limit) {
         return normativeService.search(query, limit);
+    }
+
+    public record MatchRequest(String query) {}
+
+    /** ИИ-подбор расценки под описание работы/оборудования (Gemini 2.5 и т.п.). */
+    @PostMapping("/rates/ai-match")
+    public NormativeAiMatchService.MatchResult aiMatch(@RequestBody MatchRequest request) {
+        return aiMatchService.match(request == null ? null : request.query());
+    }
+
+    @GetMapping("/ai-status")
+    public java.util.Map<String, Boolean> aiStatus() {
+        return java.util.Map.of("aiMatchAvailable", aiMatchService.isAvailable());
     }
 
     @PostMapping("/{id}/reprocess")

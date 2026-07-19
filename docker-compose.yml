@@ -74,6 +74,9 @@ services:
       AI_VISION_API_KEY: ${AI_VISION_API_KEY:-}
       AI_VISION_MODEL: ${AI_VISION_MODEL:-}
       AI_VISION_DPI: ${AI_VISION_DPI:-160}
+      AI_MATCH_BASE_URL: ${AI_MATCH_BASE_URL:-}
+      AI_MATCH_API_KEY: ${AI_MATCH_API_KEY:-}
+      AI_MATCH_MODEL: ${AI_MATCH_MODEL:-}
       DRIVE_SERVICE_ACCOUNT_KEY: ${DRIVE_SERVICE_ACCOUNT_KEY:-}
     volumes:
       - ./secrets:/secrets:ro
