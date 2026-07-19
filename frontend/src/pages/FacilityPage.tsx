@@ -127,6 +127,7 @@ interface DriveStatus {
 
 function DriveCard({ facilityId, onSynced }: { facilityId: number; onSynced: () => void }) {
   const [status, setStatus] = useState<DriveStatus | null>(null)
+  const [loadError, setLoadError] = useState('')
   const [folder, setFolder] = useState('')
   const [saving, setSaving] = useState(false)
   const [syncing, setSyncing] = useState(false)
@@ -135,7 +136,8 @@ function DriveCard({ facilityId, onSynced }: { facilityId: number; onSynced: () 
     api.get<DriveStatus>(`/api/facilities/${facilityId}/drive`).then((s) => {
       setStatus(s)
       setFolder(s.folderId ?? '')
-    })
+      setLoadError('')
+    }).catch((e) => setLoadError(e instanceof Error ? e.message : 'Не удалось загрузить статус Google Drive'))
   }, [facilityId])
 
   useEffect(() => { load() }, [load])
@@ -168,7 +170,21 @@ function DriveCard({ facilityId, onSynced }: { facilityId: number; onSynced: () 
     }
   }
 
-  if (!status) return null
+  if (loadError) {
+    return (
+      <div className="card p-5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-lg">📁</span>
+          <h3 className="font-medium text-slate-900">Google Drive</h3>
+        </div>
+        <p className="text-sm text-red-600">
+          Не удалось загрузить статус: {loadError}. Обновите страницу (Ctrl+Shift+R) —
+          если не поможет, бэкенд ещё не обновлён до версии с этой функцией.
+        </p>
+      </div>
+    )
+  }
+  if (!status) return <div className="card p-5 text-sm text-slate-400">Загрузка…</div>
 
   return (
     <div className="card p-5">
