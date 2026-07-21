@@ -78,9 +78,9 @@ services:
       AI_MATCH_API_KEY: ${AI_MATCH_API_KEY:-}
       AI_MATCH_MODEL: ${AI_MATCH_MODEL:-}
       DRIVE_SERVICE_ACCOUNT_KEY: ${DRIVE_SERVICE_ACCOUNT_KEY:-}
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
     volumes:
       - ./secrets:/secrets:ro
-      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
     depends_on:
       postgres:
         condition: service_healthy

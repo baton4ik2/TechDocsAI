@@ -82,6 +82,43 @@ class NormativeRateParserTest {
     }
 
     @Test
+    void findsCompositionAndUnitOnPreviousPage() {
+        // как в реальном сборнике: таблица с составом работ и измерителем — на одной
+        // странице, а сами расценки — на следующей
+        String heading = """
+                Таблица 22-2203-128. Техническое обслуживание извещателя пожарного дымового
+                Состав работ:
+                1. Сообщение диспетчеру о начале работ. 2. Внешний осмотр корпуса.
+                3. Отключение прибора от сети. 8. Запись в журнале результатов работ.
+                Измеритель: шт.
+                54
+                """;
+        String tablePage = """
+                Шифр Наименование работ Прямые затраты ЗП ЭМ ЗПМ МР Затраты труда
+                22-2203-128-1/1 Техническое обслуживание извещателя пожарного дымового ИП 212-41М "ДИП-41М" - полугодовое 189,73 139,33 - - 50,40 0,20
+                """;
+        List<NormativeRate> rates = parser.parse(List.of(
+                new PageText(54, heading), new PageText(55, tablePage)));
+
+        assertThat(rates).hasSize(1);
+        NormativeRate r = rates.get(0);
+        assertThat(r.getCode()).isEqualTo("22-2203-128-1/1");
+        assertThat(r.getPageNumber()).isEqualTo(55);
+        // суммы: ЗП 139,33; ЭМ и ЗПМ прочерк → 0; МР 50,40; труд 0,20
+        assertThat(r.getLaborCost()).isEqualByComparingTo("139.33");
+        assertThat(r.getMachineCost()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(r.getMachineLabor()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(r.getMaterialCost()).isEqualByComparingTo("50.40");
+        assertThat(r.getLaborHours()).isEqualByComparingTo("0.20");
+        assertThat(r.getName()).contains("ДИП-41М").contains("полугодовое");
+        // состав и измеритель подтянулись с предыдущей страницы
+        assertThat(r.getUnit()).isEqualTo("шт.");
+        assertThat(r.getWorkComposition())
+                .contains("Сообщение диспетчеру")
+                .contains("Запись в журнале");
+    }
+
+    @Test
     void returnsEmptyForBlankPages() {
         assertThat(parser.parse(List.of(new PageText(1, "   ")))).isEmpty();
         assertThat(parser.parse(List.of())).isEmpty();

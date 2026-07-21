@@ -16,6 +16,11 @@ import java.util.regex.Pattern;
  * значений: прямые затраты, ЗП, ЭМ всего, в т.ч. ЗПМ, МР, затраты труда (чел-ч).
  * Все 6 — с десятичной запятой, нули обозначены прочерком «−»/«-», что позволяет
  * отделить их от чисел в наименовании («тип 6424», «502»).
+ * <p>
+ * «Состав работ:» и «Измеритель:» относятся к таблице (группе расценок) и часто
+ * печатаются на ОТДЕЛЬНОЙ странице выше самих расценок. Поэтому наименование и
+ * стоимости берём в пределах страницы расценки, а состав/измеритель ищем по
+ * всему документу — по ближайшему заголовку выше данной расценки.
  */
 @Service
 public class NormativeRateParser {
@@ -28,22 +33,56 @@ public class NormativeRateParser {
     // а не дефис внутри слова («приемно-контрольного», «чел-ч»): границы по буквам/цифрам.
     private static final Pattern COST = Pattern.compile(
             "(?<![\\p{L}\\d])(\\d{1,3}(?:[ \\u00A0]\\d{3})+,\\d{1,3}|\\d+,\\d{1,3}|[-—–])(?![\\p{L}\\d])");
-    private static final Pattern UNIT = Pattern.compile("Измеритель:\\s*([^\\n]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern UNIT = Pattern.compile("Измеритель\\s*:\\s*([^\\n]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern COMPOSITION = Pattern.compile(
-            "Состав работ:\\s*(.+?)(?=Измеритель:|Шифр|$)",
+            "Состав\\s+работ\\s*:\\s*(.+?)(?=Измеритель\\s*:|Наименование|$)",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
+    /** Заголовок (состав/измеритель) с позицией в сквозном тексте документа. */
+    private record Marker(int offset, String value) {}
+
     public List<NormativeRate> parse(List<PageText> pages) {
-        List<NormativeRate> rates = new ArrayList<>();
+        // сквозной текст всего документа + карта: смещение начала каждой страницы
+        StringBuilder full = new StringBuilder();
+        List<int[]> pageStarts = new ArrayList<>();   // [offset, pageNumber]
         for (PageText page : pages) {
-            String text = page.text();
+            String text = page.text() == null ? "" : page.text();
+            pageStarts.add(new int[]{full.length(), page.pageNumber()});
+            full.append(text).append('\n');
+        }
+        String document = full.toString();
+
+        // заголовки «Состав работ:» и «Измеритель:» по всему документу — привяжем к
+        // расценкам по ближайшему заголовку выше (таблица может быть на другой странице)
+        List<Marker> compositions = markers(document, COMPOSITION, 2000);
+        List<Marker> units = markers(document, UNIT, 120);
+
+        List<NormativeRate> rates = new ArrayList<>();
+        for (int p = 0; p < pageStarts.size(); p++) {
+            String text = pages.get(p).text();
             if (text == null || text.isBlank()) continue;
-            parsePage(text, page.pageNumber(), rates);
+            int pageOffset = pageStarts.get(p)[0];
+            int pageNumber = pageStarts.get(p)[1];
+            parsePage(text, pageOffset, pageNumber, compositions, units, rates);
         }
         return rates;
     }
 
-    private void parsePage(String text, int pageNumber, List<NormativeRate> rates) {
+    private List<Marker> markers(String document, Pattern pattern, int maxLen) {
+        List<Marker> list = new ArrayList<>();
+        Matcher m = pattern.matcher(document);
+        while (m.find()) {
+            String value = m.group(1).strip().replaceAll("\\s{2,}", " ");
+            if (!value.isBlank()) {
+                list.add(new Marker(m.start(), truncate(value, maxLen)));
+            }
+        }
+        return list; // упорядочены по возрастанию offset (порядок обхода Matcher.find)
+    }
+
+    private void parsePage(String text, int pageOffset, int pageNumber,
+                           List<Marker> compositions, List<Marker> units,
+                           List<NormativeRate> rates) {
         Matcher codeMatcher = CODE.matcher(text);
         // позиции шифров, чтобы ограничивать блок каждой расценки
         List<int[]> codeSpans = new ArrayList<>();
@@ -57,28 +96,43 @@ public class NormativeRateParser {
             String block = text.substring(span[1], blockEnd);
 
             List<String> costs = new ArrayList<>();
+            List<Integer> costStarts = new ArrayList<>();
             Matcher cm = COST.matcher(block);
-            int firstCostStart = -1;
             while (cm.find()) {
-                if (firstCostStart < 0) firstCostStart = cm.start();
                 costs.add(cm.group(1));
+                costStarts.add(cm.start());
             }
             // нужны хотя бы ЗП: если стоимостных значений нет — это ссылка на шифр в тексте, не строка расценки
             if (costs.size() < 2) continue;
 
-            String name = block.substring(0, firstCostStart).strip()
+            // наименование — всё до последних 6 стоимостных колонок. Прочерк-периодичность
+            // «- полугодовое»/«- годовое» перед числами остаётся в наименовании, а не
+            // трактуется как нулевая колонка (иначе теряется различие расценок).
+            int tailStart = costStarts.get(Math.max(0, costs.size() - 6));
+            String name = block.substring(0, tailStart).strip()
                     .replaceAll("\\s{2,}", " ");
             if (name.isBlank()) continue;
 
+            int absCodePos = pageOffset + span[0];
             NormativeRate rate = new NormativeRate();
             rate.setCode(code);
             rate.setName(name);
             rate.setPageNumber(pageNumber);
-            rate.setUnit(findUnitBefore(text, span[0]));
-            rate.setWorkComposition(findCompositionBefore(text, span[0]));
+            rate.setUnit(lastBefore(units, absCodePos));
+            rate.setWorkComposition(lastBefore(compositions, absCodePos));
             assignCosts(rate, costs);
             rates.add(rate);
         }
+    }
+
+    /** Значение ближайшего заголовка, расположенного выше позиции расценки. */
+    private String lastBefore(List<Marker> markers, int pos) {
+        String value = null;
+        for (Marker m : markers) {
+            if (m.offset() < pos) value = m.value();
+            else break; // список упорядочен — дальше только заголовки ниже расценки
+        }
+        return value;
     }
 
     /**
@@ -105,28 +159,12 @@ public class NormativeRateParser {
         if (raw == null) return null;
         String s = raw.strip();
         if (s.equals("-") || s.equals("—") || s.equals("–")) return BigDecimal.ZERO;
-        s = s.replace(" ", "").replace(" ", "").replace(',', '.');
+        s = s.replace(" ", "").replace(" ", "").replace(',', '.');
         try {
             return new BigDecimal(s);
         } catch (NumberFormatException e) {
             return null;
         }
-    }
-
-    private String findUnitBefore(String text, int codeStart) {
-        String before = text.substring(0, codeStart);
-        Matcher m = UNIT.matcher(before);
-        String unit = null;
-        while (m.find()) unit = m.group(1).strip();
-        return unit == null || unit.isBlank() ? null : truncate(unit, 120);
-    }
-
-    private String findCompositionBefore(String text, int codeStart) {
-        String before = text.substring(0, codeStart);
-        Matcher m = COMPOSITION.matcher(before);
-        String comp = null;
-        while (m.find()) comp = m.group(1).strip().replaceAll("\\s{2,}", " ");
-        return comp == null || comp.isBlank() ? null : truncate(comp, 2000);
     }
 
     private String truncate(String s, int max) {
