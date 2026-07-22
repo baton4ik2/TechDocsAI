@@ -150,6 +150,74 @@ export interface PkmOperation {
   periodicityPerYear?: number
 }
 
+export interface Estimate {
+  id: number
+  facilityId: number
+  systemId?: number
+  name: string
+  status: string
+  nrZp: number
+  npZp: number
+  nrEm: number
+  npEm: number
+  vat: number
+  rtCoefficient: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface EstimateRowEntity {
+  id: number
+  estimateId: number
+  position?: number
+  section?: string
+  equipmentId?: number
+  equipmentName?: string
+  equipmentType?: string
+  manufacturer?: string
+  operationName?: string
+  rateCode?: string
+  rateName?: string
+  periodicity?: string
+  justification?: string
+  opsPerYear?: number
+  qty?: number
+  unitBasis: number
+  priceZp?: number
+  priceEm?: number
+  priceZpm?: number
+  priceMr?: number
+  correction: number
+  laborHours?: number
+}
+
+export interface EstimateRowCalc {
+  performedPerYear: number
+  totalUnits: number
+  zp: number; em: number; zpm: number; mr: number
+  nr: number; np: number; totalNoVat: number; vat: number; totalWithVat: number
+  zpRt: number; emRt: number; zpmRt: number; mrRt: number
+  nrRt: number; npRt: number; totalNoVatRt: number; vatRt: number; totalWithVatRt: number
+  laborHoursTotal: number
+}
+
+export interface EstimateRowView {
+  row: EstimateRowEntity
+  calc: EstimateRowCalc
+}
+
+export interface EstimateTotals {
+  totalNoVat: number; vat: number; totalWithVat: number
+  totalNoVatRt: number; vatRt: number; totalWithVatRt: number
+  laborHoursTotal: number
+}
+
+export interface EstimateView {
+  estimate: Estimate
+  rows: EstimateRowView[]
+  totals: EstimateTotals
+}
+
 export interface Dashboard {
   facilityCount: number
   documentCount: number

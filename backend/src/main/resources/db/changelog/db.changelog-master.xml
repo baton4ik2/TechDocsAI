@@ -11,5 +11,6 @@
     <include file="db/changelog/changes/004-google-drive.xml" relativeToChangelogFile="false"/>
     <include file="db/changelog/changes/005-normatives.xml" relativeToChangelogFile="false"/>
     <include file="db/changelog/changes/006-pkm.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/007-estimates.xml" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

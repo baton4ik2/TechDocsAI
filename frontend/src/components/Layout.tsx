@@ -6,6 +6,7 @@ const navItems = [
   { to: '/facilities', label: 'Объекты', icon: '🏢' },
   { to: '/normatives', label: 'Нормативы', icon: '📚' },
   { to: '/pkm', label: 'ПКМ', icon: '📋' },
+  { to: '/estimates', label: 'Плановые работы', icon: '📊' },
   { to: '/chat', label: 'Чат с ИИ', icon: '💬' },
 ]
 

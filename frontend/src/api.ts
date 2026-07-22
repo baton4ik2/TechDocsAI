@@ -72,6 +72,23 @@ export async function openNormative(sourcebookId: number, page?: number | null) 
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
+/** Скачивает XLSX-смету авторизованным запросом. */
+export async function exportEstimate(id: number, filename: string) {
+  const response = await fetch(`/api/estimates/${id}/export`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  if (!response.ok) throw new ApiError(response.status, 'Не удалось выгрузить смету')
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>

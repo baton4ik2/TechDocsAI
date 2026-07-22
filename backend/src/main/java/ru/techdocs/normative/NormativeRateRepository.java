@@ -13,6 +13,9 @@ public interface NormativeRateRepository extends JpaRepository<NormativeRate, Lo
 
     Optional<NormativeRate> findByCode(String code);
 
+    /** Одна расценка по шифру (при дублях шифра берём первую по id). */
+    Optional<NormativeRate> findFirstByCodeOrderById(String code);
+
     List<NormativeRate> findBySourcebookIdOrderByCode(Long sourcebookId);
 
     long countBySourcebookId(Long sourcebookId);
