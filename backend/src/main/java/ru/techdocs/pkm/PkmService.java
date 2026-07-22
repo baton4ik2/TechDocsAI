@@ -21,10 +21,11 @@ public class PkmService {
     private final PkmProcessingService processingService;
 
     public PkmDocument upload(String name, String systemType, MultipartFile file) {
-        String originalFilename = file.getOriginalFilename() == null ? "regламент.docx" : file.getOriginalFilename();
-        if (!extension(originalFilename).equals("docx")) {
-            throw new BadRequestException("Регламент ПКМ загружается в формате DOCX. " +
-                    "Формат ." + extension(originalFilename) + " не поддерживается.");
+        String originalFilename = file.getOriginalFilename() == null ? "reglament.json" : file.getOriginalFilename();
+        String ext = extension(originalFilename);
+        if (!ext.equals("json") && !ext.equals("docx")) {
+            throw new BadRequestException("Регламент ПКМ загружается в формате JSON или DOCX. " +
+                    "Формат ." + ext + " не поддерживается.");
         }
 
         String storagePath = "pkm/" + UUID.randomUUID() + "-" + sanitize(originalFilename);

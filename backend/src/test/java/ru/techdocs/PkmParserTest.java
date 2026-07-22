@@ -8,6 +8,7 @@ import ru.techdocs.pkm.PkmParser;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -44,7 +45,7 @@ class PkmParserTest {
 
     @Test
     void parsesOperationsWithNormalisedPeriodicity() throws Exception {
-        List<PkmOperation> ops = parser.parse(new ByteArrayInputStream(pkmDocx()));
+        List<PkmOperation> ops = parser.parse("reglament.docx", new ByteArrayInputStream(pkmDocx())).operations();
 
         assertThat(ops).hasSize(3);
 
@@ -71,7 +72,57 @@ class PkmParserTest {
             table.getRow(0).getCell(1).setText("Колонка Б");
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             doc.write(out);
-            assertThat(parser.parse(new ByteArrayInputStream(out.toByteArray()))).isEmpty();
+            assertThat(parser.parse("x.docx", new ByteArrayInputStream(out.toByteArray())).operations()).isEmpty();
         }
+    }
+
+    @Test
+    void parsesJsonRegulation() throws Exception {
+        String json = """
+                {
+                  "система": "СКУД",
+                  "регламент": [
+                    {
+                      "номер": 1,
+                      "категория_работ": "Обязательные",
+                      "тип_инцидента": "Техническое обслуживание устройства контроля доступа",
+                      "чек_лист_действий": [
+                        "Внешний осмотр общего состояния системных элементов.",
+                        "Очистка загрязнений на рабочих поверхностях.",
+                        "Проверка работоспособности устройства."
+                      ],
+                      "периодичность": "Ежемесячно"
+                    },
+                    {
+                      "номер": 3,
+                      "категория_работ": "Обязательные",
+                      "тип_инцидента": "Сезонное обслуживание системы: 1. замена летней смазки на зимнюю",
+                      "чек_лист_действий": [],
+                      "периодичность": "Два раза в год"
+                    }
+                  ]
+                }
+                """;
+        var result = parser.parse("skud.json", new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)));
+
+        assertThat(result.systemType()).isEqualTo("СКУД");
+        List<PkmOperation> ops = result.operations();
+        assertThat(ops).hasSize(2);
+
+        PkmOperation first = ops.get(0);
+        assertThat(first.getPosition()).isEqualTo(1);
+        assertThat(first.getCategory()).isEqualTo("Обязательные");
+        assertThat(first.getOperationName()).isEqualTo("Техническое обслуживание устройства контроля доступа");
+        assertThat(first.getPeriodicityPerYear()).isEqualByComparingTo("12");
+        // чек-лист → нумерованный состав работ с новой строки
+        assertThat(first.getWorkComposition())
+                .contains("1. Внешний осмотр")
+                .contains("\n3. Проверка работоспособности");
+
+        // операция без чек-листа: состав берётся из части названия после «:»
+        PkmOperation second = ops.get(1);
+        assertThat(second.getOperationName()).isEqualTo("Сезонное обслуживание системы");
+        assertThat(second.getWorkComposition()).contains("замена летней смазки");
+        assertThat(second.getPeriodicityPerYear()).isEqualByComparingTo("2");
     }
 }

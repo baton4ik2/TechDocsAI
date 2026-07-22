@@ -36,10 +36,16 @@ public class PkmProcessingService {
         try {
             operationRepository.deleteByPkmId(pkmId);
 
-            List<PkmOperation> operations;
+            PkmParser.ParseResult result;
             try (InputStream input = fileStorage.load(document.getStoragePath())) {
-                operations = parser.parse(input);
+                result = parser.parse(document.getOriginalFilename(), input);
             }
+            // тип системы не задан вручную — берём из самого файла (JSON)
+            if ((document.getSystemType() == null || document.getSystemType().isBlank())
+                    && result.systemType() != null) {
+                document.setSystemType(result.systemType());
+            }
+            List<PkmOperation> operations = result.operations();
             for (PkmOperation op : operations) {
                 op.setPkmId(pkmId);
                 op.setSystemType(document.getSystemType());

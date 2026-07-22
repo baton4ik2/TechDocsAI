@@ -227,20 +227,21 @@ function UploadModal({ onClose, onUploaded }: { onClose: () => void; onUploaded:
     <Modal title="Загрузить регламент ПКМ" onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
         <div>
-          <label className="label">Файл регламента (DOCX) *</label>
+          <label className="label">Файл регламента (JSON или DOCX) *</label>
           <input
             ref={fileRef}
             type="file"
-            accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            accept=".json,application/json,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             className="input"
             onChange={(e) => {
               const f = e.target.files?.[0] ?? null
               setFile(f)
-              if (f && !name.trim()) setName(f.name.replace(/\.docx$/i, ''))
+              if (f && !name.trim()) setName(f.name.replace(/\.(json|docx)$/i, ''))
             }}
           />
           <p className="text-xs text-slate-400 mt-1">
-            Таблица «Вид и состав работ» + «Периодичность». Операции извлекаются автоматически.
+            JSON (рекомендуется) со списком операций и периодичностью, либо DOCX-таблица
+            «Вид и состав работ» + «Периодичность». Тип системы можно взять из JSON.
           </p>
         </div>
         <div>
