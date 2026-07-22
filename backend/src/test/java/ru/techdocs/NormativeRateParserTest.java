@@ -120,6 +120,28 @@ class NormativeRateParserTest {
     }
 
     @Test
+    void takesContiguousColumnRunIgnoringTrailingNumbers() {
+        // реальный случай: расценка последняя на странице, дальше — заголовок
+        // следующей таблицы с числами. Берём сплошной прогон из 6 колонок, а не
+        // «последние 6» (иначе ЗП/ЭМ съезжают, а наименование глотает Прямые/ЗП).
+        String page = "21-2203-41-1/1 Техническое обслуживание источника бесперебойного питания "
+                + "(ИБП) типа APC Smart-UPS SRT 6 кВА стоечного исполнения - полугодовое "
+                + "2117,91 2116,73 1,18 0,01 - 2,62\n"
+                + "Таблица 21-2203-42. Следующая расценка 999,99 888,88";
+        List<NormativeRate> rates = parser.parse(List.of(new PageText(60, page)));
+
+        assertThat(rates).hasSize(1);
+        NormativeRate r = rates.get(0);
+        assertThat(r.getCode()).isEqualTo("21-2203-41-1/1");
+        assertThat(r.getName()).contains("ИБП").contains("полугодовое").doesNotContain("2117,91");
+        assertThat(r.getLaborCost()).isEqualByComparingTo("2116.73");   // ЗП
+        assertThat(r.getMachineCost()).isEqualByComparingTo("1.18");    // ЭМ
+        assertThat(r.getMachineLabor()).isEqualByComparingTo("0.01");   // ЗПМ
+        assertThat(r.getMaterialCost()).isEqualByComparingTo(BigDecimal.ZERO); // МР (прочерк)
+        assertThat(r.getLaborHours()).isEqualByComparingTo("2.62");     // затраты труда
+    }
+
+    @Test
     void skipsMaterialConsumptionRows() {
         // строка из ведомости расхода материалов: шифр расценки + код материала
         // как «наименование» («21.1-20-1 Бязь»). Настоящей расценкой не считается.

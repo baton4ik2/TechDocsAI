@@ -113,21 +113,24 @@ public class NormativeRateParser {
             int blockEnd = (i + 1 < codeSpans.size()) ? codeSpans.get(i + 1)[0] : text.length();
             String block = text.substring(span[1], blockEnd);
 
-            List<String> costs = new ArrayList<>();
-            List<Integer> costStarts = new ArrayList<>();
+            // все стоимостные токены с позициями
+            List<String> tokens = new ArrayList<>();
+            List<int[]> spans = new ArrayList<>();   // [start, end]
             Matcher cm = COST.matcher(block);
             while (cm.find()) {
-                costs.add(cm.group(1));
-                costStarts.add(cm.start());
+                tokens.add(cm.group(1));
+                spans.add(new int[]{cm.start(), cm.end()});
             }
-            // нужны хотя бы ЗП: если стоимостных значений нет — это ссылка на шифр в тексте, не строка расценки
-            if (costs.size() < 2) continue;
+            if (tokens.size() < 2) continue;
 
-            // наименование — всё до последних 6 стоимостных колонок. Прочерк-периодичность
-            // «- полугодовое»/«- годовое» перед числами остаётся в наименовании, а не
-            // трактуется как нулевая колонка (иначе теряется различие расценок).
-            int tailStart = costStarts.get(Math.max(0, costs.size() - 6));
-            String name = block.substring(0, tailStart).strip()
+            // 6 стоимостных колонок идут ПОДРЯД (между ними только пробелы). Прочерк
+            // периодичности «- полугодовое», числа в наименовании и лишние значения с
+            // соседних строк отделены словами/переносами и в этот прогон не попадают.
+            int[] run = selectCostRun(block, spans);
+            if (run == null) continue;
+            List<String> costs = tokens.subList(run[0], run[1]);
+
+            String name = block.substring(0, spans.get(run[0])[0]).strip()
                     .replaceAll("\\s{2,}", " ");
             if (name.isBlank() || !looksLikeRateName(name)) continue;
 
@@ -151,6 +154,40 @@ public class NormativeRateParser {
     private boolean looksLikeRateName(String name) {
         String s = name.replaceFirst("^[\\s«»\"'`\\-–—]+", "");
         return !s.isEmpty() && Character.isLetter(s.charAt(0));
+    }
+
+    /**
+     * Выбирает «прогон» стоимостных колонок расценки — соседние токены, между
+     * которыми в тексте нет букв. Берём ПЕРВЫЙ прогон длиной ≥ 4 (6 колонок идут
+     * сразу после наименования); иначе — самый длинный прогон. Возвращает
+     * [firstIdx, lastIdxExclusive] или null.
+     */
+    private int[] selectCostRun(String block, List<int[]> spans) {
+        List<int[]> runs = new ArrayList<>();
+        int runStart = 0;
+        for (int i = 1; i < spans.size(); i++) {
+            String between = block.substring(spans.get(i - 1)[1], spans.get(i)[0]);
+            if (containsLetter(between)) {
+                runs.add(new int[]{runStart, i});
+                runStart = i;
+            }
+        }
+        runs.add(new int[]{runStart, spans.size()});
+
+        int[] best = null;
+        for (int[] r : runs) {
+            int len = r[1] - r[0];
+            if (len >= 4) return r;                       // первый «полный» прогон колонок
+            if (best == null || len > best[1] - best[0]) best = r;
+        }
+        return best != null && best[1] - best[0] >= 2 ? best : null;
+    }
+
+    private boolean containsLetter(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.isLetter(s.charAt(i))) return true;
+        }
+        return false;
     }
 
     /** Значение ближайшего заголовка, расположенного выше позиции расценки. */
