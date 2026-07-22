@@ -200,11 +200,19 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
     qty: row?.qty?.toString() ?? '',
     correction: row?.correction?.toString() ?? '1',
     justification: row?.justification ?? '',
+    unitBasis: row?.unitBasis?.toString() ?? '',
+    priceZp: row?.priceZp?.toString() ?? '',
+    priceEm: row?.priceEm?.toString() ?? '',
+    priceZpm: row?.priceZpm?.toString() ?? '',
+    priceMr: row?.priceMr?.toString() ?? '',
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   const set = (k: keyof typeof f, v: string) => setF({ ...f, [k]: v })
+  // смена шифра → очищаем цены, чтобы они подтянулись из каталога заново
+  const setRateCode = (v: string) =>
+    setF({ ...f, rateCode: v, unitBasis: '', priceZp: '', priceEm: '', priceZpm: '', priceMr: '' })
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -222,6 +230,11 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
       opsPerYear: f.opsPerYear ? Number(f.opsPerYear) : null,
       qty: f.qty ? Number(f.qty) : null,
       correction: f.correction ? Number(f.correction) : null,
+      unitBasis: f.unitBasis ? Number(f.unitBasis) : null,
+      priceZp: f.priceZp ? Number(f.priceZp) : null,
+      priceEm: f.priceEm ? Number(f.priceEm) : null,
+      priceZpm: f.priceZpm ? Number(f.priceZpm) : null,
+      priceMr: f.priceMr ? Number(f.priceMr) : null,
     }
     try {
       if (row) await api.patch(`/api/estimates/rows/${row.id}`, body)
@@ -240,6 +253,14 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
     </div>
   )
 
+  const priceInput = (k: keyof typeof f, label: string) => (
+    <div>
+      <label className="text-xs text-slate-500">{label}</label>
+      <input className="input py-1 text-sm" type="number" step="0.01" value={f[k]}
+             onChange={(e) => set(k, e.target.value)} />
+    </div>
+  )
+
   return (
     <Modal title={row ? 'Строка сметы' : 'Новая строка'} onClose={onClose}>
       <form onSubmit={submit} className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
@@ -250,16 +271,34 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
           {input('manufacturer', 'Производитель')}
         </div>
         {input('operationName', 'Мероприятие', 'Техническое обслуживание…')}
-        {input('rateCode', 'Шифр расценки', '22-2203-113-1/1')}
-        <p className="text-xs text-slate-400 -mt-2">
-          Цены (ЗП/ЭМ/ЗПМ/МР), наименование и измеритель подтянутся из каталога по шифру.
-          {row?.rateName && <span className="block text-slate-500 mt-0.5">Расценка: {row.rateName}</span>}
-        </p>
+        <div>
+          <label className="label">Шифр расценки</label>
+          <input className="input" value={f.rateCode} onChange={(e) => setRateCode(e.target.value)}
+                 placeholder="22-2203-113-1/1" />
+          <p className="text-xs text-slate-400 mt-1">
+            Цены, наименование и измеритель подтянутся из каталога по шифру. При смене шифра — обновятся.
+            {row?.rateName && <span className="block text-slate-500 mt-0.5">Расценка: {row.rateName}</span>}
+          </p>
+        </div>
         <div className="grid grid-cols-3 gap-3">
           {input('periodicity', 'Периодичность', 'раз в 1 мес.')}
           {input('opsPerYear', 'Опер/год', 'авто из период.')}
           {input('qty', 'Количество')}
         </div>
+
+        <div className="rounded-lg border border-slate-200 p-3 space-y-2">
+          <div className="text-xs font-medium text-slate-500">
+            Цены расценки на единицу (из каталога — можно исправить, если распознались неверно)
+          </div>
+          <div className="grid grid-cols-5 gap-2">
+            {priceInput('priceZp', 'ЗП')}
+            {priceInput('priceEm', 'ЭМ')}
+            {priceInput('priceZpm', 'ЗПМ')}
+            {priceInput('priceMr', 'МР')}
+            {priceInput('unitBasis', 'Измер. (M)')}
+          </div>
+        </div>
+
         {input('correction', 'Поправочный коэффициент (S)', '1')}
         <div>
           <label className="label">Обоснование</label>

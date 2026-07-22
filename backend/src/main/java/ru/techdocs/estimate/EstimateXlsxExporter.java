@@ -35,8 +35,8 @@ public class EstimateXlsxExporter {
 
     public byte[] export(Estimate estimate, java.util.List<EstimateRow> rows) throws Exception {
         try (XSSFWorkbook wb = new XSSFWorkbook()) {
+            writeCalcSheet(wb, estimate, rows);  // первым — сам расчёт
             writeDataSheet(wb, estimate);
-            writeCalcSheet(wb, estimate, rows);
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             wb.write(out);
             return out.toByteArray();
