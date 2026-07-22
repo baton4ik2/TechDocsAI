@@ -115,7 +115,17 @@ class NormativeRateParserTest {
         assertThat(r.getUnit()).isEqualTo("шт.");
         assertThat(r.getWorkComposition())
                 .contains("Сообщение диспетчеру")
-                .contains("Запись в журнале");
+                .contains("Запись в журнале")
+                .contains("\n2.");   // пункты состава — с новой строки
+    }
+
+    @Test
+    void skipsMaterialConsumptionRows() {
+        // строка из ведомости расхода материалов: шифр расценки + код материала
+        // как «наименование» («21.1-20-1 Бязь»). Настоящей расценкой не считается.
+        String page = "22-2203-87-1/1 21.1-20-1 Бязь м2 - - 0,05 0,05 0,26";
+        List<NormativeRate> rates = parser.parse(List.of(new PageText(162, page)));
+        assertThat(rates).isEmpty();
     }
 
     @Test

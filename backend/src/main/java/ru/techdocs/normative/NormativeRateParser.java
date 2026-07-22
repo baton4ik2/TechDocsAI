@@ -54,8 +54,8 @@ public class NormativeRateParser {
 
         // заголовки «Состав работ:» и «Измеритель:» по всему документу — привяжем к
         // расценкам по ближайшему заголовку выше (таблица может быть на другой странице)
-        List<Marker> compositions = markers(document, COMPOSITION, 2000);
-        List<Marker> units = markers(document, UNIT, 120);
+        List<Marker> compositions = markers(document, COMPOSITION, 2000, true);
+        List<Marker> units = markers(document, UNIT, 60, false);
 
         List<NormativeRate> rates = new ArrayList<>();
         for (int p = 0; p < pageStarts.size(); p++) {
@@ -68,16 +68,34 @@ public class NormativeRateParser {
         return rates;
     }
 
-    private List<Marker> markers(String document, Pattern pattern, int maxLen) {
+    private List<Marker> markers(String document, Pattern pattern, int maxLen, boolean asComposition) {
         List<Marker> list = new ArrayList<>();
         Matcher m = pattern.matcher(document);
         while (m.find()) {
-            String value = m.group(1).strip().replaceAll("\\s{2,}", " ");
-            if (!value.isBlank()) {
+            String value = m.group(1).replaceAll("[ \\t\\u00A0]+", " ")
+                    .replaceAll("\\s*\\n\\s*", " ").strip();
+            value = asComposition ? formatComposition(value) : sanitizeUnit(value);
+            if (value != null && !value.isBlank()) {
                 list.add(new Marker(m.start(), truncate(value, maxLen)));
             }
         }
         return list; // упорядочены по возрастанию offset (порядок обхода Matcher.find)
+    }
+
+    /** Каждый пункт состава работ («1. …», «2. …») — с новой строки. */
+    private String formatComposition(String value) {
+        // список пунктов идёт inline после извлечения текста: ставим перенос перед «N. »
+        return value.replaceAll("\\s+(\\d{1,2})[.)]\\s+", "\n$1. ").strip();
+    }
+
+    /** Измеритель — короткая единица («шт.», «10 шт.»). Отсекаем прилипший мусор
+     *  из соседних колонок таблицы («в том числе», «Шифр», «Прямые…»). */
+    private String sanitizeUnit(String value) {
+        String v = value.split("(?i)в\\s+том\\s+числе|Шифр|Прямые|Наименование")[0].strip();
+        v = v.replaceAll("[;,]\\s*$", "").strip();
+        // явный мусор из ведомостей расхода материалов
+        if (v.length() > 40 || v.contains("(") ) return null;
+        return v.isBlank() ? null : v;
     }
 
     private void parsePage(String text, int pageOffset, int pageNumber,
@@ -111,7 +129,7 @@ public class NormativeRateParser {
             int tailStart = costStarts.get(Math.max(0, costs.size() - 6));
             String name = block.substring(0, tailStart).strip()
                     .replaceAll("\\s{2,}", " ");
-            if (name.isBlank()) continue;
+            if (name.isBlank() || !looksLikeRateName(name)) continue;
 
             int absCodePos = pageOffset + span[0];
             NormativeRate rate = new NormativeRate();
@@ -123,6 +141,16 @@ public class NormativeRateParser {
             assignCosts(rate, costs);
             rates.add(rate);
         }
+    }
+
+    /**
+     * Наименование настоящей расценки — работа, начинается с буквы («Техническое
+     * обслуживание…», «Замена…»). Строки из ведомостей расхода материалов начинаются
+     * с кода материала («21.1-20-1 Бязь», «21.1-4-7 Газ…») — их отсекаем.
+     */
+    private boolean looksLikeRateName(String name) {
+        String s = name.replaceFirst("^[\\s«»\"'`\\-–—]+", "");
+        return !s.isEmpty() && Character.isLetter(s.charAt(0));
     }
 
     /** Значение ближайшего заголовка, расположенного выше позиции расценки. */

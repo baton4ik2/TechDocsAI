@@ -23,6 +23,8 @@ class NormativeIntegrationTest extends IntegrationTestBase {
     NormativeSourcebookRepository sourcebookRepository;
     @Autowired
     NormativeRateRepository rateRepository;
+    @Autowired
+    ru.techdocs.normative.NormativeService normativeService;
 
     private NormativeSourcebook sourcebook() {
         NormativeSourcebook book = new NormativeSourcebook();
@@ -59,6 +61,22 @@ class NormativeIntegrationTest extends IntegrationTestBase {
                 .anyMatch(n -> n.contains("извещателя"));
         // кабельный лоток не про обслуживание — не должен быть первым
         assertThat(found.get(0).getName()).contains("обслуживание");
+    }
+
+    @Test
+    void shifrQueryUsesCodeSearchNotFullText() {
+        Long bookId = sourcebook().getId();
+        rate(bookId, "22-2203-128-1/1", "Техническое обслуживание извещателя", new BigDecimal("139.33"));
+        rate(bookId, "22-2203-95-1/1", "Обслуживание прибора", new BigDecimal("421.30"));
+
+        // запрос-шифр не должен ИЛИ-матчиться по числам 22/2203/1 и тянуть всё подряд
+        var found = normativeService.search("22-2203-128-1/1", 15);
+        assertThat(found).extracting(NormativeRate::getCode).containsExactly("22-2203-128-1/1");
+
+        // префикс шифра возвращает обе расценки этой группы
+        assertThat(normativeService.search("22-2203", 15))
+                .extracting(NormativeRate::getCode)
+                .containsExactlyInAnyOrder("22-2203-128-1/1", "22-2203-95-1/1");
     }
 
     @Test

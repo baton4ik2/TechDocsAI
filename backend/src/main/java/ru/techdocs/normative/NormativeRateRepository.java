@@ -33,4 +33,10 @@ public interface NormativeRateRepository extends JpaRepository<NormativeRate, Lo
             LIMIT :limit
             """, nativeQuery = true)
     List<NormativeRate> search(@Param("query") String query, @Param("limit") int limit);
+
+    /** Поиск по шифру: полнотекст разбивает «22-2203-128-1/1» на числа-токены и
+     *  выдаёт мусор, поэтому шифр ищем по префиксу кода. */
+    @Query(value = "SELECT * FROM normative_rates WHERE code LIKE :pattern ORDER BY code LIMIT :limit",
+            nativeQuery = true)
+    List<NormativeRate> searchByCode(@Param("pattern") String pattern, @Param("limit") int limit);
 }

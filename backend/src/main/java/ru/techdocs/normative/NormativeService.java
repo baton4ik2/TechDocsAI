@@ -68,7 +68,17 @@ public class NormativeService {
     public List<NormativeRate> search(String query, int limit) {
         if (isBlank(query)) return List.of();
         int capped = Math.max(1, Math.min(limit, 50));
-        return rateRepository.search(query.strip(), capped);
+        String q = query.strip();
+        // запрос-шифр (цифры, дефисы, слэши) — ищем по коду, а не полнотекстом
+        if (looksLikeCode(q)) {
+            String pattern = q.replace("%", "") + "%";
+            return rateRepository.searchByCode(pattern, capped);
+        }
+        return rateRepository.search(q, capped);
+    }
+
+    private boolean looksLikeCode(String q) {
+        return q.matches("[\\d./\\-\\s]+") && q.chars().anyMatch(Character::isDigit);
     }
 
     public void reprocess(Long id) {
