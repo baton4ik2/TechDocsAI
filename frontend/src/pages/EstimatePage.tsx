@@ -46,6 +46,7 @@ export default function EstimatePage() {
           <h1 className="text-2xl font-semibold text-slate-900 mt-1">{estimate.name}</h1>
         </div>
         <div className="flex gap-2">
+          <GenerateButton estimateId={estimate.id} onDone={load} />
           <button className="btn-secondary" onClick={() => setEditing('new')}>+ Строка</button>
           <button className="btn-primary"
                   onClick={() => exportEstimate(estimate.id, `Смета_${estimate.name}.xlsx`).catch((e) => toast(e.message, 'error'))}>
@@ -135,6 +136,30 @@ export default function EstimatePage() {
                        confirmLabel="Удалить" danger onConfirm={removeRow} onClose={() => setDeletingRow(null)} />
       )}
     </div>
+  )
+}
+
+function GenerateButton({ estimateId, onDone }: { estimateId: number; onDone: () => void }) {
+  const [loading, setLoading] = useState(false)
+  const run = async () => {
+    setLoading(true)
+    try {
+      const res = await api.post<{ created: number; skipped: number; aiUsed: boolean }>(
+        `/api/estimates/${estimateId}/generate`)
+      toast(`Добавлено строк: ${res.created}${res.skipped ? `, пропущено (уже есть): ${res.skipped}` : ''}` +
+        `${res.aiUsed ? '' : ' · без ИИ (подбор по поиску)'}`, 'success')
+      onDone()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Ошибка генерации', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+  return (
+    <button className="btn-secondary" onClick={run} disabled={loading}
+            title="Заполнить смету из реестра оборудования: подбор расценки ИИ + периодичность из ПКМ">
+      {loading ? '🤖 Генерация…' : '🤖 ИИ-черновик'}
+    </button>
   )
 }
 

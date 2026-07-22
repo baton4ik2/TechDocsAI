@@ -23,6 +23,7 @@ public class EstimateController {
     private final EstimateService estimateService;
     private final EstimateRowRepository rowRepository;
     private final EstimateXlsxExporter exporter;
+    private final EstimateDraftService draftService;
 
     @PostMapping
     public Estimate create(@RequestParam Long facilityId,
@@ -65,6 +66,12 @@ public class EstimateController {
     public ResponseEntity<Void> deleteRow(@PathVariable Long rowId) {
         estimateService.deleteRow(rowId);
         return ResponseEntity.noContent().build();
+    }
+
+    /** ИИ-черновик: заполнить смету строками из реестра оборудования объекта. */
+    @PostMapping("/{id}/generate")
+    public EstimateDraftService.DraftResult generate(@PathVariable Long id) {
+        return draftService.generate(id);
     }
 
     @GetMapping("/{id}/export")
