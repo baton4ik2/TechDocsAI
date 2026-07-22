@@ -109,6 +109,22 @@ class EstimateCalculatorTest {
         assertThat(res.vat()).isEqualByComparingTo("0.00");
     }
 
+    /** Эталонная строка ИБП (кол-во 2): совпадение блоков Москва и РТ до копейки. */
+    @Test
+    void matchesReferenceIbpRowBothBlocks() {
+        // O=2116.73, P(ЭМ)=1.18, Q(ЗПМ)=0.01, R=0, K=2, J=2, M=1, S=1
+        var res = calc.compute(
+                row("2", "2", "1", "1", "2116.73", "1.18", "0.01", "0", "2.62"),
+                defaults());
+
+        // блок Москва (СН-2012)
+        assertThat(r2(res.totalWithVat())).isEqualByComparingTo("18603.62");   // AB
+        // блок РТ: НР и НП начисляются от ЗПМ, а не от полного ЭМ
+        assertThat(r2(res.totalNoVatRt())).isEqualByComparingTo("7632.58");    // AM
+        assertThat(res.vatRt()).isEqualByComparingTo("1679.17");               // AN
+        assertThat(r2(res.totalWithVatRt())).isEqualByComparingTo("9311.75");  // AO
+    }
+
     /** ЭМ с ЗПМ: коэффициент РТ применяется только к ЗПМ внутри ЭМ. */
     @Test
     void rtCoefficientAffectsOnlyLabourInMachineCost() {

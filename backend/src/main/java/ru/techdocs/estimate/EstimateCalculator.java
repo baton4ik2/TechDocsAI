@@ -79,7 +79,9 @@ public class EstimateCalculator {
         BigDecimal emRt = pRt.multiply(n).multiply(s);   // AH
         BigDecimal zpmRt = qRt.multiply(n).multiply(s);  // AI
         BigDecimal mrRt = r.multiply(n);                 // AJ
-        BigDecimal nrRt = zpRt.multiply(c.nrZp()).add(emRt.multiply(c.nrEm()));  // AK
+        // в блоке РТ НР и НП начисляются от ЗПМ_рт (AI), а не от полного ЭМ_рт —
+        // как в эталоне (AK=AG·нрЗП+AI·нрЭМ, AL=AG·нпЗП+AI·нпЭМ)
+        BigDecimal nrRt = zpRt.multiply(c.nrZp()).add(zpmRt.multiply(c.nrEm())); // AK
         BigDecimal npRt = zpRt.multiply(c.npZp()).add(zpmRt.multiply(c.npEm())); // AL
         BigDecimal noVatRt = zpRt.add(emRt).add(mrRt).add(nrRt).add(npRt);       // AM
         BigDecimal vatRt = round2(noVatRt.multiply(c.vat()));                    // AN
