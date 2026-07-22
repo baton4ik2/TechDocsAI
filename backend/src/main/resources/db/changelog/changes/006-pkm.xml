@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="006-01-pkm-documents" author="techdocs">
+        <sql>
+            CREATE TABLE pkm_documents (
+                id                BIGSERIAL PRIMARY KEY,
+                name              VARCHAR(500) NOT NULL,
+                system_type       VARCHAR(200),
+                original_filename VARCHAR(500),
+                storage_path      VARCHAR(1000),
+                operation_count   INT NOT NULL DEFAULT 0,
+                status            VARCHAR(32) NOT NULL DEFAULT 'UPLOADED',
+                error_message     TEXT,
+                created_at        TIMESTAMP NOT NULL DEFAULT now()
+            );
+        </sql>
+    </changeSet>
+
+    <changeSet id="006-02-pkm-operations" author="techdocs">
+        <sql>
+            CREATE TABLE pkm_operations (
+                id                  BIGSERIAL PRIMARY KEY,
+                pkm_id              BIGINT NOT NULL REFERENCES pkm_documents(id) ON DELETE CASCADE,
+                system_type         VARCHAR(200),
+                position            INT,
+                category            VARCHAR(200),   -- Обязательные / Рекомендуемые
+                operation_name      TEXT NOT NULL,  -- «Техническое обслуживание устройства контроля доступа»
+                work_composition    TEXT,           -- состав работ (пункты)
+                periodicity         VARCHAR(200),   -- как в регламенте: «Ежемесячно», «Два раза в год»
+                periodicity_per_year NUMERIC(6,2)   -- нормализовано: 12, 4, 2, 1 …
+            );
+            CREATE INDEX idx_pkm_ops_pkm ON pkm_operations(pkm_id);
+            CREATE INDEX idx_pkm_ops_system ON pkm_operations(system_type);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

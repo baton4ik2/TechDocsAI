@@ -127,6 +127,29 @@ export interface NormativeMatchResult {
   aiUsed: boolean
 }
 
+export interface PkmDocument {
+  id: number
+  name: string
+  systemType?: string
+  originalFilename?: string
+  operationCount: number
+  status: string
+  errorMessage?: string
+  createdAt: string
+}
+
+export interface PkmOperation {
+  id: number
+  pkmId: number
+  systemType?: string
+  position?: number
+  category?: string
+  operationName: string
+  workComposition?: string
+  periodicity?: string
+  periodicityPerYear?: number
+}
+
 export interface Dashboard {
   facilityCount: number
   documentCount: number

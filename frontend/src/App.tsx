@@ -6,6 +6,7 @@ import DashboardPage from './pages/DashboardPage'
 import FacilitiesPage from './pages/FacilitiesPage'
 import FacilityPage from './pages/FacilityPage'
 import NormativesPage from './pages/NormativesPage'
+import PkmPage from './pages/PkmPage'
 import ChatPage from './pages/ChatPage'
 import ToastHost from './components/Toast'
 
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="facilities" element={<FacilitiesPage />} />
           <Route path="facilities/:id" element={<FacilityPage />} />
           <Route path="normatives" element={<NormativesPage />} />
+          <Route path="pkm" element={<PkmPage />} />
           <Route path="chat" element={<ChatPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
