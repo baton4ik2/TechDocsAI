@@ -234,6 +234,7 @@ export interface UniqueEquipmentView {
   equipment: UniqueEquipment
   objectCount: number
   plannedWorkCount: number
+  system?: string
 }
 
 export interface PlannedWork {

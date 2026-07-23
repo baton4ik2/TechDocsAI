@@ -5,11 +5,17 @@ import org.springframework.stereotype.Service;
 import ru.techdocs.common.BadRequestException;
 import ru.techdocs.common.NotFoundException;
 import ru.techdocs.common.Periodicity;
+import ru.techdocs.engineeringsystem.EngineeringSystem;
+import ru.techdocs.engineeringsystem.EngineeringSystemRepository;
 import ru.techdocs.equipment.Equipment;
 import ru.techdocs.equipment.EquipmentRepository;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -18,6 +24,7 @@ public class UniqueEquipmentService {
     private final UniqueEquipmentRepository repository;
     private final PlannedWorkRepository plannedWorkRepository;
     private final EquipmentRepository equipmentRepository;
+    private final EngineeringSystemRepository systemRepository;
 
     // ---- нормализация и линковка ----
 
@@ -26,8 +33,18 @@ public class UniqueEquipmentService {
         return norm(name) + "|" + norm(model) + "|" + norm(manufacturer);
     }
 
+    /**
+     * Нормализация для сравнения: регистр, ё→е, все виды пробелов (в т.ч.
+     * неразрывный U+00A0, который не ловит \s) и дефисов (–, —, ‑, −) сводятся
+     * к обычным — иначе одинаковые модели из разных источников не совпадают.
+     */
     private static String norm(String s) {
-        return s == null ? "" : s.toLowerCase().replace('ё', 'е').replaceAll("\\s+", " ").strip();
+        if (s == null) return "";
+        return s.toLowerCase()
+                .replace('ё', 'е')
+                .replaceAll("[\\u2010-\\u2015\\u2212]", "-")   // разные дефисы/минус → -
+                .replaceAll("[\\s\\u00A0\\u2000-\\u200B]+", " ") // любые пробелы → один
+                .strip();
     }
 
     /** Находит или создаёт уникальное оборудование по ключу и возвращает его. */
@@ -43,29 +60,75 @@ public class UniqueEquipmentService {
         });
     }
 
-    /** Привязывает всё непривязанное оборудование объектов к реестру. Идемпотентно. */
+    /**
+     * Перепривязывает оборудование объектов к реестру по актуальному ключу и
+     * удаляет осиротевшие записи-дубли (без оборудования, паспорта и работ).
+     * Идемпотентно. Возвращает число переставленных строк оборудования.
+     */
     public int syncFromEquipment() {
-        List<Equipment> unlinked = equipmentRepository.findByUniqueEquipmentIdIsNull();
-        int linked = 0;
-        for (Equipment eq : unlinked) {
+        int changed = 0;
+        for (Equipment eq : equipmentRepository.findAll()) {
             UniqueEquipment ue = resolve(eq.getName(), eq.getModel(), eq.getManufacturer());
-            eq.setUniqueEquipmentId(ue.getId());
-            equipmentRepository.save(eq);
-            linked++;
+            if (!ue.getId().equals(eq.getUniqueEquipmentId())) {
+                eq.setUniqueEquipmentId(ue.getId());
+                equipmentRepository.save(eq);
+                changed++;
+            }
         }
-        return linked;
+        cleanupOrphans();
+        return changed;
+    }
+
+    /** Удаляет уникальное оборудование, к которому больше ничего не привязано. */
+    private void cleanupOrphans() {
+        for (UniqueEquipment ue : repository.findAll()) {
+            boolean hasPassport = ue.getPassportStoragePath() != null;
+            boolean hasWorks = plannedWorkRepository.countByUniqueEquipmentId(ue.getId()) > 0;
+            boolean hasEquipment = equipmentRepository.countByUniqueEquipmentId(ue.getId()) > 0;
+            if (!hasEquipment && !hasPassport && !hasWorks) {
+                repository.delete(ue);
+            }
+        }
     }
 
     // ---- реестр ----
 
-    public record UniqueEquipmentView(UniqueEquipment equipment, long objectCount, long plannedWorkCount) {}
+    public record UniqueEquipmentView(UniqueEquipment equipment, long objectCount,
+                                      long plannedWorkCount, String system) {}
 
     public List<UniqueEquipmentView> list() {
-        return repository.findAllByOrderByName().stream()
-                .map(ue -> new UniqueEquipmentView(ue,
-                        equipmentRepository.countByUniqueEquipmentId(ue.getId()),
-                        plannedWorkRepository.countByUniqueEquipmentId(ue.getId())))
-                .toList();
+        Map<Long, String> systemNames = new HashMap<>();
+        systemRepository.findAll().forEach(s -> systemNames.put(s.getId(), s.getName()));
+
+        // группируем оборудование объектов по уникальному, чтобы посчитать систему
+        Map<Long, List<Equipment>> byUnique = new HashMap<>();
+        for (Equipment eq : equipmentRepository.findAll()) {
+            if (eq.getUniqueEquipmentId() != null) {
+                byUnique.computeIfAbsent(eq.getUniqueEquipmentId(), k -> new ArrayList<>()).add(eq);
+            }
+        }
+
+        List<UniqueEquipmentView> views = new ArrayList<>();
+        for (UniqueEquipment ue : repository.findAllByOrderByName()) {
+            List<Equipment> eqs = byUnique.getOrDefault(ue.getId(), List.of());
+            views.add(new UniqueEquipmentView(ue, eqs.size(),
+                    plannedWorkRepository.countByUniqueEquipmentId(ue.getId()),
+                    dominantSystem(eqs, systemNames)));
+        }
+        return views;
+    }
+
+    /** Наиболее частая система среди привязанного оборудования. */
+    private String dominantSystem(List<Equipment> eqs, Map<Long, String> systemNames) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (Equipment eq : eqs) {
+            String name = systemNames.get(eq.getEngineeringSystemId());
+            if (name != null) counts.merge(name, 1, Integer::sum);
+        }
+        return counts.entrySet().stream()
+                .max(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey)
+                .orElse(null);
     }
 
     public UniqueEquipment get(Long id) {
