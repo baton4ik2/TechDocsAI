@@ -218,6 +218,36 @@ export interface EstimateView {
   totals: EstimateTotals
 }
 
+export interface UniqueEquipment {
+  id: number
+  normKey: string
+  name?: string
+  model?: string
+  manufacturer?: string
+  passportFilename?: string
+  passportStatus?: string
+  passportError?: string
+  createdAt: string
+}
+
+export interface UniqueEquipmentView {
+  equipment: UniqueEquipment
+  objectCount: number
+  plannedWorkCount: number
+}
+
+export interface PlannedWork {
+  id: number
+  uniqueEquipmentId: number
+  position?: number
+  workType?: string
+  name: string
+  workComposition?: string
+  periodicity?: string
+  periodicityPerYear?: number
+  source: string
+}
+
 export interface Dashboard {
   facilityCount: number
   documentCount: number

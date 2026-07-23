@@ -6,18 +6,22 @@ import ru.techdocs.common.Periodicity;
 import ru.techdocs.equipment.Equipment;
 import ru.techdocs.pkm.PkmOperation;
 import ru.techdocs.pkm.PkmOperationRepository;
+import ru.techdocs.uniqueequipment.PlannedWork;
+import ru.techdocs.uniqueequipment.PlannedWorkRepository;
 
 import java.math.BigDecimal;
 import java.util.List;
 
 /**
- * Определяет периодичность обслуживания оборудования по приоритету источников:
+ * Определяет плановые операции и периодичность обслуживания оборудования по
+ * приоритету источников:
  * <ol>
- *   <li><b>Паспорт оборудования</b> (приоритетный) — появится с реестром уникального
- *       оборудования: паспорт привязывается к оборудованию и переиспользуется на
- *       всех объектах. Если у оборудования есть паспорт с ТО — берём его, а не ПКМ.</li>
- *   <li><b>ПКМ</b> — регламент обязательных работ по типу системы.</li>
- *   <li><b>Наименование расценки</b> — периодичность в названии («- ежемесячное»).</li>
+ *   <li><b>Паспорт</b> — плановые работы уникального оборудования (осмотр, ТО,
+ *       контроль функционирования …). Приоритетны: если у оборудования есть
+ *       паспортные работы — черновик сметы идёт по ним, а не по ПКМ.</li>
+ *   <li><b>ПКМ</b> — регламент по типу системы (основная операция ТО).</li>
+ *   <li><b>Наименование расценки</b> — периодичность из названия («- ежемесячное»),
+ *       используется как запасной вариант в {@link #perYearFromRate}.</li>
  * </ol>
  */
 @Service
@@ -27,57 +31,61 @@ public class EquipmentMaintenanceResolver {
     public static final String SOURCE_PASSPORT = "PASSPORT";
     public static final String SOURCE_PKM = "PKM";
     public static final String SOURCE_RATE = "RATE_NAME";
-    public static final String SOURCE_NONE = "NONE";
 
     private final PkmOperationRepository pkmRepository;
+    private final PlannedWorkRepository plannedWorkRepository;
 
-    /** Периодичность: текст, раз/год, источник и пояснение (для колонки «обоснование»). */
-    public record Planned(String periodicityText, BigDecimal perYear, String source, String note) {}
-
-    public Planned resolve(Equipment equipment, String systemType, String rateName) {
-        Planned fromPassport = resolveFromPassport(equipment);
-        if (fromPassport != null) return fromPassport;
-
-        if (systemType != null && !systemType.isBlank()) {
-            Planned fromPkm = resolveFromPkm(systemType);
-            if (fromPkm != null) return fromPkm;
-        }
-
-        BigDecimal perYear = Periodicity.perYear(rateName);
-        if (perYear != null) {
-            return new Planned(label(perYear), perYear, SOURCE_RATE, "периодичность из наименования расценки");
-        }
-        return new Planned(null, null, SOURCE_NONE, "периодичность не определена — укажите вручную");
-    }
+    /** Плановая операция: имя, тип, периодичность, источник, пояснение. */
+    public record Planned(String operationName, String workType, String periodicityText,
+                          BigDecimal perYear, String source, String note) {}
 
     /**
-     * Паспорт оборудования (приоритетнее ПКМ). Пока не реализовано — появится вместе
-     * с реестром уникального оборудования (Фаза 2): паспорт привязывается к
-     * оборудованию, ТО и периодичность берутся из него.
+     * Плановые операции для оборудования (по приоритету паспорт → ПКМ).
+     * Пустой список — источников нет, вызывающий формирует одну общую операцию ТО
+     * и берёт периодичность из наименования расценки.
      */
-    private Planned resolveFromPassport(Equipment equipment) {
-        // TODO(Фаза 2): if (equipment has passport with ТО) return из паспорта, source=PASSPORT
-        return null;
+    public List<Planned> resolveOperations(Equipment equipment, String systemType) {
+        // 1) паспорт: плановые работы уникального оборудования
+        if (equipment.getUniqueEquipmentId() != null) {
+            List<PlannedWork> works =
+                    plannedWorkRepository.findByUniqueEquipmentIdOrderByPosition(equipment.getUniqueEquipmentId());
+            if (!works.isEmpty()) {
+                return works.stream().map(w -> new Planned(
+                        w.getName(), w.getWorkType(), w.getPeriodicity(), w.getPeriodicityPerYear(),
+                        SOURCE_PASSPORT,
+                        "Плановая работа из паспорта" + (w.getWorkType() != null ? " (" + w.getWorkType() + ")" : "")
+                )).toList();
+            }
+        }
+        // 2) ПКМ: основная операция ТО системы
+        if (systemType != null && !systemType.isBlank()) {
+            Planned pkm = resolveFromPkm(systemType);
+            if (pkm != null) return List.of(pkm);
+        }
+        return List.of();
     }
 
     private Planned resolveFromPkm(String systemType) {
         List<PkmOperation> ops = pkmRepository.findBySystemTypeOrderByPosition(systemType);
         if (ops.isEmpty()) return null;
-        // основная операция ТО системы (иначе — первая в регламенте)
         PkmOperation to = ops.stream()
                 .filter(o -> o.getOperationName() != null
                         && o.getOperationName().toLowerCase().contains("обслуживан"))
                 .findFirst()
                 .orElse(ops.get(0));
-        return new Planned(to.getPeriodicity(), to.getPeriodicityPerYear(),
+        return new Planned(to.getOperationName(), "ТО", to.getPeriodicity(), to.getPeriodicityPerYear(),
                 SOURCE_PKM, "ПКМ: " + to.getOperationName());
     }
 
+    /** Периодичность из наименования расценки («- ежемесячное»). */
+    public BigDecimal perYearFromRate(String rateName) {
+        return Periodicity.perYear(rateName);
+    }
+
     /** Человекочитаемая периодичность из числа выполнений в год. */
-    private String label(BigDecimal perYear) {
+    public String label(BigDecimal perYear) {
         if (perYear == null) return null;
-        int py = perYear.intValue();
-        return switch (py) {
+        return switch (perYear.intValue()) {
             case 365 -> "Ежедневно";
             case 52 -> "Еженедельно";
             case 12 -> "Ежемесячно";

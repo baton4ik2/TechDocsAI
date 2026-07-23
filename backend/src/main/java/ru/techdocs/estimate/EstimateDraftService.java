@@ -10,6 +10,7 @@ import ru.techdocs.equipment.EquipmentRepository;
 import ru.techdocs.normative.NormativeAiMatchService;
 import ru.techdocs.normative.NormativeRate;
 
+import java.math.BigDecimal;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -51,32 +52,55 @@ public class EstimateDraftService {
             if (existing.contains(eq.getId())) { skipped++; continue; }
 
             String systemType = systemName(eq.getEngineeringSystemId());
-            var match = aiMatchService.match(describe(eq));
-            NormativeRate rate = pickRate(match);
-            EquipmentMaintenanceResolver.Planned plan =
-                    maintenanceResolver.resolve(eq, systemType, rate == null ? null : rate.getName());
+            List<EquipmentMaintenanceResolver.Planned> operations =
+                    maintenanceResolver.resolveOperations(eq, systemType);
 
-            EstimateService.RowInput input = new EstimateService.RowInput(
-                    systemType,                       // section
-                    eq.getId(),                       // equipmentId
-                    eq.getName(),                     // equipmentName
-                    eq.getModel(),                    // equipmentType
-                    eq.getManufacturer(),             // manufacturer
-                    operationName(eq),                // operationName (E)
-                    rate == null ? null : rate.getCode(), // rateCode → автозаполнение цен
-                    null,                             // rateName (из каталога)
-                    plan.periodicityText(),           // periodicity
-                    justification(match, plan),       // justification
-                    plan.perYear(),                   // opsPerYear
-                    eq.getQuantity(),                 // qty
-                    null, null, null, null, null,     // unitBasis/цены — из каталога
-                    null, null);                      // correction/laborHours
-            estimateService.addRow(estimateId, input);
-            created++;
+            if (operations.isEmpty()) {
+                // источников нет — одна общая операция ТО, периодичность из расценки
+                addRowForOperation(estimateId, eq, systemType, null);
+                created++;
+            } else {
+                // паспорт/ПКМ: по строке на каждую плановую операцию
+                for (EquipmentMaintenanceResolver.Planned op : operations) {
+                    addRowForOperation(estimateId, eq, systemType, op);
+                    created++;
+                }
+            }
         }
         log.info("Черновик сметы {}: создано {} строк, пропущено {} (ИИ: {})",
                 estimateId, created, skipped, aiAvailable);
         return new DraftResult(created, skipped, aiAvailable);
+    }
+
+    private void addRowForOperation(Long estimateId, Equipment eq, String systemType,
+                                    EquipmentMaintenanceResolver.Planned op) {
+        // подбор расценки под конкретную операцию (для паспорта/ПКМ учитываем её название)
+        String query = op == null ? describe(eq) : describe(eq) + " " + op.operationName();
+        var match = aiMatchService.match(query);
+        NormativeRate rate = pickRate(match);
+
+        // периодичность: из операции (паспорт/ПКМ), иначе из наименования расценки
+        BigDecimal perYear = op != null && op.perYear() != null
+                ? op.perYear()
+                : maintenanceResolver.perYearFromRate(rate == null ? null : rate.getName());
+        String periodicityText = op != null && op.periodicityText() != null
+                ? op.periodicityText()
+                : maintenanceResolver.label(perYear);
+        String operationName = op != null ? op.operationName() : operationName(eq);
+        String note = op != null ? op.note() : "периодичность из наименования расценки";
+
+        EstimateService.RowInput input = new EstimateService.RowInput(
+                systemType, eq.getId(), eq.getName(), eq.getModel(), eq.getManufacturer(),
+                operationName,
+                rate == null ? null : rate.getCode(),
+                null,
+                periodicityText,
+                justification(match, note),
+                perYear,
+                eq.getQuantity(),
+                null, null, null, null, null,
+                null, null);
+        estimateService.addRow(estimateId, input);
     }
 
     private NormativeRate pickRate(NormativeAiMatchService.MatchResult match) {
@@ -98,7 +122,7 @@ public class EstimateDraftService {
         return "Техническое обслуживание — " + name;
     }
 
-    private String justification(NormativeAiMatchService.MatchResult match, EquipmentMaintenanceResolver.Planned plan) {
+    private String justification(NormativeAiMatchService.MatchResult match, String periodicityNote) {
         StringBuilder sb = new StringBuilder();
         if (!match.matches().isEmpty() && match.matches().get(0).reason() != null) {
             sb.append("Расценка (ИИ): ").append(match.matches().get(0).reason()).append(". ");
@@ -107,7 +131,7 @@ public class EstimateDraftService {
         } else if (!match.candidates().isEmpty()) {
             sb.append("Расценка — верхний результат поиска по каталогу. ");
         }
-        sb.append("Периодичность: ").append(plan.note());
+        sb.append("Периодичность: ").append(periodicityNote);
         return sb.toString().strip();
     }
 

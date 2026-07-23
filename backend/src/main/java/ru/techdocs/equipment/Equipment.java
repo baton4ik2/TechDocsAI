@@ -29,6 +29,9 @@ public class Equipment {
     @Column(name = "engineering_system_id")
     private Long engineeringSystemId;
 
+    @Column(name = "unique_equipment_id")
+    private Long uniqueEquipmentId;
+
     private String manufacturer;
 
     private String name;

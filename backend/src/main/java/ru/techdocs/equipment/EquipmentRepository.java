@@ -13,6 +13,12 @@ public interface EquipmentRepository extends JpaRepository<Equipment, Long> {
 
     long countByFacilityId(Long facilityId);
 
+    List<Equipment> findByUniqueEquipmentIdIsNull();
+
+    List<Equipment> findByUniqueEquipmentId(Long uniqueEquipmentId);
+
+    long countByUniqueEquipmentId(Long uniqueEquipmentId);
+
     @Modifying
     @Transactional
     @Query("UPDATE Equipment e SET e.engineeringSystemId = :target WHERE e.engineeringSystemId = :source")

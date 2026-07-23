@@ -5,6 +5,7 @@ const navItems = [
   { to: '/', label: 'Главная', icon: '🏠', end: true },
   { to: '/facilities', label: 'Объекты', icon: '🏢' },
   { to: '/normatives', label: 'Нормативы', icon: '📚' },
+  { to: '/equipment-registry', label: 'Реестр оборуд.', icon: '🔧' },
   { to: '/pkm', label: 'ПКМ', icon: '📋' },
   { to: '/estimates', label: 'Плановые работы', icon: '📊' },
   { to: '/chat', label: 'Чат с ИИ', icon: '💬' },

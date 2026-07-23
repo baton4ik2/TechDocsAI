@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="008-01-unique-equipment" author="techdocs">
+        <sql>
+            CREATE TABLE unique_equipment (
+                id                   BIGSERIAL PRIMARY KEY,
+                norm_key             VARCHAR(900) NOT NULL UNIQUE,  -- наимен.|модель|производитель (нормализ.)
+                name                 VARCHAR(1000),
+                model                VARCHAR(500),
+                manufacturer         VARCHAR(500),
+                passport_filename    VARCHAR(500),
+                passport_storage_path VARCHAR(1000),
+                passport_status      VARCHAR(32),   -- UPLOADED/PROCESSING/READY/ERROR
+                passport_error       TEXT,
+                created_at           TIMESTAMP NOT NULL DEFAULT now()
+            );
+        </sql>
+    </changeSet>
+
+    <changeSet id="008-02-planned-works" author="techdocs">
+        <sql>
+            CREATE TABLE planned_works (
+                id                   BIGSERIAL PRIMARY KEY,
+                unique_equipment_id  BIGINT NOT NULL REFERENCES unique_equipment(id) ON DELETE CASCADE,
+                position             INT,
+                work_type            VARCHAR(200),   -- осмотр / ТО / контроль функционирования …
+                name                 TEXT NOT NULL,
+                work_composition     TEXT,
+                periodicity          VARCHAR(200),
+                periodicity_per_year NUMERIC(6,2),
+                source               VARCHAR(32) NOT NULL DEFAULT 'MANUAL'  -- PASSPORT / MANUAL
+            );
+            CREATE INDEX idx_planned_works_equipment ON planned_works(unique_equipment_id);
+        </sql>
+    </changeSet>
+
+    <changeSet id="008-03-equipment-link" author="techdocs">
+        <sql>
+            ALTER TABLE equipment ADD COLUMN unique_equipment_id BIGINT
+                REFERENCES unique_equipment(id) ON DELETE SET NULL;
+            CREATE INDEX idx_equipment_unique ON equipment(unique_equipment_id);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>
