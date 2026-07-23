@@ -11,6 +11,7 @@ import ru.techdocs.normative.NormativeAiMatchService;
 import ru.techdocs.normative.NormativeRate;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -36,9 +37,24 @@ public class EstimateDraftService {
     public record DraftResult(int created, int skipped, boolean aiUsed) {}
 
     public DraftResult generate(Long estimateId) {
+        return generate(estimateId, null);
+    }
+
+    /**
+     * Черновик по выбранным системам объекта. Строки каждой системы получают
+     * раздел (section) с её названием — в смете и выгрузке это отдельные блоки
+     * (например, АПС и СОУЭ). Пустой список систем — всё оборудование объекта.
+     */
+    public DraftResult generate(Long estimateId, List<Long> systemIds) {
         Estimate estimate = estimateService.get(estimateId);
-        List<Equipment> equipment =
-                equipmentRepository.findFiltered(estimate.getFacilityId(), estimate.getSystemId());
+        List<Equipment> equipment = new ArrayList<>();
+        if (systemIds != null && !systemIds.isEmpty()) {
+            for (Long sid : systemIds) {
+                equipment.addAll(equipmentRepository.findFiltered(estimate.getFacilityId(), sid));
+            }
+        } else {
+            equipment.addAll(equipmentRepository.findFiltered(estimate.getFacilityId(), estimate.getSystemId()));
+        }
 
         // не дублируем оборудование, уже присутствующее в смете
         Set<Long> existing = new HashSet<>();

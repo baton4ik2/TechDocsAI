@@ -7,6 +7,7 @@ import { toast } from '../components/Toast'
 export default function EquipmentRegistryPage() {
   const [items, setItems] = useState<UniqueEquipmentView[]>([])
   const [syncing, setSyncing] = useState(false)
+  const [filter, setFilter] = useState('')   // '' = все, 'none' = без системы, иначе имя системы
   const [error, setError] = useState('')
 
   const load = () => {
@@ -44,19 +45,15 @@ export default function EquipmentRegistryPage() {
 
       {error && <div className="text-red-600 text-sm">{error}</div>}
 
-      {items.length === 0 && (
+      {items.length === 0 ? (
         <div className="card text-center text-slate-400 py-16">
           Реестр пуст. Нажмите «Синхронизировать» — оборудование объектов сгруппируется по моделям.
         </div>
-      )}
-
-      {groupBySystem(items).map(([system, rows]) => (
-        <div key={system} className="space-y-2">
-          <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">
-            {system} <span className="text-slate-300 font-normal">· {rows.length}</span>
-          </h2>
+      ) : (
+        <>
+          <SystemChips items={items} filter={filter} onChange={setFilter} />
           <div className="card divide-y divide-slate-100">
-            {rows.map((it) => (
+            {items.filter((it) => match(it, filter)).map((it) => (
               <Link key={it.equipment.id} to={`/equipment-registry/${it.equipment.id}`}
                     className="flex items-center gap-4 px-5 py-4 hover:bg-slate-50">
                 <div className="text-2xl">🔧</div>
@@ -67,6 +64,7 @@ export default function EquipmentRegistryPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-4 text-xs text-slate-500 shrink-0">
+                  {it.system && <span className="text-slate-400">{it.system}</span>}
                   <span>{it.objectCount} на объектах</span>
                   <span className={it.plannedWorkCount > 0 ? 'text-emerald-600' : ''}>
                     {it.plannedWorkCount} план. работ
@@ -76,23 +74,49 @@ export default function EquipmentRegistryPage() {
               </Link>
             ))}
           </div>
-        </div>
-      ))}
+        </>
+      )}
     </div>
   )
 }
 
-/** Группировка по системе; «Без системы» — в конце. */
-function groupBySystem(items: UniqueEquipmentView[]): [string, UniqueEquipmentView[]][] {
-  const groups = new Map<string, UniqueEquipmentView[]>()
-  for (const it of items) {
-    const key = it.system || 'Без системы'
-    if (!groups.has(key)) groups.set(key, [])
-    groups.get(key)!.push(it)
-  }
-  return Array.from(groups.entries()).sort(([a], [b]) => {
-    if (a === 'Без системы') return 1
-    if (b === 'Без системы') return -1
-    return a.localeCompare(b, 'ru')
-  })
+function match(it: UniqueEquipmentView, filter: string): boolean {
+  if (filter === '') return true
+  if (filter === 'none') return !it.system
+  return it.system === filter
+}
+
+function SystemChips({ items, filter, onChange }: {
+  items: UniqueEquipmentView[]; filter: string; onChange: (f: string) => void
+}) {
+  const systems = Array.from(new Set(items.map((i) => i.system).filter(Boolean) as string[]))
+    .sort((a, b) => a.localeCompare(b, 'ru'))
+  const count = (sys: string) => items.filter((i) => i.system === sys).length
+  const noneCount = items.filter((i) => !i.system).length
+
+  const Chip = ({ active, onClick, label, n }: {
+    active: boolean; onClick: () => void; label: string; n: number
+  }) => (
+    <button onClick={onClick}
+            className={`inline-flex items-center gap-1.5 rounded-full pl-3 pr-1.5 py-1 text-xs font-medium transition-colors ${
+              active ? 'bg-primary-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}>
+      {label}
+      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+        active ? 'bg-white/25 text-white' : 'bg-white text-slate-500'
+      }`}>{n}</span>
+    </button>
+  )
+
+  return (
+    <div className="flex gap-2 flex-wrap items-center">
+      <Chip active={filter === ''} label="Все" n={items.length} onClick={() => onChange('')} />
+      {systems.map((s) => (
+        <Chip key={s} active={filter === s} label={s} n={count(s)} onClick={() => onChange(s)} />
+      ))}
+      {noneCount > 0 && (
+        <Chip active={filter === 'none'} label="Без системы" n={noneCount} onClick={() => onChange('none')} />
+      )}
+    </div>
+  )
 }

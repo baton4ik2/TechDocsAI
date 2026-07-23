@@ -70,8 +70,9 @@ public class EstimateController {
 
     /** ИИ-черновик: заполнить смету строками из реестра оборудования объекта. */
     @PostMapping("/{id}/generate")
-    public EstimateDraftService.DraftResult generate(@PathVariable Long id) {
-        return draftService.generate(id);
+    public EstimateDraftService.DraftResult generate(@PathVariable Long id,
+                                                     @RequestParam(required = false) List<Long> systemIds) {
+        return draftService.generate(id, systemIds);
     }
 
     @GetMapping("/{id}/export")

@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { Estimate, Facility } from '../types'
+import { EngineeringSystem, Estimate, Facility } from '../types'
 import Modal from '../components/Modal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { toast } from '../components/Toast'
@@ -84,9 +84,20 @@ export default function EstimatesPage() {
 function CreateModal({ facilities, onClose }: { facilities: Facility[]; onClose: () => void }) {
   const [name, setName] = useState('')
   const [facilityId, setFacilityId] = useState<number | ''>('')
+  const [systems, setSystems] = useState<EngineeringSystem[]>([])
+  const [selectedSystems, setSelectedSystems] = useState<number[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
+
+  useEffect(() => {
+    setSystems([]); setSelectedSystems([])
+    if (!facilityId) return
+    api.get<EngineeringSystem[]>(`/api/facilities/${facilityId}/systems`).then(setSystems).catch(() => {})
+  }, [facilityId])
+
+  const toggleSystem = (id: number) =>
+    setSelectedSystems((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -95,6 +106,13 @@ function CreateModal({ facilities, onClose }: { facilities: Facility[]; onClose:
     setError('')
     try {
       const created = await api.post<Estimate>(`/api/estimates?facilityId=${facilityId}`, { name })
+      // сразу собираем ИИ-черновик по выбранным системам (блоки по системам)
+      if (selectedSystems.length > 0) {
+        const q = selectedSystems.map((s) => `systemIds=${s}`).join('&')
+        const res = await api.post<{ created: number; aiUsed: boolean }>(
+          `/api/estimates/${created.id}/generate?${q}`)
+        toast(`Черновик собран: строк ${res.created}${res.aiUsed ? '' : ' · без ИИ (поиск по каталогу)'}`, 'success')
+      }
       navigate(`/estimates/${created.id}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ошибка')
@@ -116,13 +134,40 @@ function CreateModal({ facilities, onClose }: { facilities: Facility[]; onClose:
         <div>
           <label className="label">Название сметы *</label>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} required
-                 placeholder="Смета обслуживания СКУD на 2026 год" />
+                 placeholder="Смета обслуживания на 2026 год" />
         </div>
+        {facilityId !== '' && (
+          <div>
+            <label className="label">Системы для ИИ-черновика</label>
+            {systems.length === 0 ? (
+              <div className="text-xs text-slate-400">У объекта нет систем.</div>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {systems.map((s) => (
+                    <button type="button" key={s.id} onClick={() => toggleSystem(s.id)}
+                            className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+                              selectedSystems.includes(s.id)
+                                ? 'bg-primary-600 text-white border-primary-600'
+                                : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
+                            }`}>
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  Выберите одну или несколько систем — каждая станет отдельным блоком (напр. АПС, СОУЭ).
+                  Не выбирать — создать пустую смету.
+                </p>
+              </>
+            )}
+          </div>
+        )}
         {error && <div className="text-sm text-red-600">{error}</div>}
         <div className="flex justify-end gap-2">
           <button type="button" className="btn-secondary" onClick={onClose}>Отмена</button>
           <button type="submit" className="btn-primary" disabled={loading}>
-            {loading ? 'Создание…' : 'Создать'}
+            {loading ? (selectedSystems.length ? 'Создание и сборка…' : 'Создание…') : 'Создать'}
           </button>
         </div>
       </form>

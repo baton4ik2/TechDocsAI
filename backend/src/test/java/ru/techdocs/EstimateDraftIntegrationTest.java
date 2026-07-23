@@ -129,6 +129,30 @@ class EstimateDraftIntegrationTest extends IntegrationTestBase {
     }
 
     @Test
+    void generatesBlocksPerSelectedSystem() throws Exception {
+        long f = facility();
+        long aps = system(f, "АПС");
+        long soue = system(f, "СОУЭ");
+        equipment(f, aps, "Извещатель пожарный", "ИП212", "3");
+        equipment(f, soue, "Оповещатель речевой", "ОР1", "2");
+        // расценка, совпадающая по слову «обслуживание» для обоих
+        seedRate();
+        long est = estimate(f, aps);
+
+        // генерация по двум системам → две строки с разными разделами (блоками)
+        mockMvc.perform(post("/api/estimates/" + est + "/generate?systemIds=" + aps + "&systemIds=" + soue)
+                        .header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.created").value(2));
+
+        JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + est).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
+        java.util.List<String> sections = new java.util.ArrayList<>();
+        view.get("rows").forEach(r -> sections.add(r.get("row").get("section").asText()));
+        org.assertj.core.api.Assertions.assertThat(sections).containsExactlyInAnyOrder("АПС", "СОУЭ");
+    }
+
+    @Test
     void secondGenerateSkipsExistingEquipment() throws Exception {
         long f = facility();
         long sys = system(f, "СКУД");

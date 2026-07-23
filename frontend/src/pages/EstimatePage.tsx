@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { Fragment, FormEvent, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api, exportEstimate } from '../api'
 import { EstimateRowEntity, EstimateView } from '../types'
@@ -79,8 +79,19 @@ export default function EstimatePage() {
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ row, calc }) => (
-              <tr key={row.id} className="border-b border-slate-50 hover:bg-slate-50 cursor-pointer"
+            {rows.map(({ row, calc }, i) => {
+              const prevSection = i > 0 ? rows[i - 1].row.section : null
+              const showHeader = row.section && row.section !== prevSection
+              return (
+              <Fragment key={row.id}>
+                {showHeader && (
+                  <tr className="bg-slate-100/70">
+                    <td colSpan={15} className="px-3 py-2 text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                      {row.section}
+                    </td>
+                  </tr>
+                )}
+              <tr className="border-b border-slate-50 hover:bg-slate-50 cursor-pointer"
                   onClick={() => setEditing(row)}>
                 <td className="py-2 px-3 text-slate-400">{row.position}</td>
                 <td className="py-2 px-3 max-w-[220px] truncate" title={row.equipmentName}>{row.equipmentName || '—'}</td>
@@ -101,7 +112,9 @@ export default function EstimatePage() {
                           onClick={(e) => { e.stopPropagation(); setDeletingRow(row) }}>✕</button>
                 </td>
               </tr>
-            ))}
+              </Fragment>
+              )
+            })}
             {rows.length === 0 && (
               <tr><td colSpan={15} className="text-center text-slate-400 py-12">
                 Строк пока нет. Добавьте строку — укажите шифр расценки, цены подтянутся из каталога.
