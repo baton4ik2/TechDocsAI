@@ -61,7 +61,8 @@ public class ReferenceEstimateImportService {
                 else if (t.contains("тип оборуд")) cols.put("type", c);
                 else if (t.contains("производител")) cols.put("manufacturer", c);
                 else if (t.contains("наименование меропр")) cols.put("operation", c);
-                else if (t.contains("периодичн")) cols.put("periodicity", c);
+                // «периодичность операции», а не «обоснование периодичности» (там длинный текст)
+                else if (t.contains("периодичность") && !t.contains("обоснован")) cols.put("periodicity", c);
             }
             if (cols.containsKey("code") && cols.containsKey("name")) {
                 return cols;
@@ -105,6 +106,8 @@ public class ReferenceEstimateImportService {
     }
 
     private String blank(String s) {
-        return s == null || s.isBlank() ? null : s.strip();
+        if (s == null || s.isBlank()) return null;
+        String v = s.strip();
+        return v.length() > 200 ? v.substring(0, 200) : v;   // periodicity — varchar(200)
     }
 }
