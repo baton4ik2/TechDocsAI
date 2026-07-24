@@ -47,6 +47,11 @@ public class UniqueEquipmentService {
                 .strip();
     }
 
+    /** Находит уникальное оборудование по ключу без создания. */
+    public java.util.Optional<UniqueEquipment> find(String name, String model, String manufacturer) {
+        return repository.findByNormKey(normKey(name, model, manufacturer));
+    }
+
     /** Находит или создаёт уникальное оборудование по ключу и возвращает его. */
     public UniqueEquipment resolve(String name, String model, String manufacturer) {
         String key = normKey(name, model, manufacturer);

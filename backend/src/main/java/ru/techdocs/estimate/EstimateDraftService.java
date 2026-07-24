@@ -33,6 +33,7 @@ public class EstimateDraftService {
     private final EngineeringSystemRepository systemRepository;
     private final NormativeAiMatchService aiMatchService;
     private final EquipmentMaintenanceResolver maintenanceResolver;
+    private final EstimateDecisionService decisionService;
 
     public record DraftResult(int created, int skipped, boolean aiUsed) {}
 
@@ -68,15 +69,27 @@ public class EstimateDraftService {
             if (existing.contains(eq.getId())) { skipped++; continue; }
 
             String systemType = systemName(eq.getEngineeringSystemId());
+
+            // 1) память решений (эталоны): то же оборудование уже считали — берём готовое,
+            //    без ИИ, консистентно. По строке на каждое запомненное решение.
+            Long uniqueId = eq.getUniqueEquipmentId() != null ? eq.getUniqueEquipmentId()
+                    : decisionService.resolveUniqueId(eq.getName(), eq.getModel(), eq.getManufacturer());
+            List<EstimateRateDecision> decisions = decisionService.lookup(uniqueId);
+            if (!decisions.isEmpty()) {
+                for (EstimateRateDecision d : decisions) {
+                    addRowFromDecision(estimateId, eq, systemType, d);
+                    created++;
+                }
+                continue;
+            }
+
+            // 2) паспорт/ПКМ + ИИ-подбор расценки
             List<EquipmentMaintenanceResolver.Planned> operations =
                     maintenanceResolver.resolveOperations(eq, systemType);
-
             if (operations.isEmpty()) {
-                // источников нет — одна общая операция ТО, периодичность из расценки
                 addRowForOperation(estimateId, eq, systemType, null);
                 created++;
             } else {
-                // паспорт/ПКМ: по строке на каждую плановую операцию
                 for (EquipmentMaintenanceResolver.Planned op : operations) {
                     addRowForOperation(estimateId, eq, systemType, op);
                     created++;
@@ -116,6 +129,24 @@ public class EstimateDraftService {
                 eq.getQuantity(),
                 null, null, null, null, null,
                 null, null);
+        estimateService.addRow(estimateId, input);
+    }
+
+    /** Строка из эталонного решения — расценка и периодичность известны, ИИ не нужен. */
+    private void addRowFromDecision(Long estimateId, Equipment eq, String systemType, EstimateRateDecision d) {
+        String note = d.getSource().equals(EstimateRateDecision.SOURCE_REFERENCE)
+                ? "из эталонной сметы" : "из ранее одобренной сметы";
+        EstimateService.RowInput input = new EstimateService.RowInput(
+                systemType, eq.getId(), eq.getName(), eq.getModel(), eq.getManufacturer(),
+                d.getOperationName() != null ? d.getOperationName() : operationName(eq),
+                d.getRateCode(),
+                null,
+                d.getPeriodicity(),
+                "Расценка и периодичность " + note + " (эталон).",
+                d.getPerYear(),
+                eq.getQuantity(),
+                null, null, null, null, null,
+                d.getCorrection(), null);
         estimateService.addRow(estimateId, input);
     }
 

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { EngineeringSystem, Estimate, Facility } from '../types'
@@ -23,6 +23,18 @@ export default function EstimatesPage() {
   }, [])
 
   const facilityName = (id: number) => facilities.find((f) => f.id === id)?.name ?? `Объект #${id}`
+  const refFile = useRef<HTMLInputElement>(null)
+
+  const importReference = async (file: File) => {
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await api.postForm<{ imported: number; rows: number }>('/api/estimates/import-reference', form)
+      toast(`Эталон загружен: сохранено решений ${res.imported} из ${res.rows} строк`, 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Ошибка загрузки эталона', 'error')
+    }
+  }
 
   const remove = async () => {
     if (!deleting) return
@@ -45,7 +57,15 @@ export default function EstimatesPage() {
             Расчёт стоимости планового обслуживания по системам объекта (СН-2012).
           </p>
         </div>
-        <button className="btn-primary" onClick={() => setShowCreate(true)}>+ Новая смета</button>
+        <div className="flex gap-2">
+          <input ref={refFile} type="file" accept=".xlsx,.xls" className="hidden"
+                 onChange={(e) => { const f = e.target.files?.[0]; if (f) importReference(f); e.target.value = '' }} />
+          <button className="btn-secondary" onClick={() => refFile.current?.click()}
+                  title="Загрузить готовую смету — её решения переиспользуются на других объектах">
+            ⭱ Загрузить эталон
+          </button>
+          <button className="btn-primary" onClick={() => setShowCreate(true)}>+ Новая смета</button>
+        </div>
       </div>
 
       {error && <div className="text-red-600 text-sm">{error}</div>}

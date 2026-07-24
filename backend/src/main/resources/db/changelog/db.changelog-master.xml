@@ -13,5 +13,6 @@
     <include file="db/changelog/changes/006-pkm.xml" relativeToChangelogFile="false"/>
     <include file="db/changelog/changes/007-estimates.xml" relativeToChangelogFile="false"/>
     <include file="db/changelog/changes/008-unique-equipment.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/009-estimate-decisions.xml" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

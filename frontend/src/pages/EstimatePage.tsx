@@ -47,6 +47,13 @@ export default function EstimatePage() {
         </div>
         <div className="flex gap-2">
           <GenerateButton estimateId={estimate.id} onDone={load} />
+          <button className="btn-secondary"
+                  title="Сохранить строки в память решений — переиспользуются на других объектах"
+                  onClick={() => api.post<{ saved: number }>(`/api/estimates/${estimate.id}/promote`)
+                    .then((r) => toast(`В эталон сохранено решений: ${r.saved}`, 'success'))
+                    .catch((e) => toast(e.message, 'error'))}>
+            ★ В эталон
+          </button>
           <button className="btn-secondary" onClick={() => setEditing('new')}>+ Строка</button>
           <button className="btn-primary"
                   onClick={() => exportEstimate(estimate.id, `Смета_${estimate.name}.xlsx`).catch((e) => toast(e.message, 'error'))}>

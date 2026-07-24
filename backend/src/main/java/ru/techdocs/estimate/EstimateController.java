@@ -24,6 +24,8 @@ public class EstimateController {
     private final EstimateRowRepository rowRepository;
     private final EstimateXlsxExporter exporter;
     private final EstimateDraftService draftService;
+    private final EstimateDecisionService decisionService;
+    private final ReferenceEstimateImportService referenceImportService;
 
     @PostMapping
     public Estimate create(@RequestParam Long facilityId,
@@ -73,6 +75,19 @@ public class EstimateController {
     public EstimateDraftService.DraftResult generate(@PathVariable Long id,
                                                      @RequestParam(required = false) List<Long> systemIds) {
         return draftService.generate(id, systemIds);
+    }
+
+    /** Загрузка эталонной сметы (XLSX) в память решений. */
+    @PostMapping("/import-reference")
+    public ReferenceEstimateImportService.ImportResult importReference(
+            @RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+        return referenceImportService.importXlsx(file);
+    }
+
+    /** «В эталон»: сохранить строки сметы в память решений. */
+    @PostMapping("/{id}/promote")
+    public java.util.Map<String, Integer> promote(@PathVariable Long id) {
+        return java.util.Map.of("saved", decisionService.promote(id));
     }
 
     @GetMapping("/{id}/export")
