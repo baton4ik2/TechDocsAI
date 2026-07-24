@@ -79,24 +79,23 @@ public class ReferenceEstimateImportService {
                 break;
             }
         }
-        int imported = 0, dataRows = 0;
+        java.util.List<EstimateDecisionService.DecisionData> data = new java.util.ArrayList<>();
         for (Row row : sheet) {
             if (row.getRowNum() <= headerRow) continue;
             String code = cell(row, cols.get("code"));
             String name = cell(row, cols.get("name"));
             if (name.isBlank()) continue;                       // разделы/пустые строки
             if (code.isBlank() || code.equals("-") || code.equals("—")) continue; // прочерк — нет расценки
-            dataRows++;
 
             String periodicity = cell(row, cols.get("periodicity"));
             BigDecimal perYear = Periodicity.perYear(periodicity);
-            EstimateDecisionService.DecisionData d = new EstimateDecisionService.DecisionData(
+            data.add(new EstimateDecisionService.DecisionData(
                     name, cell(row, cols.get("type")), cell(row, cols.get("manufacturer")),
                     cell(row, cols.get("operation")), code, null,
-                    blank(periodicity), perYear, null);
-            if (decisionService.upsert(d, EstimateRateDecision.SOURCE_REFERENCE) != null) imported++;
+                    blank(periodicity), perYear, null));
         }
-        return new ImportResult(imported, dataRows);
+        int imported = decisionService.saveAll(data, EstimateRateDecision.SOURCE_REFERENCE).size();
+        return new ImportResult(imported, data.size());
     }
 
     private String cell(Row row, Integer col) {

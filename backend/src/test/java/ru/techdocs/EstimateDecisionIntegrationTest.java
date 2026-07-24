@@ -131,6 +131,47 @@ class EstimateDecisionIntegrationTest extends IntegrationTestBase {
         org.assertj.core.api.Assertions.assertThat(row.get("priceZp").asDouble()).isEqualTo(139.33); // из каталога
     }
 
+    /** Реальный эталон повторяет оборудование на многих строках — не должно падать. */
+    private byte[] duplicatesXlsx() throws Exception {
+        try (XSSFWorkbook wb = new XSSFWorkbook()) {
+            Sheet sheet = wb.createSheet("Расчёт");
+            Row h = sheet.createRow(0);
+            h.createCell(0).setCellValue("Наименование оборудования");
+            h.createCell(1).setCellValue("Тип оборудования");
+            h.createCell(2).setCellValue("Производитель оборудования");
+            h.createCell(3).setCellValue("Наименование мероприятия");
+            h.createCell(4).setCellValue("Шифр расценки");
+            h.createCell(5).setCellValue("периодичность операции");
+            String[][] rows = {
+                    {"Блок питания", "БП", "Рубеж", "Технический осмотр", "22-2201-78-1/1", "раз в 1 мес."},
+                    {"Блок питания", "БП", "Рубеж", "Техническое обслуживание", "22-2203-91-1/1", "раз в 6 мес."},
+                    {"Блок питания", "БП", "Рубеж", "Техническое обслуживание", "22-2203-91-1/1", "раз в 6 мес."},
+            };
+            int r = 1;
+            for (String[] row : rows) {
+                Row rw = sheet.createRow(r++);
+                for (int c = 0; c < row.length; c++) rw.createCell(c).setCellValue(row[c]);
+            }
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            wb.write(out);
+            return out.toByteArray();
+        }
+    }
+
+    @Test
+    void importDeduplicatesRepeatedEquipment() throws Exception {
+        mockMvc.perform(multipart("/api/estimates/import-reference")
+                        .file(new MockMultipartFile("file", "etalon.xlsx",
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", duplicatesXlsx()))
+                        .header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.imported").value(2))   // осмотр + ТО (третья строка — дубль ТО)
+                .andExpect(jsonPath("$.rows").value(3));
+
+        mockMvc.perform(get("/api/estimate-decisions").header("Authorization", bearer()))
+                .andExpect(jsonPath("$.length()").value(2));
+    }
+
     @Test
     void promoteStoresDecisionsFromEstimate() throws Exception {
         seedRate();

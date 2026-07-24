@@ -2,12 +2,17 @@ package ru.techdocs.estimate;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import ru.techdocs.uniqueequipment.UniqueEquipment;
 import ru.techdocs.uniqueequipment.UniqueEquipmentService;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Память эталонных решений: для уникального оборудования и категории операции —
@@ -58,38 +63,64 @@ public class EstimateDecisionService {
                 .map(UniqueEquipment::getId).orElse(null);
     }
 
-    /** Сохраняет/обновляет решение; создаёт уникальное оборудование, если его ещё нет. */
+    /** Сохраняет/обновляет одно решение (обёртка над {@link #saveAll}). */
     public EstimateRateDecision upsert(DecisionData d, String source) {
-        if (d.rateCode() == null || d.rateCode().isBlank()) return null; // без расценки — не эталон
-        UniqueEquipment ue = uniqueEquipmentService.resolve(d.equipmentName(), d.model(), d.manufacturer());
-        String key = operationKey(d.operationName());
-        EstimateRateDecision decision = repository
-                .findByUniqueEquipmentIdAndOperationKey(ue.getId(), key)
-                .orElseGet(EstimateRateDecision::new);
-        decision.setUniqueEquipmentId(ue.getId());
-        decision.setOperationKey(key);
-        decision.setOperationName(d.operationName());
-        decision.setRateCode(d.rateCode().strip());
-        decision.setRateName(d.rateName());
-        decision.setPeriodicity(d.periodicity());
-        decision.setPerYear(d.perYear());
-        decision.setCorrection(d.correction());
-        decision.setSource(source);
-        decision.setUpdatedAt(Instant.now());
-        return repository.save(decision);
+        List<EstimateRateDecision> saved = saveAll(List.of(d), source);
+        return saved.isEmpty() ? null : saved.get(0);
+    }
+
+    /**
+     * Сохраняет набор решений в одной транзакции с дедупликацией по
+     * (оборудование, категория операции): эталон/смета часто повторяют одно и то
+     * же оборудование на многих строках — иначе повторная вставка упирается в
+     * уникальный ключ (DataIntegrityViolation). Побеждает последняя строка.
+     */
+    @Transactional
+    public List<EstimateRateDecision> saveAll(List<DecisionData> data, String source) {
+        // сворачиваем к одному решению на (оборудование, операция)
+        Map<String, DecisionData> deduped = new LinkedHashMap<>();
+        for (DecisionData d : data) {
+            if (d.rateCode() == null || d.rateCode().isBlank()) continue; // без расценки — не эталон
+            String key = UniqueEquipmentService.normKey(d.equipmentName(), d.model(), d.manufacturer())
+                    + "|" + operationKey(d.operationName());
+            deduped.put(key, d);
+        }
+
+        Map<String, UniqueEquipment> equipmentCache = new HashMap<>();
+        List<EstimateRateDecision> result = new ArrayList<>();
+        for (DecisionData d : deduped.values()) {
+            String normKey = UniqueEquipmentService.normKey(d.equipmentName(), d.model(), d.manufacturer());
+            UniqueEquipment ue = equipmentCache.computeIfAbsent(normKey,
+                    k -> uniqueEquipmentService.resolve(d.equipmentName(), d.model(), d.manufacturer()));
+            String opKey = operationKey(d.operationName());
+            EstimateRateDecision decision = repository
+                    .findByUniqueEquipmentIdAndOperationKey(ue.getId(), opKey)
+                    .orElseGet(EstimateRateDecision::new);
+            decision.setUniqueEquipmentId(ue.getId());
+            decision.setOperationKey(opKey);
+            decision.setOperationName(d.operationName());
+            decision.setRateCode(d.rateCode().strip());
+            decision.setRateName(d.rateName());
+            decision.setPeriodicity(d.periodicity());
+            decision.setPerYear(d.perYear());
+            decision.setCorrection(d.correction());
+            decision.setSource(source);
+            decision.setUpdatedAt(Instant.now());
+            result.add(repository.save(decision));
+        }
+        return result;
     }
 
     /** «В эталон»: сохраняет строки сметы в память (source=APPROVED). */
     public int promote(Long estimateId) {
-        int saved = 0;
+        List<DecisionData> data = new ArrayList<>();
         for (EstimateRow row : rowRepository.findByEstimateIdOrderByPosition(estimateId)) {
             if (row.getRateCode() == null || row.getRateCode().isBlank()) continue;
-            DecisionData d = new DecisionData(row.getEquipmentName(), row.getEquipmentType(),
+            data.add(new DecisionData(row.getEquipmentName(), row.getEquipmentType(),
                     row.getManufacturer(), row.getOperationName(), row.getRateCode(), row.getRateName(),
-                    row.getPeriodicity(), row.getOpsPerYear(), row.getCorrection());
-            if (upsert(d, EstimateRateDecision.SOURCE_APPROVED) != null) saved++;
+                    row.getPeriodicity(), row.getOpsPerYear(), row.getCorrection()));
         }
-        return saved;
+        return saveAll(data, EstimateRateDecision.SOURCE_APPROVED).size();
     }
 
     public List<EstimateRateDecision> all() {
