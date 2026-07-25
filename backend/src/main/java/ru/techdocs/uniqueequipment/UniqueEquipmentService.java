@@ -98,10 +98,12 @@ public class UniqueEquipmentService {
         Map<Long, String> systemNames = new HashMap<>();
         systemRepository.findAll().forEach(s -> systemNames.put(s.getId(), s.getName()));
 
+        java.util.Set<Long> claimed = new java.util.HashSet<>();
         int changed = 0;
         for (Equipment eq : equipmentRepository.findAll()) {
             String system = systemNames.get(eq.getEngineeringSystemId());
-            UniqueEquipment ue = resolve(eq.getName(), eq.getModel(), eq.getManufacturer(), system);
+            UniqueEquipment ue = resolveForSync(eq.getName(), eq.getModel(), eq.getManufacturer(), system, claimed);
+            claimed.add(ue.getId());
             if (!ue.getId().equals(eq.getUniqueEquipmentId())) {
                 eq.setUniqueEquipmentId(ue.getId());
                 equipmentRepository.save(eq);
@@ -110,6 +112,32 @@ public class UniqueEquipmentService {
         }
         cleanupOrphans();
         return changed;
+    }
+
+    /**
+     * Резолв для пере-синка с усыновлением легаси-записи. Прежние записи реестра были
+     * без системы (norm_key = equip_key). Чтобы не потерять паспорт/плановые работы при
+     * переходе на ключ с системой, легаси-запись (equip_key совпал, система не задана,
+     * есть паспорт или работы, ещё не занята в этом прогоне) обновляется на месте —
+     * получает систему и новый norm_key. Иначе — обычный resolve (найдёт/создаст).
+     */
+    private UniqueEquipment resolveForSync(String name, String model, String manufacturer,
+                                           String system, java.util.Set<Long> claimed) {
+        String key = normKey(name, model, manufacturer, system);
+        var exact = repository.findByNormKey(key);
+        if (exact.isPresent()) return exact.get();
+
+        String ekey = equipKey(name, model, manufacturer);
+        for (UniqueEquipment legacy : repository.findByEquipKeyAndSystemTypeIsNull(ekey)) {
+            if (claimed.contains(legacy.getId())) continue;
+            boolean worthKeeping = legacy.getPassportStoragePath() != null
+                    || plannedWorkRepository.countByUniqueEquipmentId(legacy.getId()) > 0;
+            if (!worthKeeping) continue;
+            legacy.setSystemType(ru.techdocs.common.SystemNormalizer.canonical(system));
+            legacy.setNormKey(key);
+            return repository.save(legacy);
+        }
+        return resolve(name, model, manufacturer, system);
     }
 
     /** Удаляет уникальное оборудование, к которому больше ничего не привязано. */

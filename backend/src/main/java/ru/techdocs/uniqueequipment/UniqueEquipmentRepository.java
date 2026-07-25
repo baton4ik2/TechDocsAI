@@ -9,5 +9,7 @@ public interface UniqueEquipmentRepository extends JpaRepository<UniqueEquipment
     Optional<UniqueEquipment> findByNormKey(String normKey);
     /** Запасной поиск по модели без системы (когда система эталона не распозналась). */
     Optional<UniqueEquipment> findFirstByEquipKeyOrderById(String equipKey);
+    /** Легаси-записи (та же модель, система ещё не задана) — для усыновления при пере-синке. */
+    List<UniqueEquipment> findByEquipKeyAndSystemTypeIsNull(String equipKey);
     List<UniqueEquipment> findAllByOrderByName();
 }

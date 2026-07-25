@@ -9,6 +9,10 @@ import ru.techdocs.equipment.Equipment;
 import ru.techdocs.equipment.EquipmentRepository;
 import ru.techdocs.object.Facility;
 import ru.techdocs.object.FacilityRepository;
+import ru.techdocs.uniqueequipment.PlannedWork;
+import ru.techdocs.uniqueequipment.PlannedWorkRepository;
+import ru.techdocs.uniqueequipment.UniqueEquipment;
+import ru.techdocs.uniqueequipment.UniqueEquipmentRepository;
 import ru.techdocs.uniqueequipment.UniqueEquipmentService;
 
 import java.math.BigDecimal;
@@ -24,6 +28,8 @@ class UniqueEquipmentSystemTest extends IntegrationTestBase {
     @Autowired EquipmentRepository equipmentRepository;
     @Autowired UniqueEquipmentService uniqueEquipmentService;
     @Autowired FacilityRepository facilityRepository;
+    @Autowired UniqueEquipmentRepository uniqueRepository;
+    @Autowired PlannedWorkRepository plannedWorkRepository;
 
     private long facility() {
         Facility f = new Facility();
@@ -68,5 +74,42 @@ class UniqueEquipmentSystemTest extends IntegrationTestBase {
         assertThat(views).extracting(v -> v.equipment().getSystemType())
                 .containsExactlyInAnyOrder("видеонаблюдение", "скуд");
         assertThat(views).allSatisfy(v -> assertThat(v.objectCount()).isEqualTo(1));
+    }
+
+    @Test
+    void resyncAdoptsLegacySystemlessRecordKeepingPlannedWorks() {
+        long facilityId = facility();
+        long skud = system(facilityId, "СКУД");
+        commutator(facilityId, skud);
+
+        // легаси-запись (как до миграции): equip_key задан, система пустая, есть плановая работа
+        UniqueEquipment legacy = new UniqueEquipment();
+        String ekey = UniqueEquipmentService.equipKey("24-портовый Ethernet-коммутатор", "LTV-3S24G4C-P", "LTV");
+        legacy.setNormKey(ekey);            // прежний ключ был без системы
+        legacy.setEquipKey(ekey);
+        legacy.setName("24-портовый Ethernet-коммутатор");
+        legacy.setModel("LTV-3S24G4C-P");
+        legacy.setManufacturer("LTV");
+        legacy = uniqueRepository.saveAndFlush(legacy);
+        long legacyId = legacy.getId();
+
+        PlannedWork work = new PlannedWork();
+        work.setUniqueEquipmentId(legacyId);
+        work.setName("Технический осмотр");
+        work.setSource(PlannedWork.SOURCE_MANUAL);
+        plannedWorkRepository.saveAndFlush(work);
+
+        uniqueEquipmentService.syncFromEquipment();
+
+        // легаси-запись усыновлена на месте: тот же id, теперь с системой и с той же работой
+        UniqueEquipment after = uniqueRepository.findById(legacyId).orElseThrow();
+        assertThat(after.getSystemType()).isEqualTo("скуд");
+        assertThat(plannedWorkRepository.countByUniqueEquipmentId(legacyId)).isEqualTo(1);
+        // оборудование СКУД привязано именно к усыновлённой записи (новый дубль не создан)
+        List<UniqueEquipmentService.UniqueEquipmentView> commutators = uniqueEquipmentService.list().stream()
+                .filter(v -> "LTV-3S24G4C-P".equals(v.equipment().getModel())).toList();
+        assertThat(commutators).hasSize(1);
+        assertThat(commutators.get(0).equipment().getId()).isEqualTo(legacyId);
+        assertThat(commutators.get(0).objectCount()).isEqualTo(1);
     }
 }
