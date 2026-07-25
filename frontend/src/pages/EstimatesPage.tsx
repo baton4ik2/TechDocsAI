@@ -6,10 +6,27 @@ import Modal from '../components/Modal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { toast } from '../components/Toast'
 
+interface DecisionView {
+  decision: {
+    id: number
+    operationName: string | null
+    rateCode: string | null
+    rateName: string | null
+    periodicity: string | null
+    source: string
+  }
+  equipmentName: string | null
+  model: string | null
+  manufacturer: string | null
+  system: string | null
+}
+
 export default function EstimatesPage() {
   const [estimates, setEstimates] = useState<Estimate[]>([])
   const [facilities, setFacilities] = useState<Facility[]>([])
   const [showCreate, setShowCreate] = useState(false)
+  const [showDecisions, setShowDecisions] = useState(false)
+  const [decisionCount, setDecisionCount] = useState<number | null>(null)
   const [deleting, setDeleting] = useState<Estimate | null>(null)
   const [error, setError] = useState('')
 
@@ -17,8 +34,13 @@ export default function EstimatesPage() {
     api.get<Estimate[]>('/api/estimates').then(setEstimates).catch((e) => setError(e.message))
   }
 
+  const loadDecisionCount = () => {
+    api.get<DecisionView[]>('/api/estimate-decisions').then((d) => setDecisionCount(d.length)).catch(() => {})
+  }
+
   useEffect(() => {
     load()
+    loadDecisionCount()
     api.get<Facility[]>('/api/facilities').then(setFacilities).catch(() => {})
   }, [])
 
@@ -31,6 +53,7 @@ export default function EstimatesPage() {
       form.append('file', file)
       const res = await api.postForm<{ imported: number; rows: number }>('/api/estimates/import-reference', form)
       toast(`Эталон загружен: сохранено решений ${res.imported} из ${res.rows} строк`, 'success')
+      loadDecisionCount()
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Ошибка загрузки эталона', 'error')
     }
@@ -64,6 +87,10 @@ export default function EstimatesPage() {
                   title="Загрузить готовую смету — её решения переиспользуются на других объектах">
             ⭱ Загрузить эталон
           </button>
+          <button className="btn-secondary" onClick={() => setShowDecisions(true)}
+                  title="Просмотр памяти эталонных решений, наполняемой загрузкой эталона и кнопкой «В эталон»">
+            📚 Эталонные решения{decisionCount != null ? ` (${decisionCount})` : ''}
+          </button>
           <button className="btn-primary" onClick={() => setShowCreate(true)}>+ Новая смета</button>
         </div>
       </div>
@@ -93,11 +120,107 @@ export default function EstimatesPage() {
       {showCreate && (
         <CreateModal facilities={facilities} onClose={() => setShowCreate(false)} />
       )}
+      {showDecisions && (
+        <DecisionsModal onClose={() => setShowDecisions(false)} onChange={loadDecisionCount} />
+      )}
       {deleting && (
         <ConfirmDialog title="Удалить смету?" message={`Смета «${deleting.name}» будет удалена.`}
                        confirmLabel="Удалить" danger onConfirm={remove} onClose={() => setDeleting(null)} />
       )}
     </div>
+  )
+}
+
+function DecisionsModal({ onClose, onChange }: { onClose: () => void; onChange: () => void }) {
+  const [rows, setRows] = useState<DecisionView[]>([])
+  const [loading, setLoading] = useState(true)
+  const [query, setQuery] = useState('')
+
+  const load = () => {
+    setLoading(true)
+    api.get<DecisionView[]>('/api/estimate-decisions')
+      .then(setRows).catch(() => {}).finally(() => setLoading(false))
+  }
+  useEffect(load, [])
+
+  const remove = async (id: number) => {
+    try {
+      await api.delete(`/api/estimate-decisions/${id}`)
+      setRows((prev) => prev.filter((r) => r.decision.id !== id))
+      onChange()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Ошибка удаления', 'error')
+    }
+  }
+
+  const sourceLabel = (s: string) => (s === 'REFERENCE' ? 'эталон' : s === 'APPROVED' ? '«В эталон»' : s)
+  const filtered = rows.filter((r) => {
+    if (!query.trim()) return true
+    const q = query.toLowerCase()
+    return [r.equipmentName, r.model, r.manufacturer, r.system, r.decision.operationName, r.decision.rateCode]
+      .some((v) => (v ?? '').toLowerCase().includes(q))
+  })
+
+  return (
+    <Modal title="Эталонные решения" onClose={onClose} wide>
+      <p className="text-sm text-slate-500 -mt-2 mb-3">
+        Память решений: для оборудования в конкретной системе — какая расценка и периодичность.
+        Наполняется загрузкой эталона и кнопкой «В эталон»; при сборке сметы берётся вместо ИИ.
+      </p>
+      <input className="input mb-3" placeholder="Поиск по оборудованию, системе, шифру…"
+             value={query} onChange={(e) => setQuery(e.target.value)} />
+      {loading ? (
+        <div className="text-center text-slate-400 py-10">Загрузка…</div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center text-slate-400 py-10">
+          {rows.length === 0 ? 'Пока нет ни одного эталонного решения. Загрузите эталон.' : 'Ничего не найдено.'}
+        </div>
+      ) : (
+        <div className="max-h-[60vh] overflow-auto -mx-1">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-white">
+              <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
+                <th className="py-2 pr-3">Оборудование</th>
+                <th className="py-2 pr-3">Система</th>
+                <th className="py-2 pr-3">Операция</th>
+                <th className="py-2 pr-3">Шифр</th>
+                <th className="py-2 pr-3">Периодичность</th>
+                <th className="py-2 pr-3">Источник</th>
+                <th className="py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => (
+                <tr key={r.decision.id} className="border-b border-slate-100 align-top">
+                  <td className="py-2 pr-3">
+                    <div className="font-medium text-slate-800">{r.equipmentName ?? '—'}</div>
+                    <div className="text-xs text-slate-400">
+                      {[r.model, r.manufacturer].filter(Boolean).join(' · ') || '—'}
+                    </div>
+                  </td>
+                  <td className="py-2 pr-3">
+                    {r.system
+                      ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{r.system}</span>
+                      : <span className="text-xs text-slate-300">без системы</span>}
+                  </td>
+                  <td className="py-2 pr-3 text-slate-700">{r.decision.operationName ?? '—'}</td>
+                  <td className="py-2 pr-3 font-mono text-xs text-slate-700">{r.decision.rateCode ?? '—'}</td>
+                  <td className="py-2 pr-3 text-slate-600">{r.decision.periodicity ?? '—'}</td>
+                  <td className="py-2 pr-3">
+                    <span className="text-xs text-slate-500">{sourceLabel(r.decision.source)}</span>
+                  </td>
+                  <td className="py-2 text-right">
+                    <button className="btn-ghost text-xs text-red-600" onClick={() => remove(r.decision.id)}>
+                      Удалить
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Modal>
   )
 }
 

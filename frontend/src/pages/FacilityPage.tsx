@@ -1208,7 +1208,8 @@ function ImportModal({ facilityId, systems, onClose, onImported }: {
                              onChange={(e) => setMergeGroup({ ...mergeGroup, [group]: e.target.checked })} />
                       <span>
                         Объединить {count} строки «{first.name}{first.model ? ` ${first.model}` : ''}»
-                        в одну ({groupSum(group)} {first.unit})
+                        {first.systemName ? <> в системе «{first.systemName}»</> : null}
+                        {' '}в одну ({groupSum(group)} {first.unit})
                       </span>
                     </label>
                   )
