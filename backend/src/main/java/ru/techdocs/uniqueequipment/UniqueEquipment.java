@@ -31,6 +31,14 @@ public class UniqueEquipment {
     @Column(name = "norm_key", nullable = false, unique = true)
     private String normKey;
 
+    /** Ключ модели без системы: наименование|модель|производитель (нормализ.). */
+    @Column(name = "equip_key")
+    private String equipKey;
+
+    /** Канонический токен инженерной системы (скуд, апс, …) — часть идентичности. */
+    @Column(name = "system_type")
+    private String systemType;
+
     private String name;
     private String model;
     private String manufacturer;

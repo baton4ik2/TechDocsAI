@@ -73,7 +73,7 @@ public class EstimateDraftService {
             // 1) память решений (эталоны): то же оборудование уже считали — берём готовое,
             //    без ИИ, консистентно. По строке на каждое запомненное решение.
             Long uniqueId = eq.getUniqueEquipmentId() != null ? eq.getUniqueEquipmentId()
-                    : decisionService.resolveUniqueId(eq.getName(), eq.getModel(), eq.getManufacturer());
+                    : decisionService.resolveUniqueId(eq.getName(), eq.getModel(), eq.getManufacturer(), systemType);
             List<EstimateRateDecision> decisions = decisionService.lookup(uniqueId);
             if (!decisions.isEmpty()) {
                 for (EstimateRateDecision d : decisions) {

@@ -81,17 +81,24 @@ public class ReferenceEstimateImportService {
             }
         }
         java.util.List<EstimateDecisionService.DecisionData> data = new java.util.ArrayList<>();
+        String currentSystem = null;   // текущая инженерная система блока (из строки-раздела)
         for (Row row : sheet) {
             if (row.getRowNum() <= headerRow) continue;
             String code = cell(row, cols.get("code"));
             String name = cell(row, cols.get("name"));
-            if (name.isBlank()) continue;                       // разделы/пустые строки
-            if (code.isBlank() || code.equals("-") || code.equals("—")) continue; // прочерк — нет расценки
+            if (name.isBlank()) continue;                       // пустые строки
+            if (code.isBlank() || code.equals("-") || code.equals("—")) {
+                // строка-раздел («РАЗДЕЛ А. СИСТЕМА КОНТРОЛЯ…»): имя есть, шифр пуст.
+                // Распознанную систему запоминаем как текущую; служебные («ИТОГО») игнорируем.
+                String recognized = ru.techdocs.common.SystemNormalizer.recognized(name);
+                if (recognized != null) currentSystem = recognized;
+                continue;                                       // сама строка расценки не несёт
+            }
 
             String periodicity = cell(row, cols.get("periodicity"));
             BigDecimal perYear = Periodicity.perYear(periodicity);
             data.add(new EstimateDecisionService.DecisionData(
-                    name, cell(row, cols.get("type")), cell(row, cols.get("manufacturer")),
+                    name, cell(row, cols.get("type")), cell(row, cols.get("manufacturer")), currentSystem,
                     cell(row, cols.get("operation")), code, null,
                     blank(periodicity), perYear, null));
         }

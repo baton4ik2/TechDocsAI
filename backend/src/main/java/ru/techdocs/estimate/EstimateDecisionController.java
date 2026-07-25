@@ -20,7 +20,7 @@ public class EstimateDecisionController {
     private final UniqueEquipmentRepository uniqueEquipmentRepository;
 
     public record DecisionView(EstimateRateDecision decision, String equipmentName,
-                               String model, String manufacturer) {}
+                               String model, String manufacturer, String system) {}
 
     @GetMapping
     public List<DecisionView> list() {
@@ -31,7 +31,8 @@ public class EstimateDecisionController {
             return new DecisionView(d,
                     ue == null ? null : ue.getName(),
                     ue == null ? null : ue.getModel(),
-                    ue == null ? null : ue.getManufacturer());
+                    ue == null ? null : ue.getManufacturer(),
+                    ue == null ? null : ue.getSystemType());
         }).toList();
     }
 

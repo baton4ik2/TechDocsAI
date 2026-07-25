@@ -27,8 +27,8 @@ public class EstimateDecisionService {
     private final UniqueEquipmentService uniqueEquipmentService;
     private final EstimateRowRepository rowRepository;
 
-    /** Данные строки для сохранения решения. */
-    public record DecisionData(String equipmentName, String model, String manufacturer,
+    /** Данные строки для сохранения решения (system — инженерная система строки/раздела). */
+    public record DecisionData(String equipmentName, String model, String manufacturer, String system,
                                String operationName, String rateCode, String rateName,
                                String periodicity, BigDecimal perYear, BigDecimal correction) {}
 
@@ -57,9 +57,13 @@ public class EstimateDecisionService {
                 : repository.findByUniqueEquipmentIdOrderByOperationKey(uniqueEquipmentId);
     }
 
-    /** Уникальное оборудование по описанию (без создания). */
-    public Long resolveUniqueId(String name, String model, String manufacturer) {
-        return uniqueEquipmentService.find(name, model, manufacturer)
+    /**
+     * Уникальное оборудование по описанию и системе (без создания). С запасным поиском
+     * по модели без системы — чтобы переиспользование эталона не ломалось, если раздел
+     * эталона не распознался как система.
+     */
+    public Long resolveUniqueId(String name, String model, String manufacturer, String system) {
+        return uniqueEquipmentService.findWithFallback(name, model, manufacturer, system)
                 .map(UniqueEquipment::getId).orElse(null);
     }
 
@@ -77,11 +81,11 @@ public class EstimateDecisionService {
      */
     @Transactional
     public List<EstimateRateDecision> saveAll(List<DecisionData> data, String source) {
-        // сворачиваем к одному решению на (оборудование, операция)
+        // сворачиваем к одному решению на (оборудование+система, операция)
         Map<String, DecisionData> deduped = new LinkedHashMap<>();
         for (DecisionData d : data) {
             if (d.rateCode() == null || d.rateCode().isBlank()) continue; // без расценки — не эталон
-            String key = UniqueEquipmentService.normKey(d.equipmentName(), d.model(), d.manufacturer())
+            String key = UniqueEquipmentService.normKey(d.equipmentName(), d.model(), d.manufacturer(), d.system())
                     + "|" + operationKey(d.operationName());
             deduped.put(key, d);
         }
@@ -89,9 +93,9 @@ public class EstimateDecisionService {
         Map<String, UniqueEquipment> equipmentCache = new HashMap<>();
         List<EstimateRateDecision> result = new ArrayList<>();
         for (DecisionData d : deduped.values()) {
-            String normKey = UniqueEquipmentService.normKey(d.equipmentName(), d.model(), d.manufacturer());
+            String normKey = UniqueEquipmentService.normKey(d.equipmentName(), d.model(), d.manufacturer(), d.system());
             UniqueEquipment ue = equipmentCache.computeIfAbsent(normKey,
-                    k -> uniqueEquipmentService.resolve(d.equipmentName(), d.model(), d.manufacturer()));
+                    k -> uniqueEquipmentService.resolve(d.equipmentName(), d.model(), d.manufacturer(), d.system()));
             String opKey = operationKey(d.operationName());
             EstimateRateDecision decision = repository
                     .findByUniqueEquipmentIdAndOperationKey(ue.getId(), opKey)
@@ -117,8 +121,8 @@ public class EstimateDecisionService {
         for (EstimateRow row : rowRepository.findByEstimateIdOrderByPosition(estimateId)) {
             if (row.getRateCode() == null || row.getRateCode().isBlank()) continue;
             data.add(new DecisionData(row.getEquipmentName(), row.getEquipmentType(),
-                    row.getManufacturer(), row.getOperationName(), row.getRateCode(), row.getRateName(),
-                    row.getPeriodicity(), row.getOpsPerYear(), row.getCorrection()));
+                    row.getManufacturer(), row.getSection(), row.getOperationName(), row.getRateCode(),
+                    row.getRateName(), row.getPeriodicity(), row.getOpsPerYear(), row.getCorrection()));
         }
         return saveAll(data, EstimateRateDecision.SOURCE_APPROVED).size();
     }

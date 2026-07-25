@@ -28,9 +28,19 @@ public class UniqueEquipmentService {
 
     // ---- нормализация и линковка ----
 
-    /** Ключ уникальности: наименование|модель|производитель, нормализованные. */
-    public static String normKey(String name, String model, String manufacturer) {
+    /** Ключ модели без системы: наименование|модель|производитель, нормализованные. */
+    public static String equipKey(String name, String model, String manufacturer) {
         return norm(name) + "|" + norm(model) + "|" + norm(manufacturer);
+    }
+
+    /**
+     * Ключ уникальности с системой: модель + канонический токен инженерной системы.
+     * Одна и та же модель в разных системах (коммутатор в СКУД и в Видеонаблюдении) —
+     * это две разные записи реестра.
+     */
+    public static String normKey(String name, String model, String manufacturer, String system) {
+        String sys = ru.techdocs.common.SystemNormalizer.canonical(system);
+        return equipKey(name, model, manufacturer) + "|" + (sys == null ? "" : sys);
     }
 
     /**
@@ -47,17 +57,31 @@ public class UniqueEquipmentService {
                 .strip();
     }
 
-    /** Находит уникальное оборудование по ключу без создания. */
-    public java.util.Optional<UniqueEquipment> find(String name, String model, String manufacturer) {
-        return repository.findByNormKey(normKey(name, model, manufacturer));
+    /** Находит уникальное оборудование по ключу (модель+система) без создания. */
+    public java.util.Optional<UniqueEquipment> find(String name, String model, String manufacturer, String system) {
+        return repository.findByNormKey(normKey(name, model, manufacturer, system));
     }
 
-    /** Находит или создаёт уникальное оборудование по ключу и возвращает его. */
-    public UniqueEquipment resolve(String name, String model, String manufacturer) {
-        String key = normKey(name, model, manufacturer);
+    /**
+     * Поиск с запасным вариантом: сначала по (модель, система), иначе — по модели без
+     * системы. Нужен для переиспользования эталонов, когда раздел эталона не распознался
+     * как система (решение записано без системы), а объектное оборудование — с системой.
+     */
+    public java.util.Optional<UniqueEquipment> findWithFallback(String name, String model,
+                                                                String manufacturer, String system) {
+        var exact = find(name, model, manufacturer, system);
+        if (exact.isPresent()) return exact;
+        return repository.findFirstByEquipKeyOrderById(equipKey(name, model, manufacturer));
+    }
+
+    /** Находит или создаёт уникальное оборудование по ключу (модель+система). */
+    public UniqueEquipment resolve(String name, String model, String manufacturer, String system) {
+        String key = normKey(name, model, manufacturer, system);
         return repository.findByNormKey(key).orElseGet(() -> {
             UniqueEquipment ue = new UniqueEquipment();
             ue.setNormKey(key);
+            ue.setEquipKey(equipKey(name, model, manufacturer));
+            ue.setSystemType(ru.techdocs.common.SystemNormalizer.canonical(system));
             ue.setName(name);
             ue.setModel(model);
             ue.setManufacturer(manufacturer);
@@ -71,9 +95,13 @@ public class UniqueEquipmentService {
      * Идемпотентно. Возвращает число переставленных строк оборудования.
      */
     public int syncFromEquipment() {
+        Map<Long, String> systemNames = new HashMap<>();
+        systemRepository.findAll().forEach(s -> systemNames.put(s.getId(), s.getName()));
+
         int changed = 0;
         for (Equipment eq : equipmentRepository.findAll()) {
-            UniqueEquipment ue = resolve(eq.getName(), eq.getModel(), eq.getManufacturer());
+            String system = systemNames.get(eq.getEngineeringSystemId());
+            UniqueEquipment ue = resolve(eq.getName(), eq.getModel(), eq.getManufacturer(), system);
             if (!ue.getId().equals(eq.getUniqueEquipmentId())) {
                 eq.setUniqueEquipmentId(ue.getId());
                 equipmentRepository.save(eq);
@@ -116,9 +144,10 @@ public class UniqueEquipmentService {
         List<UniqueEquipmentView> views = new ArrayList<>();
         for (UniqueEquipment ue : repository.findAllByOrderByName()) {
             List<Equipment> eqs = byUnique.getOrDefault(ue.getId(), List.of());
+            String system = dominantSystem(eqs, systemNames);
+            if (system == null) system = ue.getSystemType();   // запись без объектного оборудования (только паспорт/эталон)
             views.add(new UniqueEquipmentView(ue, eqs.size(),
-                    plannedWorkRepository.countByUniqueEquipmentId(ue.getId()),
-                    dominantSystem(eqs, systemNames)));
+                    plannedWorkRepository.countByUniqueEquipmentId(ue.getId()), system));
         }
         return views;
     }

@@ -7,5 +7,7 @@ import java.util.Optional;
 
 public interface UniqueEquipmentRepository extends JpaRepository<UniqueEquipment, Long> {
     Optional<UniqueEquipment> findByNormKey(String normKey);
+    /** Запасной поиск по модели без системы (когда система эталона не распозналась). */
+    Optional<UniqueEquipment> findFirstByEquipKeyOrderById(String equipKey);
     List<UniqueEquipment> findAllByOrderByName();
 }
