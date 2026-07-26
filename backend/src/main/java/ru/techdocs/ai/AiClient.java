@@ -141,13 +141,28 @@ public class AiClient {
                     .body(body)
                     .retrieve()
                     .body(Map.class);
-            if (response == null) return null;
+            if (response == null) {
+                log.warn("Запрос к ИИ-провайдеру не удался: пустой ответ (модель '{}')", body.get("model"));
+                return null;
+            }
+            // OpenAI-совместимые провайдеры (в т.ч. routerai) часто отдают ошибку телом
+            // со статусом 200 — напр. {"error":"Model '…' not found"}. Раньше это молча
+            // превращалось в null → тихий фолбэк. Теперь ошибка видна в логах.
+            if (response.get("error") != null) {
+                log.warn("Запрос к ИИ-провайдеру не удался (модель '{}'): {}",
+                        body.get("model"), response.get("error"));
+                return null;
+            }
             List<Map<String, Object>> choices = (List<Map<String, Object>>) response.get("choices");
-            if (choices == null || choices.isEmpty()) return null;
+            if (choices == null || choices.isEmpty()) {
+                log.warn("Запрос к ИИ-провайдеру не удался: в ответе нет choices (модель '{}'): {}",
+                        body.get("model"), response);
+                return null;
+            }
             Map<String, Object> message = (Map<String, Object>) choices.getFirst().get("message");
             return message == null ? null : (String) message.get("content");
         } catch (Exception e) {
-            log.warn("Запрос к ИИ-провайдеру не удался: {}", e.getMessage());
+            log.warn("Запрос к ИИ-провайдеру не удался (модель '{}'): {}", body.get("model"), e.getMessage());
             return null;
         }
     }
