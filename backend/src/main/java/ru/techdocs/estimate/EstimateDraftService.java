@@ -106,7 +106,29 @@ public class EstimateDraftService {
         // подбор расценки под конкретную операцию (для паспорта/ПКМ учитываем её название)
         String query = op == null ? describe(eq) : describe(eq) + " " + op.operationName();
         var match = aiMatchService.match(query);
-        NormativeRate rate = pickRate(match);
+
+        // Выбор расценки и источник:
+        //  - ИИ подобрал → берём его расценку, доверяем (AI);
+        //  - ИИ настроен, но не подобрал/упал → НЕ подставляем наугад дорогую расценку из
+        //    поиска, оставляем шифр пустым и помечаем строку «на проверку» (AI_FAILED);
+        //  - ИИ выключен → верхний результат поиска как подсказка, но тоже «на проверку»
+        //    (CATALOG) — наивный поиск ненадёжен, инженер должен проверить.
+        NormativeRate rate;
+        String source;
+        boolean needsReview;
+        if (!match.matches().isEmpty()) {
+            rate = match.matches().get(0).rate();
+            source = "AI";
+            needsReview = false;
+        } else if (match.aiConfigured()) {
+            rate = null;
+            source = "AI_FAILED";
+            needsReview = true;
+        } else {
+            rate = match.candidates().isEmpty() ? null : match.candidates().get(0);
+            source = "CATALOG";
+            needsReview = true;
+        }
 
         // периодичность: из операции (паспорт/ПКМ), иначе из наименования расценки
         BigDecimal perYear = op != null && op.perYear() != null
@@ -124,11 +146,12 @@ public class EstimateDraftService {
                 rate == null ? null : rate.getCode(),
                 null,
                 periodicityText,
-                justification(match, note),
+                justification(match, note, source),
                 perYear,
                 eq.getQuantity(),
                 null, null, null, null, null,
-                null, null);
+                null, null,
+                needsReview, source);
         estimateService.addRow(estimateId, input);
     }
 
@@ -146,14 +169,9 @@ public class EstimateDraftService {
                 d.getPerYear(),
                 eq.getQuantity(),
                 null, null, null, null, null,
-                d.getCorrection(), null);
+                d.getCorrection(), null,
+                false, "LEARNED");
         estimateService.addRow(estimateId, input);
-    }
-
-    private NormativeRate pickRate(NormativeAiMatchService.MatchResult match) {
-        if (!match.matches().isEmpty()) return match.matches().get(0).rate();
-        if (!match.candidates().isEmpty()) return match.candidates().get(0);
-        return null;
     }
 
     private String describe(Equipment eq) {
@@ -169,14 +187,16 @@ public class EstimateDraftService {
         return "Техническое обслуживание — " + name;
     }
 
-    private String justification(NormativeAiMatchService.MatchResult match, String periodicityNote) {
+    private String justification(NormativeAiMatchService.MatchResult match, String periodicityNote, String source) {
         StringBuilder sb = new StringBuilder();
-        if (!match.matches().isEmpty() && match.matches().get(0).reason() != null) {
-            sb.append("Расценка (ИИ): ").append(match.matches().get(0).reason()).append(". ");
-        } else if (match.aiUsed()) {
-            sb.append("Расценка подобрана ИИ. ");
-        } else if (!match.candidates().isEmpty()) {
-            sb.append("Расценка — верхний результат поиска по каталогу. ");
+        switch (source) {
+            case "AI" -> {
+                String reason = match.matches().isEmpty() ? null : match.matches().get(0).reason();
+                sb.append(reason != null ? "Расценка (ИИ): " + reason + ". " : "Расценка подобрана ИИ. ");
+            }
+            case "AI_FAILED" -> sb.append("⚠ НА ПРОВЕРКУ: ИИ не подобрал расценку — выберите вручную. ");
+            case "CATALOG" -> sb.append("⚠ НА ПРОВЕРКУ: ИИ выключен, расценка — верхний результат поиска по каталогу. ");
+            default -> { /* нет источника — только периодичность */ }
         }
         sb.append("Периодичность: ").append(periodicityNote);
         return sb.toString().strip();

@@ -37,6 +37,7 @@ export default function EstimatePage() {
   if (!view) return <div className="p-8 text-slate-400">Загрузка…</div>
 
   const { estimate, rows, totals } = view
+  const reviewCount = rows.filter((r) => r.row.needsReview).length
 
   return (
     <div className="p-8 space-y-6">
@@ -63,6 +64,13 @@ export default function EstimatePage() {
       </div>
 
       <Coefficients view={view} onSaved={load} />
+
+      {reviewCount > 0 && (
+        <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+          ⚠ Строк на проверку: <b>{reviewCount}</b>. Для них ИИ не подобрал расценку
+          (или подбор шёл без ИИ) — проверьте шифр вручную. Ручная правка шифра снимает пометку.
+        </div>
+      )}
 
       <div className="card overflow-x-auto">
         <table className="w-full text-sm whitespace-nowrap">
@@ -98,10 +106,17 @@ export default function EstimatePage() {
                     </td>
                   </tr>
                 )}
-              <tr className="border-b border-slate-50 hover:bg-slate-50 cursor-pointer"
+              <tr className={`border-b border-slate-50 cursor-pointer ${
+                    row.needsReview ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-slate-50'}`}
                   onClick={() => setEditing(row)}>
                 <td className="py-2 px-3 text-slate-400">{row.position}</td>
-                <td className="py-2 px-3 max-w-[220px] truncate" title={row.equipmentName}>{row.equipmentName || '—'}</td>
+                <td className="py-2 px-3 max-w-[220px] truncate" title={row.equipmentName}>
+                  {row.needsReview && (
+                    <span className="mr-1 align-middle rounded bg-amber-200 text-amber-900 text-[10px] font-semibold px-1 py-0.5"
+                          title="ИИ не подобрал расценку — проверьте вручную">на проверку</span>
+                  )}
+                  {row.equipmentName || '—'}
+                </td>
                 <td className="py-2 px-3 max-w-[220px] truncate" title={row.operationName}>{row.operationName || '—'}</td>
                 <td className="py-2 px-3 font-mono text-xs">{row.rateCode || '—'}</td>
                 <td className="py-2 px-3 text-xs">{row.periodicity || '—'}</td>

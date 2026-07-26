@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        Пометка строки сметы «на проверку» и источник расценки. Нужны, чтобы не
+        подставлять молча наугад дорогую расценку, когда ИИ не подобрал (или выключен):
+        строка помечается needs_review, инженер её правит. match_source — откуда взялась
+        расценка (LEARNED — из эталона, AI — подобрал ИИ, AI_FAILED — ИИ не смог,
+        CATALOG — верхний результат поиска без ИИ, MANUAL — вручную).
+    -->
+    <changeSet id="011-01-estimate-row-review" author="techdocs">
+        <sql>
+            ALTER TABLE estimate_rows ADD COLUMN needs_review BOOLEAN NOT NULL DEFAULT false;
+            ALTER TABLE estimate_rows ADD COLUMN match_source VARCHAR(32);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

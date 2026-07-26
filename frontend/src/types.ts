@@ -189,6 +189,8 @@ export interface EstimateRowEntity {
   priceMr?: number
   correction: number
   laborHours?: number
+  needsReview?: boolean
+  matchSource?: string
 }
 
 export interface EstimateRowCalc {

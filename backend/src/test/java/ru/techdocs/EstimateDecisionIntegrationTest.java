@@ -129,6 +129,9 @@ class EstimateDecisionIntegrationTest extends IntegrationTestBase {
         org.assertj.core.api.Assertions.assertThat(row.get("rateCode").asText()).isEqualTo("22-2203-128-1/1");
         org.assertj.core.api.Assertions.assertThat(row.get("opsPerYear").asDouble()).isEqualTo(2.0); // раз в 6 мес.
         org.assertj.core.api.Assertions.assertThat(row.get("priceZp").asDouble()).isEqualTo(139.33); // из каталога
+        // строка из памяти эталона — проверять не нужно
+        org.assertj.core.api.Assertions.assertThat(row.get("matchSource").asText()).isEqualTo("LEARNED");
+        org.assertj.core.api.Assertions.assertThat(row.get("needsReview").asBoolean()).isFalse();
     }
 
     /** Реальный эталон повторяет оборудование на многих строках — не должно падать. */

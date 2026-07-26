@@ -155,6 +155,11 @@ class UniqueEquipmentIntegrationTest extends IntegrationTestBase {
         JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
         org.assertj.core.api.Assertions.assertThat(view.get("rows")).hasSize(2);
+        // ИИ в тестовом профиле выключен → расценка из наивного поиска, строка «на проверку»
+        org.assertj.core.api.Assertions.assertThat(view.get("rows").get(0).get("row").get("matchSource").asText())
+                .isEqualTo("CATALOG");
+        org.assertj.core.api.Assertions.assertThat(view.get("rows").get(0).get("row").get("needsReview").asBoolean())
+                .isTrue();
         org.assertj.core.api.Assertions.assertThat(view.get("rows").get(0).get("row").get("periodicity").asText())
                 .isEqualTo("Ежемесячно");
         org.assertj.core.api.Assertions.assertThat(view.get("rows").get(1).get("row").get("opsPerYear").asDouble())

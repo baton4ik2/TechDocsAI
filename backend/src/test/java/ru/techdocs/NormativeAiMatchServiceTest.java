@@ -35,9 +35,25 @@ class NormativeAiMatchServiceTest {
         var result = service.match("извещатель");
 
         assertThat(result.aiUsed()).isFalse();
+        assertThat(result.aiConfigured()).isFalse();   // ИИ выключен
         assertThat(result.matches()).isEmpty();
         assertThat(result.candidates()).hasSize(2);
         verify(ai, never()).completeMatch(anyString(), anyString());
+    }
+
+    @Test
+    void aiConfiguredButFailedIsDistinguishable() {
+        // ИИ настроен, но запрос упал (провайдер вернул null) — aiConfigured=true, aiUsed=false.
+        // Черновик по этому признаку пометит строку «на проверку», а не подставит расценку.
+        when(ai.hasMatchModel()).thenReturn(true);
+        when(rates.search(anyString(), anyInt())).thenReturn(List.of(rate("22-1", "ТО")));
+        when(ai.completeMatch(anyString(), anyString())).thenReturn(null);
+
+        var result = service.match("извещатель");
+
+        assertThat(result.aiUsed()).isFalse();
+        assertThat(result.aiConfigured()).isTrue();
+        assertThat(result.matches()).isEmpty();
     }
 
     @Test

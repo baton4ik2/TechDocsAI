@@ -15,5 +15,6 @@
     <include file="db/changelog/changes/008-unique-equipment.xml" relativeToChangelogFile="false"/>
     <include file="db/changelog/changes/009-estimate-decisions.xml" relativeToChangelogFile="false"/>
     <include file="db/changelog/changes/010-unique-equipment-system.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/011-estimate-row-review.xml" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

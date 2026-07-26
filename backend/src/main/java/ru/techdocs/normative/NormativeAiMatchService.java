@@ -34,7 +34,14 @@ public class NormativeAiMatchService {
 
     public record Match(NormativeRate rate, String reason) {}
 
-    public record MatchResult(List<Match> matches, List<NormativeRate> candidates, boolean aiUsed) {}
+    /**
+     * @param aiUsed       ИИ реально ответил и ответ разобран (даже если он не нашёл подходящей)
+     * @param aiConfigured match-модель настроена и запрос к ней делался (для отличия «ИИ выключен»
+     *                     от «ИИ включён, но не подобрал/упал» — во втором случае не подставляем
+     *                     наугад дорогую расценку, а помечаем строку «на проверку»)
+     */
+    public record MatchResult(List<Match> matches, List<NormativeRate> candidates,
+                              boolean aiUsed, boolean aiConfigured) {}
 
     public boolean isAvailable() {
         return aiClient.hasMatchModel();
@@ -44,22 +51,24 @@ public class NormativeAiMatchService {
         if (query == null || query.isBlank()) {
             throw new BadRequestException("Опишите работу или оборудование для подбора расценки.");
         }
+        boolean configured = aiClient.hasMatchModel();
         List<NormativeRate> candidates = rateRepository.search(query.strip(), CANDIDATE_LIMIT);
         if (candidates.isEmpty()) {
-            return new MatchResult(List.of(), List.of(), false);
+            return new MatchResult(List.of(), List.of(), false, configured);
         }
-        if (!aiClient.hasMatchModel()) {
+        if (!configured) {
             // без ИИ возвращаем кандидатов из полнотекстового поиска как есть
-            return new MatchResult(List.of(), candidates, false);
+            return new MatchResult(List.of(), candidates, false, false);
         }
 
         String answer = aiClient.completeMatch(systemPrompt(), userPrompt(query, candidates));
         if (answer == null || answer.isBlank()) {
-            return new MatchResult(List.of(), candidates, false);
+            // ИИ настроен, но запрос упал/пуст (ошибка провайдера уже в логах AiClient)
+            return new MatchResult(List.of(), candidates, false, true);
         }
 
         List<Match> matches = parse(answer, candidates);
-        return new MatchResult(matches, candidates, true);
+        return new MatchResult(matches, candidates, true, true);
     }
 
     private String systemPrompt() {

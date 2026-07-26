@@ -34,7 +34,8 @@ public class EstimateService {
                            String rateCode, String rateName, String periodicity, String justification,
                            BigDecimal opsPerYear, BigDecimal qty, BigDecimal unitBasis,
                            BigDecimal priceZp, BigDecimal priceEm, BigDecimal priceZpm, BigDecimal priceMr,
-                           BigDecimal correction, BigDecimal laborHours) {}
+                           BigDecimal correction, BigDecimal laborHours,
+                           Boolean needsReview, String matchSource) {}
 
     // ---- представление ----
 
@@ -178,6 +179,14 @@ public class EstimateService {
         if (in.priceZpm() != null) row.setPriceZpm(in.priceZpm());
         if (in.priceMr() != null) row.setPriceMr(in.priceMr());
         if (in.laborHours() != null) row.setLaborHours(in.laborHours());
+        if (in.needsReview() != null) row.setNeedsReview(in.needsReview());
+        if (in.matchSource() != null) row.setMatchSource(blank(in.matchSource()));
+
+        // ручная правка шифра расценки снимает пометку «на проверку»
+        if (rateChanged && !creating) {
+            row.setNeedsReview(false);
+            row.setMatchSource("MANUAL");
+        }
 
         // периодичность → операций в год (если явно не задано)
         if (in.opsPerYear() != null) {

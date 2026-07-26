@@ -80,4 +80,12 @@ public class EstimateRow {
 
     @Column(name = "labor_hours")
     private BigDecimal laborHours;      // AP
+
+    /** Строку нужно проверить инженеру (ИИ не подобрал расценку или подбор без ИИ). */
+    @Column(name = "needs_review", nullable = false)
+    private boolean needsReview = false;
+
+    /** Источник расценки: LEARNED / AI / AI_FAILED / CATALOG / MANUAL. */
+    @Column(name = "match_source")
+    private String matchSource;
 }
