@@ -9,11 +9,14 @@ import ru.techdocs.equipment.Equipment;
 import ru.techdocs.equipment.EquipmentRepository;
 import ru.techdocs.normative.NormativeAiMatchService;
 import ru.techdocs.normative.NormativeRate;
+import ru.techdocs.normative.NormativeRateRepository;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -34,8 +37,23 @@ public class EstimateDraftService {
     private final NormativeAiMatchService aiMatchService;
     private final EquipmentMaintenanceResolver maintenanceResolver;
     private final EstimateDecisionService decisionService;
+    private final NormativeRateRepository rateRepository;
+
+    private static final int EXAMPLE_LIMIT = 20;   // сколько эталонных примеров подкладывать ИИ
 
     public record DraftResult(int created, int skipped, boolean aiUsed) {}
+
+    /** Выбор расценки для кэша консистентности «по типу» в пределах одной сметы. */
+    private record RatePick(String rateCode, String source, boolean needsReview) {
+        RatePick(String rateCode, String source) { this(rateCode, source, false); }
+    }
+
+    /** Ключ типа: система + наименование (без модели) + категория операции. */
+    private String typeKey(String system, String name, String operationName) {
+        String sys = ru.techdocs.common.SystemNormalizer.canonical(system);
+        String nm = name == null ? "" : name.toLowerCase().replace('ё', 'е').replaceAll("\\s+", " ").strip();
+        return (sys == null ? "" : sys) + "|" + nm + "|" + EstimateDecisionService.operationKey(operationName);
+    }
 
     public DraftResult generate(Long estimateId) {
         return generate(estimateId, null);
@@ -64,6 +82,9 @@ public class EstimateDraftService {
         }
 
         boolean aiAvailable = aiMatchService.isAvailable();
+        // few-shot примеры из эталона по системам и кэш выбора «по типу» в пределах сметы
+        Map<String, List<NormativeAiMatchService.Example>> examplesCache = new HashMap<>();
+        Map<String, RatePick> consistency = new HashMap<>();
         int created = 0, skipped = 0;
         for (Equipment eq : equipment) {
             if (existing.contains(eq.getId())) { skipped++; continue; }
@@ -78,20 +99,25 @@ public class EstimateDraftService {
             if (!decisions.isEmpty()) {
                 for (EstimateRateDecision d : decisions) {
                     addRowFromDecision(estimateId, eq, systemType, d);
+                    // из памяти пополняем кэш «по типу»: новые модели того же типа возьмут ту же расценку
+                    consistency.putIfAbsent(typeKey(systemType, eq.getName(), d.getOperationName()),
+                            new RatePick(d.getRateCode(), "LEARNED", false));
                     created++;
                 }
                 continue;
             }
 
-            // 2) паспорт/ПКМ + ИИ-подбор расценки
+            // 2) паспорт/ПКМ + ИИ-подбор расценки (с few-shot из эталона и консистентностью по типу)
+            List<NormativeAiMatchService.Example> examples = examplesCache.computeIfAbsent(
+                    systemType, s -> decisionService.examplesForSystem(s, EXAMPLE_LIMIT));
             List<EquipmentMaintenanceResolver.Planned> operations =
                     maintenanceResolver.resolveOperations(eq, systemType);
             if (operations.isEmpty()) {
-                addRowForOperation(estimateId, eq, systemType, null);
+                addRowForOperation(estimateId, eq, systemType, null, examples, consistency);
                 created++;
             } else {
                 for (EquipmentMaintenanceResolver.Planned op : operations) {
-                    addRowForOperation(estimateId, eq, systemType, op);
+                    addRowForOperation(estimateId, eq, systemType, op, examples, consistency);
                     created++;
                 }
             }
@@ -102,32 +128,52 @@ public class EstimateDraftService {
     }
 
     private void addRowForOperation(Long estimateId, Equipment eq, String systemType,
-                                    EquipmentMaintenanceResolver.Planned op) {
-        // подбор расценки под конкретную операцию (для паспорта/ПКМ учитываем её название)
-        String query = op == null ? describe(eq) : describe(eq) + " " + op.operationName();
-        var match = aiMatchService.match(query);
+                                    EquipmentMaintenanceResolver.Planned op,
+                                    List<NormativeAiMatchService.Example> examples,
+                                    Map<String, RatePick> consistency) {
+        String operationName = op != null ? op.operationName() : operationName(eq);
+        String tkey = typeKey(systemType, eq.getName(), operationName);
 
-        // Выбор расценки и источник:
-        //  - ИИ подобрал → берём его расценку, доверяем (AI);
-        //  - ИИ настроен, но не подобрал/упал → НЕ подставляем наугад дорогую расценку из
-        //    поиска, оставляем шифр пустым и помечаем строку «на проверку» (AI_FAILED);
-        //  - ИИ выключен → верхний результат поиска как подсказка, но тоже «на проверку»
-        //    (CATALOG) — наивный поиск ненадёжен, инженер должен проверить.
-        NormativeRate rate;
+        // Консистентность «по типу» в пределах сметы: если оборудование с таким же
+        // наименованием и операцией уже получило расценку (из эталона или от ИИ) —
+        // берём ту же, без повторного обращения к ИИ. Гарантирует единый выбор для
+        // одного типа и экономит запросы.
+        RatePick cached = consistency.get(tkey);
+        String rateCode;
         String source;
         boolean needsReview;
-        if (!match.matches().isEmpty()) {
-            rate = match.matches().get(0).rate();
-            source = "AI";
-            needsReview = false;
-        } else if (match.aiConfigured()) {
-            rate = null;
-            source = "AI_FAILED";
-            needsReview = true;
+        String note = op != null ? op.note() : "периодичность из наименования расценки";
+        String justification;
+        NormativeRate rate;
+        if (cached != null) {
+            rateCode = cached.rateCode();
+            source = cached.source();
+            needsReview = cached.needsReview();
+            rate = rateCode == null ? null : catalogRate(rateCode);
+            justification = "Расценка согласована с оборудованием того же типа в этой смете. Периодичность: " + note;
         } else {
-            rate = match.candidates().isEmpty() ? null : match.candidates().get(0);
-            source = "CATALOG";
-            needsReview = true;
+            // подбор расценки под конкретную операцию (с few-shot примерами из эталона)
+            String query = op == null ? describe(eq) : describe(eq) + " " + op.operationName();
+            var match = aiMatchService.match(query, examples);
+            //  - ИИ подобрал → берём его расценку (AI);
+            //  - ИИ настроен, но не подобрал/упал → шифр пустой, строка «на проверку» (AI_FAILED);
+            //  - ИИ выключен → верхний результат поиска как подсказка, тоже «на проверку» (CATALOG).
+            if (!match.matches().isEmpty()) {
+                rate = match.matches().get(0).rate();
+                source = "AI";
+                needsReview = false;
+            } else if (match.aiConfigured()) {
+                rate = null;
+                source = "AI_FAILED";
+                needsReview = true;
+            } else {
+                rate = match.candidates().isEmpty() ? null : match.candidates().get(0);
+                source = "CATALOG";
+                needsReview = true;
+            }
+            rateCode = rate == null ? null : rate.getCode();
+            justification = justification(match, note, source);
+            consistency.put(tkey, new RatePick(rateCode, source, needsReview));
         }
 
         // периодичность: из операции (паспорт/ПКМ), иначе из наименования расценки
@@ -137,22 +183,24 @@ public class EstimateDraftService {
         String periodicityText = op != null && op.periodicityText() != null
                 ? op.periodicityText()
                 : maintenanceResolver.label(perYear);
-        String operationName = op != null ? op.operationName() : operationName(eq);
-        String note = op != null ? op.note() : "периодичность из наименования расценки";
 
         EstimateService.RowInput input = new EstimateService.RowInput(
                 systemType, eq.getId(), eq.getName(), eq.getModel(), eq.getManufacturer(),
                 operationName,
-                rate == null ? null : rate.getCode(),
+                rateCode,
                 null,
                 periodicityText,
-                justification(match, note, source),
+                justification,
                 perYear,
                 eq.getQuantity(),
                 null, null, null, null, null,
                 null, null,
                 needsReview, source);
         estimateService.addRow(estimateId, input);
+    }
+
+    private NormativeRate catalogRate(String code) {
+        return rateRepository.findFirstByCodeOrderById(code).orElse(null);
     }
 
     /** Строка из эталонного решения — расценка и периодичность известны, ИИ не нужен. */

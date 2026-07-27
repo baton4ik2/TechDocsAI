@@ -198,6 +198,11 @@ public class UniqueEquipmentService {
                 .orElseThrow(() -> new NotFoundException("Оборудование не найдено в реестре"));
     }
 
+    /** Оборудование реестра в канонической системе (для few-shot примеров из эталона). */
+    public List<UniqueEquipment> bySystemType(String canonicalSystem) {
+        return canonicalSystem == null ? List.of() : repository.findBySystemType(canonicalSystem);
+    }
+
     public List<PlannedWork> plannedWorks(Long id) {
         get(id);
         return plannedWorkRepository.findByUniqueEquipmentIdOrderByPosition(id);

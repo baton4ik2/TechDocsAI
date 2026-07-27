@@ -103,6 +103,29 @@ class NormativeAiMatchServiceTest {
     }
 
     @Test
+    void fewShotExampleRateIsAddedToCandidatesAndPromptAndCanBeChosen() {
+        when(ai.hasMatchModel()).thenReturn(true);
+        // полнотекстовый поиск дал одну расценку, а в эталоне — другая (99-ET), которой в поиске нет
+        when(rates.search(anyString(), anyInt())).thenReturn(List.of(rate("22-1", "ТО извещателя")));
+        when(rates.findFirstByCodeOrderById("99-ET")).thenReturn(java.util.Optional.of(rate("99-ET", "ТО по эталону")));
+
+        var promptCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        when(ai.completeMatch(anyString(), anyString()))
+                .thenReturn("[{\"code\":\"99-ET\",\"reason\":\"как в эталоне\"}]");
+
+        var result = service.match("считыватель",
+                List.of(new NormativeAiMatchService.Example("Считыватель TS-CTR", "99-ET")));
+
+        // расценка из эталона попала в кандидаты и была выбрана
+        assertThat(result.candidates()).extracting(NormativeRate::getCode).contains("22-1", "99-ET");
+        assertThat(result.matches()).hasSize(1);
+        assertThat(result.matches().get(0).rate().getCode()).isEqualTo("99-ET");
+
+        verify(ai).completeMatch(anyString(), promptCaptor.capture());
+        assertThat(promptCaptor.getValue()).contains("Примеры из эталона").contains("99-ET");
+    }
+
+    @Test
     void blankQueryRejected() {
         assertThatThrownBy(() -> service.match("  ")).isInstanceOf(BadRequestException.class);
     }

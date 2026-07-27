@@ -34,6 +34,9 @@ public class NormativeAiMatchService {
 
     public record Match(NormativeRate rate, String reason) {}
 
+    /** Пример из эталона: как похожее оборудование этой системы уже считали. */
+    public record Example(String equipment, String rateCode) {}
+
     /**
      * @param aiUsed       ИИ реально ответил и ответ разобран (даже если он не нашёл подходящей)
      * @param aiConfigured match-модель настроена и запрос к ней делался (для отличия «ИИ выключен»
@@ -48,11 +51,23 @@ public class NormativeAiMatchService {
     }
 
     public MatchResult match(String query) {
+        return match(query, List.of());
+    }
+
+    /**
+     * Подбор с few-shot примерами из эталона (как похожее оборудование этой системы уже
+     * считали). Примеры сильно направляют выбор: их расценки добавляются в список
+     * кандидатов (чтобы модель могла их выбрать), а в промпте прямо указано держаться
+     * прецедента при отсутствии явного противопоказания.
+     */
+    public MatchResult match(String query, List<Example> examples) {
         if (query == null || query.isBlank()) {
             throw new BadRequestException("Опишите работу или оборудование для подбора расценки.");
         }
         boolean configured = aiClient.hasMatchModel();
-        List<NormativeRate> candidates = rateRepository.search(query.strip(), CANDIDATE_LIMIT);
+        List<NormativeRate> candidates = new ArrayList<>(rateRepository.search(query.strip(), CANDIDATE_LIMIT));
+        // расценки из эталонных примеров добавляем в кандидаты — иначе модель не сможет их выбрать
+        mergeExampleRates(candidates, examples);
         if (candidates.isEmpty()) {
             return new MatchResult(List.of(), List.of(), false, configured);
         }
@@ -61,7 +76,7 @@ public class NormativeAiMatchService {
             return new MatchResult(List.of(), candidates, false, false);
         }
 
-        String answer = aiClient.completeMatch(systemPrompt(), userPrompt(query, candidates));
+        String answer = aiClient.completeMatch(systemPrompt(), userPrompt(query, candidates, examples));
         if (answer == null || answer.isBlank()) {
             // ИИ настроен, но запрос упал/пуст (ошибка провайдера уже в логах AiClient)
             return new MatchResult(List.of(), candidates, false, true);
@@ -71,24 +86,49 @@ public class NormativeAiMatchService {
         return new MatchResult(matches, candidates, true, true);
     }
 
+    /** Добавляет в список кандидатов расценки из эталонных примеров (без дублей). */
+    private void mergeExampleRates(List<NormativeRate> candidates, List<Example> examples) {
+        if (examples == null || examples.isEmpty()) return;
+        java.util.Set<String> have = new java.util.HashSet<>();
+        for (NormativeRate r : candidates) have.add(r.getCode());
+        for (Example ex : examples) {
+            if (ex.rateCode() == null || have.contains(ex.rateCode())) continue;
+            rateRepository.findFirstByCodeOrderById(ex.rateCode()).ifPresent(r -> {
+                candidates.add(r);
+                have.add(r.getCode());
+            });
+        }
+    }
+
     private String systemPrompt() {
         return """
                 Ты — инженер-сметчик по обслуживанию инженерных систем зданий.
-                Тебе дают описание работы или оборудования и пронумерованный список
-                расценок СН-2012. Выбери из списка расценки, которые ТОЧНО подходят
-                под описание (техобслуживание, осмотр, ремонт — учитывай тип работы).
+                Тебе дают описание оборудования, примеры из эталонных смет (как похожее
+                оборудование этой же системы уже считали) и пронумерованный список
+                расценок СН-2012. Выбери из списка расценки, которые ТОЧНО подходят.
                 Правила:
+                - СИЛЬНО опирайся на эталонные примеры: если в них есть такое же или
+                  явно однотипное оборудование, выбери ТУ ЖЕ расценку, если нет прямого
+                  противопоказания по описанию;
                 - выбирай только расценки из списка, не придумывай новые шифры;
                 - если подходящих нет — верни пустой массив;
                 - сортируй от самой релевантной к менее релевантной;
-                - в reason коротко (до 12 слов) поясни, почему расценка подходит.
+                - в reason коротко (до 12 слов) поясни выбор (укажи, если по эталону).
                 Ответ — строго JSON-массив объектов {"code": "...", "reason": "..."},
                 без пояснений вне JSON.
                 """;
     }
 
-    private String userPrompt(String query, List<NormativeRate> candidates) {
-        StringBuilder sb = new StringBuilder("Описание: ").append(query.strip()).append("\n\nРасценки:\n");
+    private String userPrompt(String query, List<NormativeRate> candidates, List<Example> examples) {
+        StringBuilder sb = new StringBuilder();
+        if (examples != null && !examples.isEmpty()) {
+            sb.append("Примеры из эталона (оборудование → расценка):\n");
+            for (Example ex : examples) {
+                sb.append("- ").append(ex.equipment()).append(" → ").append(ex.rateCode()).append('\n');
+            }
+            sb.append('\n');
+        }
+        sb.append("Описание: ").append(query.strip()).append("\n\nРасценки:\n");
         for (NormativeRate r : candidates) {
             sb.append("- ").append(r.getCode()).append(" | ").append(r.getName());
             if (r.getUnit() != null && !r.getUnit().isBlank()) {

@@ -58,6 +58,26 @@ public class EstimateDecisionService {
     }
 
     /**
+     * Few-shot примеры из эталона для системы: как похожее оборудование этой системы
+     * уже считали (оборудование → шифр расценки). Направляют ИИ-подбор для новых моделей.
+     */
+    public List<ru.techdocs.normative.NormativeAiMatchService.Example> examplesForSystem(String system, int limit) {
+        String canonical = ru.techdocs.common.SystemNormalizer.canonical(system);
+        if (canonical == null) return List.of();
+        List<ru.techdocs.normative.NormativeAiMatchService.Example> examples = new ArrayList<>();
+        for (UniqueEquipment ue : uniqueEquipmentService.bySystemType(canonical)) {
+            String name = ue.getName() == null ? "" : ue.getName();
+            String descr = ue.getModel() == null || ue.getModel().isBlank() ? name : name + " " + ue.getModel();
+            for (EstimateRateDecision d : repository.findByUniqueEquipmentIdOrderByOperationKey(ue.getId())) {
+                if (d.getRateCode() == null || d.getRateCode().isBlank()) continue;
+                examples.add(new ru.techdocs.normative.NormativeAiMatchService.Example(descr.strip(), d.getRateCode()));
+                if (examples.size() >= limit) return examples;
+            }
+        }
+        return examples;
+    }
+
+    /**
      * Уникальное оборудование по описанию и системе (без создания). С запасным поиском
      * по модели без системы — чтобы переиспользование эталона не ломалось, если раздел
      * эталона не распознался как система.

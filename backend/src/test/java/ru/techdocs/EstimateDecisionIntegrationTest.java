@@ -175,6 +175,56 @@ class EstimateDecisionIntegrationTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.length()").value(2));
     }
 
+    /** Одинаковое наименование, разные модели → одна расценка в пределах сметы (консистентность по типу). */
+    @Test
+    void sameNameDifferentModelsGetSameRateWithinEstimate() throws Exception {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник 21");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        for (String[] r : new String[][]{
+                {"21-100-1/1", "Техническое обслуживание источника вторичного электропитания"},
+                {"21-200-2/1", "Техническое обслуживание аккумулятора резервного питания"}}) {
+            NormativeRate rate = new NormativeRate();
+            rate.setSourcebookId(book.getId());
+            rate.setCode(r[0]);
+            rate.setName(r[1]);
+            rate.setUnit("1 шт.");
+            rate.setLaborCost(new BigDecimal("100.00"));
+            rateRepository.saveAndFlush(rate);
+        }
+
+        long f = facility("Объект с источниками");
+        EngineeringSystem s = new EngineeringSystem();
+        s.setFacilityId(f);
+        s.setName("СКУД");
+        long sys = systemRepository.saveAndFlush(s).getId();
+        // два «Источника вторичного электропитания» разных моделей
+        for (String model : new String[]{"ИВЭПР 12/2 2x7", "ИВЭПР 12/2 2x17"}) {
+            Equipment e = new Equipment();
+            e.setFacilityId(f);
+            e.setEngineeringSystemId(sys);
+            e.setName("Источник вторичного электропитания");
+            e.setModel(model);
+            e.setQuantity(new BigDecimal("1"));
+            equipmentRepository.saveAndFlush(e);
+        }
+
+        String est = mockMvc.perform(post("/api/estimates?facilityId=" + f).header("Authorization", bearer())
+                        .contentType("application/json").content("{\"name\":\"Смета\"}"))
+                .andReturn().getResponse().getContentAsString();
+        long estId = json.readTree(est).get("id").asLong();
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(2));
+
+        JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        String code0 = view.get("rows").get(0).get("row").get("rateCode").asText();
+        String code1 = view.get("rows").get(1).get("row").get("rateCode").asText();
+        // обе строки одного типа получили одну и ту же расценку
+        org.assertj.core.api.Assertions.assertThat(code0).isNotBlank().isEqualTo(code1);
+    }
+
     @Test
     void promoteStoresDecisionsFromEstimate() throws Exception {
         seedRate();
