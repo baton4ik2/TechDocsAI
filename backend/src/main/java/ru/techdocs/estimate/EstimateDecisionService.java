@@ -57,24 +57,35 @@ public class EstimateDecisionService {
                 : repository.findByUniqueEquipmentIdOrderByOperationKey(uniqueEquipmentId);
     }
 
+    /** Периодичность эталона для расценки (чтобы её тоже переиспользовать при совпадении шифра). */
+    public record EtalonRate(String periodicity, BigDecimal perYear) {}
+
+    /** Данные эталона по системе: few-shot примеры + карта «шифр → периодичность эталона». */
+    public record SystemEtalon(List<ru.techdocs.normative.NormativeAiMatchService.Example> examples,
+                               Map<String, EtalonRate> byRateCode) {}
+
     /**
-     * Few-shot примеры из эталона для системы: как похожее оборудование этой системы
-     * уже считали (оборудование → шифр расценки). Направляют ИИ-подбор для новых моделей.
+     * Эталон системы для ИИ-подбора: примеры «оборудование → шифр» (few-shot, ограничены
+     * limit для размера промпта) и полная карта «шифр → периодичность эталона». Если ИИ
+     * выберет расценку из этой карты — берём и периодичность из эталона.
      */
-    public List<ru.techdocs.normative.NormativeAiMatchService.Example> examplesForSystem(String system, int limit) {
+    public SystemEtalon systemEtalon(String system, int limit) {
         String canonical = ru.techdocs.common.SystemNormalizer.canonical(system);
-        if (canonical == null) return List.of();
+        if (canonical == null) return new SystemEtalon(List.of(), Map.of());
         List<ru.techdocs.normative.NormativeAiMatchService.Example> examples = new ArrayList<>();
+        Map<String, EtalonRate> byRateCode = new HashMap<>();
         for (UniqueEquipment ue : uniqueEquipmentService.bySystemType(canonical)) {
             String name = ue.getName() == null ? "" : ue.getName();
             String descr = ue.getModel() == null || ue.getModel().isBlank() ? name : name + " " + ue.getModel();
             for (EstimateRateDecision d : repository.findByUniqueEquipmentIdOrderByOperationKey(ue.getId())) {
                 if (d.getRateCode() == null || d.getRateCode().isBlank()) continue;
-                examples.add(new ru.techdocs.normative.NormativeAiMatchService.Example(descr.strip(), d.getRateCode()));
-                if (examples.size() >= limit) return examples;
+                byRateCode.putIfAbsent(d.getRateCode().strip(), new EtalonRate(d.getPeriodicity(), d.getPerYear()));
+                if (examples.size() < limit) {
+                    examples.add(new ru.techdocs.normative.NormativeAiMatchService.Example(descr.strip(), d.getRateCode()));
+                }
             }
         }
-        return examples;
+        return new SystemEtalon(examples, byRateCode);
     }
 
     /**

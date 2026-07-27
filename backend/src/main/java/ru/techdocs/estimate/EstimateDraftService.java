@@ -44,9 +44,8 @@ public class EstimateDraftService {
     public record DraftResult(int created, int skipped, boolean aiUsed) {}
 
     /** Выбор расценки для кэша консистентности «по типу» в пределах одной сметы. */
-    private record RatePick(String rateCode, String source, boolean needsReview) {
-        RatePick(String rateCode, String source) { this(rateCode, source, false); }
-    }
+    private record RatePick(String rateCode, String source, boolean needsReview,
+                            String periodicityText, BigDecimal perYear) {}
 
     /** Ключ типа: система + наименование (без модели) + категория операции. */
     private String typeKey(String system, String name, String operationName) {
@@ -82,8 +81,8 @@ public class EstimateDraftService {
         }
 
         boolean aiAvailable = aiMatchService.isAvailable();
-        // few-shot примеры из эталона по системам и кэш выбора «по типу» в пределах сметы
-        Map<String, List<NormativeAiMatchService.Example>> examplesCache = new HashMap<>();
+        // эталон по системам (примеры + периодичность) и кэш выбора «по типу» в пределах сметы
+        Map<String, EstimateDecisionService.SystemEtalon> etalonCache = new HashMap<>();
         Map<String, RatePick> consistency = new HashMap<>();
         int created = 0, skipped = 0;
         for (Equipment eq : equipment) {
@@ -101,23 +100,23 @@ public class EstimateDraftService {
                     addRowFromDecision(estimateId, eq, systemType, d);
                     // из памяти пополняем кэш «по типу»: новые модели того же типа возьмут ту же расценку
                     consistency.putIfAbsent(typeKey(systemType, eq.getName(), d.getOperationName()),
-                            new RatePick(d.getRateCode(), "LEARNED", false));
+                            new RatePick(d.getRateCode(), "LEARNED", false, d.getPeriodicity(), d.getPerYear()));
                     created++;
                 }
                 continue;
             }
 
             // 2) паспорт/ПКМ + ИИ-подбор расценки (с few-shot из эталона и консистентностью по типу)
-            List<NormativeAiMatchService.Example> examples = examplesCache.computeIfAbsent(
-                    systemType, s -> decisionService.examplesForSystem(s, EXAMPLE_LIMIT));
+            EstimateDecisionService.SystemEtalon etalon = etalonCache.computeIfAbsent(
+                    systemType, s -> decisionService.systemEtalon(s, EXAMPLE_LIMIT));
             List<EquipmentMaintenanceResolver.Planned> operations =
                     maintenanceResolver.resolveOperations(eq, systemType);
             if (operations.isEmpty()) {
-                addRowForOperation(estimateId, eq, systemType, null, examples, consistency);
+                addRowForOperation(estimateId, eq, systemType, null, etalon, consistency);
                 created++;
             } else {
                 for (EquipmentMaintenanceResolver.Planned op : operations) {
-                    addRowForOperation(estimateId, eq, systemType, op, examples, consistency);
+                    addRowForOperation(estimateId, eq, systemType, op, etalon, consistency);
                     created++;
                 }
             }
@@ -129,61 +128,80 @@ public class EstimateDraftService {
 
     private void addRowForOperation(Long estimateId, Equipment eq, String systemType,
                                     EquipmentMaintenanceResolver.Planned op,
-                                    List<NormativeAiMatchService.Example> examples,
+                                    EstimateDecisionService.SystemEtalon etalon,
                                     Map<String, RatePick> consistency) {
         String operationName = op != null ? op.operationName() : operationName(eq);
         String tkey = typeKey(systemType, eq.getName(), operationName);
+        String note = op != null ? op.note() : "периодичность из наименования расценки";
 
         // Консистентность «по типу» в пределах сметы: если оборудование с таким же
         // наименованием и операцией уже получило расценку (из эталона или от ИИ) —
-        // берём ту же, без повторного обращения к ИИ. Гарантирует единый выбор для
-        // одного типа и экономит запросы.
+        // берём ту же (и ту же периодичность), без повторного обращения к ИИ.
         RatePick cached = consistency.get(tkey);
-        String rateCode;
-        String source;
-        boolean needsReview;
-        String note = op != null ? op.note() : "периодичность из наименования расценки";
-        String justification;
-        NormativeRate rate;
         if (cached != null) {
-            rateCode = cached.rateCode();
-            source = cached.source();
-            needsReview = cached.needsReview();
-            rate = rateCode == null ? null : catalogRate(rateCode);
-            justification = "Расценка согласована с оборудованием того же типа в этой смете. Периодичность: " + note;
-        } else {
-            // подбор расценки под конкретную операцию (с few-shot примерами из эталона)
-            String query = op == null ? describe(eq) : describe(eq) + " " + op.operationName();
-            var match = aiMatchService.match(query, examples);
-            //  - ИИ подобрал → берём его расценку (AI);
-            //  - ИИ настроен, но не подобрал/упал → шифр пустой, строка «на проверку» (AI_FAILED);
-            //  - ИИ выключен → верхний результат поиска как подсказка, тоже «на проверку» (CATALOG).
-            if (!match.matches().isEmpty()) {
-                rate = match.matches().get(0).rate();
-                source = "AI";
-                needsReview = false;
-            } else if (match.aiConfigured()) {
-                rate = null;
-                source = "AI_FAILED";
-                needsReview = true;
-            } else {
-                rate = match.candidates().isEmpty() ? null : match.candidates().get(0);
-                source = "CATALOG";
-                needsReview = true;
-            }
-            rateCode = rate == null ? null : rate.getCode();
-            justification = justification(match, note, source);
-            consistency.put(tkey, new RatePick(rateCode, source, needsReview));
+            NormativeRate rate = cached.rateCode() == null ? null : catalogRate(cached.rateCode());
+            BigDecimal perYear = cached.perYear() != null ? cached.perYear()
+                    : maintenanceResolver.perYearFromRate(rate == null ? null : rate.getName());
+            String periodicityText = cached.periodicityText() != null ? cached.periodicityText()
+                    : maintenanceResolver.label(perYear);
+            addRow(estimateId, eq, systemType, operationName, cached.rateCode(), periodicityText, perYear,
+                    "Расценка согласована с оборудованием того же типа в этой смете. Периодичность: " + note,
+                    cached.needsReview(), cached.source());
+            return;
         }
 
-        // периодичность: из операции (паспорт/ПКМ), иначе из наименования расценки
-        BigDecimal perYear = op != null && op.perYear() != null
-                ? op.perYear()
-                : maintenanceResolver.perYearFromRate(rate == null ? null : rate.getName());
-        String periodicityText = op != null && op.periodicityText() != null
-                ? op.periodicityText()
-                : maintenanceResolver.label(perYear);
+        // подбор расценки под конкретную операцию (с few-shot примерами из эталона)
+        String query = op == null ? describe(eq) : describe(eq) + " " + op.operationName();
+        var match = aiMatchService.match(query, etalon.examples());
+        //  - ИИ подобрал → AI; если шифр есть в эталоне системы → AI_ETALON (доверенный);
+        //  - ИИ настроен, но не подобрал/упал → шифр пустой, «на проверку» (AI_FAILED);
+        //  - ИИ выключен → верхний результат поиска как подсказка, «на проверку» (CATALOG).
+        NormativeRate rate;
+        String source;
+        boolean needsReview;
+        if (!match.matches().isEmpty()) {
+            rate = match.matches().get(0).rate();
+            source = "AI";
+            needsReview = false;
+        } else if (match.aiConfigured()) {
+            rate = null;
+            source = "AI_FAILED";
+            needsReview = true;
+        } else {
+            rate = match.candidates().isEmpty() ? null : match.candidates().get(0);
+            source = "CATALOG";
+            needsReview = true;
+        }
+        String rateCode = rate == null ? null : rate.getCode();
 
+        // если ИИ выбрал расценку, которая есть в эталоне этой системы — это доверенный
+        // выбор: помечаем AI_ETALON и берём периодичность из эталона (раз расценка оттуда)
+        EstimateDecisionService.EtalonRate etalonRate = rateCode == null ? null : etalon.byRateCode().get(rateCode);
+        BigDecimal perYear;
+        String periodicityText;
+        if (etalonRate != null && "AI".equals(source)) {
+            source = "AI_ETALON";
+            perYear = etalonRate.perYear() != null ? etalonRate.perYear()
+                    : (op != null && op.perYear() != null ? op.perYear()
+                       : maintenanceResolver.perYearFromRate(rate.getName()));
+            periodicityText = etalonRate.periodicity() != null ? etalonRate.periodicity()
+                    : maintenanceResolver.label(perYear);
+        } else {
+            perYear = op != null && op.perYear() != null ? op.perYear()
+                    : maintenanceResolver.perYearFromRate(rate == null ? null : rate.getName());
+            periodicityText = op != null && op.periodicityText() != null ? op.periodicityText()
+                    : maintenanceResolver.label(perYear);
+        }
+
+        consistency.put(tkey, new RatePick(rateCode, source, needsReview, periodicityText, perYear));
+        addRow(estimateId, eq, systemType, operationName, rateCode, periodicityText, perYear,
+                justification(match, note, source), needsReview, source);
+    }
+
+    /** Общая сборка строки черновика. */
+    private void addRow(Long estimateId, Equipment eq, String systemType, String operationName,
+                        String rateCode, String periodicityText, BigDecimal perYear,
+                        String justification, boolean needsReview, String source) {
         EstimateService.RowInput input = new EstimateService.RowInput(
                 systemType, eq.getId(), eq.getName(), eq.getModel(), eq.getManufacturer(),
                 operationName,
@@ -238,9 +256,10 @@ public class EstimateDraftService {
     private String justification(NormativeAiMatchService.MatchResult match, String periodicityNote, String source) {
         StringBuilder sb = new StringBuilder();
         switch (source) {
-            case "AI" -> {
+            case "AI", "AI_ETALON" -> {
                 String reason = match.matches().isEmpty() ? null : match.matches().get(0).reason();
-                sb.append(reason != null ? "Расценка (ИИ): " + reason + ". " : "Расценка подобрана ИИ. ");
+                String prefix = "AI_ETALON".equals(source) ? "Расценка (ИИ, по эталону)" : "Расценка (ИИ)";
+                sb.append(reason != null ? prefix + ": " + reason + ". " : prefix + ". ");
             }
             case "AI_FAILED" -> sb.append("⚠ НА ПРОВЕРКУ: ИИ не подобрал расценку — выберите вручную. ");
             case "CATALOG" -> sb.append("⚠ НА ПРОВЕРКУ: ИИ выключен, расценка — верхний результат поиска по каталогу. ");
