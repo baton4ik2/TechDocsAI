@@ -9,6 +9,20 @@ import { toast } from '../components/Toast'
 const money = (v?: number) =>
   v == null ? '—' : v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
+/** Откуда взялась расценка строки — бейдж «Источник». */
+function SourceBadge({ source }: { source?: string }) {
+  const map: Record<string, { label: string; cls: string; title: string }> = {
+    LEARNED:   { label: 'эталон',    cls: 'bg-emerald-100 text-emerald-800', title: 'Расценка из памяти эталонов (то же оборудование уже считали)' },
+    AI:        { label: 'ИИ',        cls: 'bg-sky-100 text-sky-800',         title: 'Расценку подобрал ИИ из каталога СН-2012' },
+    AI_FAILED: { label: 'ИИ не смог', cls: 'bg-amber-100 text-amber-800',    title: 'ИИ не подобрал расценку — выберите вручную' },
+    CATALOG:   { label: 'поиск',     cls: 'bg-amber-100 text-amber-800',     title: 'Верхний результат поиска по каталогу (ИИ был выключен)' },
+    MANUAL:    { label: 'вручную',   cls: 'bg-slate-100 text-slate-700',     title: 'Расценка задана вручную' },
+  }
+  const s = source ? map[source] : undefined
+  if (!s) return <span className="text-slate-300">—</span>
+  return <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${s.cls}`} title={s.title}>{s.label}</span>
+}
+
 export default function EstimatePage() {
   const { id } = useParams()
   const estimateId = Number(id)
@@ -80,6 +94,7 @@ export default function EstimatePage() {
               <th className="py-2 px-3 font-medium">Оборудование</th>
               <th className="py-2 px-3 font-medium">Мероприятие</th>
               <th className="py-2 px-3 font-medium">Шифр</th>
+              <th className="py-2 px-3 font-medium">Источник</th>
               <th className="py-2 px-3 font-medium">Период.</th>
               <th className="py-2 px-3 font-medium text-right">Опер/год</th>
               <th className="py-2 px-3 font-medium text-right">Кол-во</th>
@@ -101,7 +116,7 @@ export default function EstimatePage() {
               <Fragment key={row.id}>
                 {showHeader && (
                   <tr className="bg-slate-100/70">
-                    <td colSpan={15} className="px-3 py-2 text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                    <td colSpan={16} className="px-3 py-2 text-xs font-semibold text-slate-600 uppercase tracking-wide">
                       {row.section}
                     </td>
                   </tr>
@@ -119,6 +134,7 @@ export default function EstimatePage() {
                 </td>
                 <td className="py-2 px-3 max-w-[220px] truncate" title={row.operationName}>{row.operationName || '—'}</td>
                 <td className="py-2 px-3 font-mono text-xs">{row.rateCode || '—'}</td>
+                <td className="py-2 px-3"><SourceBadge source={row.matchSource} /></td>
                 <td className="py-2 px-3 text-xs">{row.periodicity || '—'}</td>
                 <td className="py-2 px-3 text-right">{row.opsPerYear ?? '—'}</td>
                 <td className="py-2 px-3 text-right">{row.qty ?? '—'}</td>
@@ -138,7 +154,7 @@ export default function EstimatePage() {
               )
             })}
             {rows.length === 0 && (
-              <tr><td colSpan={15} className="text-center text-slate-400 py-12">
+              <tr><td colSpan={16} className="text-center text-slate-400 py-12">
                 Строк пока нет. Добавьте строку — укажите шифр расценки, цены подтянутся из каталога.
               </td></tr>
             )}
@@ -146,13 +162,13 @@ export default function EstimatePage() {
           {rows.length > 0 && (
             <tfoot>
               <tr className="border-t-2 border-slate-200 font-semibold">
-                <td className="py-3 px-3" colSpan={12}>ИТОГО в год</td>
+                <td className="py-3 px-3" colSpan={13}>ИТОГО в год</td>
                 <td className="py-3 px-3 text-right">{money(totals.totalNoVat)}</td>
                 <td className="py-3 px-3 text-right">{money(totals.totalWithVat)}</td>
                 <td></td>
               </tr>
               <tr className="text-xs text-slate-500">
-                <td className="py-1 px-3" colSpan={12}>в уровне цен РТ (справочно)</td>
+                <td className="py-1 px-3" colSpan={13}>в уровне цен РТ (справочно)</td>
                 <td className="py-1 px-3 text-right">{money(totals.totalNoVatRt)}</td>
                 <td className="py-1 px-3 text-right">{money(totals.totalWithVatRt)}</td>
                 <td></td>
