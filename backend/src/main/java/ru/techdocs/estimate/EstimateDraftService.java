@@ -150,6 +150,26 @@ public class EstimateDraftService {
             return;
         }
 
+        // Эталон по наименованию: если в эталоне системы есть оборудование с тем же
+        // названием и операцией — берём его расценку и периодичность ДЕТЕРМИНИРОВАННО,
+        // не полагаясь на угадывание ИИ (фикс: модуль сопряжения не должен получать
+        // расценку контроллера, если в эталоне он есть отдельно).
+        String nk = EstimateDecisionService.nameKey(eq.getName()) + "|"
+                + EstimateDecisionService.operationKey(operationName);
+        EstimateDecisionService.EtalonRate byName = etalon.byNameOp().get(nk);
+        if (byName != null && byName.rateCode() != null) {
+            NormativeRate rate = catalogRate(byName.rateCode());
+            BigDecimal perYear = byName.perYear() != null ? byName.perYear()
+                    : maintenanceResolver.perYearFromRate(rate == null ? null : rate.getName());
+            String periodicityText = byName.periodicity() != null ? byName.periodicity()
+                    : maintenanceResolver.label(perYear);
+            consistency.put(tkey, new RatePick(byName.rateCode(), "ETALON_TYPE", false, periodicityText, perYear));
+            addRow(estimateId, eq, systemType, operationName, byName.rateCode(), periodicityText, perYear,
+                    "Расценка и периодичность из эталона (то же наименование в этой системе).",
+                    false, "ETALON_TYPE");
+            return;
+        }
+
         // подбор расценки под конкретную операцию (с few-shot примерами из эталона)
         String query = op == null ? describe(eq) : describe(eq) + " " + op.operationName();
         var match = aiMatchService.match(query, etalon.examples());

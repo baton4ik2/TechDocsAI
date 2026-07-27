@@ -12,8 +12,9 @@ const money = (v?: number) =>
 /** Откуда взялась расценка строки — бейдж «Источник». */
 function SourceBadge({ source }: { source?: string }) {
   const map: Record<string, { label: string; cls: string; title: string }> = {
-    LEARNED:    { label: 'эталон',      cls: 'bg-emerald-100 text-emerald-800', title: 'Расценка из памяти эталонов (то же оборудование уже считали)' },
-    AI_ETALON:  { label: 'ИИ ← эталон', cls: 'bg-teal-100 text-teal-800',       title: 'ИИ выбрал расценку, которая есть в эталоне этой системы; периодичность тоже из эталона' },
+    LEARNED:     { label: 'эталон',       cls: 'bg-emerald-100 text-emerald-800', title: 'Расценка из памяти эталонов (та же модель уже считалась)' },
+    ETALON_TYPE: { label: 'эталон (тип)', cls: 'bg-emerald-100 text-emerald-800', title: 'В эталоне есть оборудование с тем же наименованием — расценка и периодичность взяты оттуда детерминированно' },
+    AI_ETALON:   { label: 'ИИ ← эталон',  cls: 'bg-teal-100 text-teal-800',       title: 'ИИ выбрал расценку, которая есть в эталоне этой системы; периодичность тоже из эталона' },
     AI:         { label: 'ИИ',          cls: 'bg-sky-100 text-sky-800',         title: 'Расценку подобрал ИИ из каталога СН-2012' },
     AI_FAILED: { label: 'ИИ не смог', cls: 'bg-amber-100 text-amber-800',    title: 'ИИ не подобрал расценку — выберите вручную' },
     CATALOG:   { label: 'поиск',     cls: 'bg-amber-100 text-amber-800',     title: 'Верхний результат поиска по каталогу (ИИ был выключен)' },
