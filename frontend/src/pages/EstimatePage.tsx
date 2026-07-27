@@ -15,6 +15,7 @@ function SourceBadge({ source }: { source?: string }) {
     LEARNED:     { label: 'эталон',       cls: 'bg-emerald-100 text-emerald-800', title: 'Расценка из памяти эталонов (та же модель уже считалась)' },
     ETALON_TYPE: { label: 'эталон (тип)', cls: 'bg-emerald-100 text-emerald-800', title: 'В эталоне есть оборудование с тем же наименованием — расценка и периодичность взяты оттуда детерминированно' },
     AI_ETALON:   { label: 'ИИ ← эталон',  cls: 'bg-teal-100 text-teal-800',       title: 'ИИ выбрал расценку, которая есть в эталоне этой системы; периодичность тоже из эталона' },
+    CHOICE:      { label: 'выбрать',      cls: 'bg-orange-100 text-orange-800',   title: 'Похожее оборудование есть в эталоне, но не точно — откройте строку и выберите расценку из вариантов' },
     AI:         { label: 'ИИ',          cls: 'bg-sky-100 text-sky-800',         title: 'Расценку подобрал ИИ из каталога СН-2012' },
     AI_FAILED: { label: 'ИИ не смог', cls: 'bg-amber-100 text-amber-800',    title: 'ИИ не подобрал расценку — выберите вручную' },
     CATALOG:   { label: 'поиск',     cls: 'bg-amber-100 text-amber-800',     title: 'Верхний результат поиска по каталогу (ИИ был выключен)' },
@@ -292,6 +293,14 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
   const setRateCode = (v: string) =>
     setF({ ...f, rateCode: v, unitBasis: '', priceZp: '', priceEm: '', priceZpm: '', priceMr: '' })
 
+  // варианты расценки для выбора (когда совпадение с эталоном неточное)
+  type Suggestion = { source: string; rateCode: string; rateName?: string; periodicity?: string; note?: string }
+  let suggestions: Suggestion[] = []
+  try { if (row?.suggestions) suggestions = JSON.parse(row.suggestions) } catch { suggestions = [] }
+  const pickSuggestion = (s: Suggestion) =>
+    setF({ ...f, rateCode: s.rateCode, periodicity: s.periodicity ?? f.periodicity,
+           unitBasis: '', priceZp: '', priceEm: '', priceZpm: '', priceMr: '' })
+
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -314,6 +323,8 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
       priceZpm: f.priceZpm ? Number(f.priceZpm) : null,
       priceMr: f.priceMr ? Number(f.priceMr) : null,
     }
+    // строка с вариантами выбора считается разрешённой после сохранения
+    if (row?.suggestions) { body.suggestions = ''; body.needsReview = false }
     try {
       if (row) await api.patch(`/api/estimates/rows/${row.id}`, body)
       else await api.post(`/api/estimates/${estimateId}/rows`, body)
@@ -349,6 +360,34 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
           {input('manufacturer', 'Производитель')}
         </div>
         {input('operationName', 'Мероприятие', 'Техническое обслуживание…')}
+
+        {suggestions.length > 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
+            <div className="text-xs font-medium text-amber-800">
+              Похожее оборудование есть в эталоне, но точного совпадения нет — выберите расценку:
+            </div>
+            {suggestions.map((s, i) => (
+              <button type="button" key={i} onClick={() => pickSuggestion(s)}
+                      className={`w-full text-left rounded-md border px-3 py-2 text-sm transition-colors ${
+                        f.rateCode === s.rateCode
+                          ? 'border-primary-400 bg-primary-50'
+                          : 'border-slate-200 bg-white hover:border-primary-300'}`}>
+                <div className="flex items-center gap-2">
+                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                    s.source === 'ETALON' ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800'}`}>
+                    {s.source === 'ETALON' ? 'эталон' : 'ИИ'}
+                  </span>
+                  <span className="font-mono text-xs text-slate-700">{s.rateCode}</span>
+                  {s.periodicity && <span className="text-xs text-slate-400">· {s.periodicity}</span>}
+                </div>
+                {s.rateName && <div className="text-xs text-slate-600 mt-0.5">{s.rateName}</div>}
+                {s.note && <div className="text-[11px] text-slate-400 mt-0.5">{s.note}</div>}
+              </button>
+            ))}
+            <div className="text-[11px] text-amber-700">Клик подставит шифр и периодичность. Сохранение снимет пометку «на проверку».</div>
+          </div>
+        )}
+
         <div>
           <label className="label">Шифр расценки</label>
           <input className="input" value={f.rateCode} onChange={(e) => setRateCode(e.target.value)}

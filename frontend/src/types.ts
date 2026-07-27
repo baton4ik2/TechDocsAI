@@ -191,6 +191,7 @@ export interface EstimateRowEntity {
   laborHours?: number
   needsReview?: boolean
   matchSource?: string
+  suggestions?: string   // JSON: варианты расценки для выбора
 }
 
 export interface EstimateRowCalc {

@@ -60,16 +60,19 @@ public class EstimateDecisionService {
     /** Решение эталона: расценка + периодичность (для переиспользования по шифру или наименованию). */
     public record EtalonRate(String rateCode, String periodicity, BigDecimal perYear) {}
 
+    /** Запись эталона системы: наименование/операция оборудования → решение (для нечёткого матча). */
+    public record EtalonEntry(String name, String operationKey, EtalonRate rate) {}
+
     /**
      * Данные эталона по системе:
      *  - examples — few-shot примеры «оборудование → шифр» для ИИ;
      *  - byRateCode — «шифр → решение» (если ИИ выбрал эталонный шифр, берём и периодичность);
-     *  - byNameOp — «каноническое наименование|операция → решение»: если в эталоне есть
-     *    оборудование с тем же названием и операцией, берём его расценку ДЕТЕРМИНИРОВАННО,
-     *    не полагаясь на угадывание ИИ.
+     *  - byNameOp — «каноническое наименование|операция → решение»: точное совпадение имени;
+     *  - entries — все записи эталона системы (для нечёткого совпадения по словам имени).
      */
     public record SystemEtalon(List<ru.techdocs.normative.NormativeAiMatchService.Example> examples,
-                               Map<String, EtalonRate> byRateCode, Map<String, EtalonRate> byNameOp) {}
+                               Map<String, EtalonRate> byRateCode, Map<String, EtalonRate> byNameOp,
+                               List<EtalonEntry> entries) {}
 
     /** Каноническое наименование оборудования для сопоставления по типу. */
     public static String nameKey(String name) {
@@ -78,10 +81,11 @@ public class EstimateDecisionService {
 
     public SystemEtalon systemEtalon(String system, int limit) {
         String canonical = ru.techdocs.common.SystemNormalizer.canonical(system);
-        if (canonical == null) return new SystemEtalon(List.of(), Map.of(), Map.of());
+        if (canonical == null) return new SystemEtalon(List.of(), Map.of(), Map.of(), List.of());
         List<ru.techdocs.normative.NormativeAiMatchService.Example> examples = new ArrayList<>();
         Map<String, EtalonRate> byRateCode = new HashMap<>();
         Map<String, EtalonRate> byNameOp = new HashMap<>();
+        List<EtalonEntry> entries = new ArrayList<>();
         for (UniqueEquipment ue : uniqueEquipmentService.bySystemType(canonical)) {
             String name = ue.getName() == null ? "" : ue.getName();
             String descr = ue.getModel() == null || ue.getModel().isBlank() ? name : name + " " + ue.getModel();
@@ -90,12 +94,13 @@ public class EstimateDecisionService {
                 EtalonRate er = new EtalonRate(d.getRateCode().strip(), d.getPeriodicity(), d.getPerYear());
                 byRateCode.putIfAbsent(er.rateCode(), er);
                 byNameOp.putIfAbsent(nameKey(name) + "|" + d.getOperationKey(), er);
+                entries.add(new EtalonEntry(name, d.getOperationKey(), er));
                 if (examples.size() < limit) {
                     examples.add(new ru.techdocs.normative.NormativeAiMatchService.Example(descr.strip(), d.getRateCode()));
                 }
             }
         }
-        return new SystemEtalon(examples, byRateCode, byNameOp);
+        return new SystemEtalon(examples, byRateCode, byNameOp, entries);
     }
 
     /**

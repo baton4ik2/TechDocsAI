@@ -59,13 +59,14 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
         rate.setLaborCost(new BigDecimal("100.00"));
         rateRepository.saveAndFlush(rate);
 
-        // эталон системы СКУД: оборудование ДРУГОГО наименования (чтобы не сработал детерминированный
-        // матч по имени) с расценкой 21-СКУД-1 и периодичностью «раз в год» — проверяем путь ИИ
+        // эталон системы СКУД: оборудование БЕЗ общих слов с объектом «Считыватель»
+        // (чтобы не сработал ни точный, ни нечёткий матч по имени) с расценкой 21-СКУД-1 —
+        // проверяем путь ИИ: ИИ выберет эталонный шифр → AI_ETALON + периодичность из эталона
         UniqueEquipment ue = new UniqueEquipment();
-        ue.setNormKey("считыватель проксимити|old-model||скуд");
-        ue.setEquipKey("считыватель проксимити|old-model|");
+        ue.setNormKey("контроллер доступа|old-model||скуд");
+        ue.setEquipKey("контроллер доступа|old-model|");
         ue.setSystemType("скуд");
-        ue.setName("Считыватель проксимити");
+        ue.setName("Контроллер доступа");
         ue.setModel("OLD-MODEL");
         ue = uniqueRepository.saveAndFlush(ue);
         EstimateRateDecision d = new EstimateRateDecision();
@@ -181,5 +182,78 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
         assertThat(row.get("matchSource").asText()).isEqualTo("ETALON_TYPE");
         assertThat(row.get("periodicity").asText()).isEqualTo("раз в 6 мес.");
         Mockito.verify(aiClient, Mockito.never()).completeMatch(anyString(), anyString());
+    }
+
+    /** Похожее (не точное) наименование в эталоне → строка «выбрать» с вариантами эталон + ИИ. */
+    @Test
+    void fuzzyEtalonNameOffersChoice() throws Exception {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник 21сч");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        for (String[] r : new String[][]{
+                {"21-ET-1", "Техническое обслуживание считывателя эталонного"},
+                {"21-AI-1", "Техническое обслуживание считывателя аналогичного"}}) {
+            NormativeRate rate = new NormativeRate();
+            rate.setSourcebookId(book.getId());
+            rate.setCode(r[0]);
+            rate.setName(r[1]);
+            rate.setUnit("1 шт.");
+            rate.setLaborCost(new BigDecimal("100.00"));
+            rateRepository.saveAndFlush(rate);
+        }
+
+        // эталон: «Считыватель» → 21-ET-1 (объект — «Считыватель бесконтактный EM», совпадение нечёткое)
+        UniqueEquipment ue = new UniqueEquipment();
+        ue.setNormKey("считыватель|rd-old||скуд");
+        ue.setEquipKey("считыватель|rd-old|");
+        ue.setSystemType("скуд");
+        ue.setName("Считыватель");
+        ue.setModel("RD-OLD");
+        ue = uniqueRepository.saveAndFlush(ue);
+        EstimateRateDecision d = new EstimateRateDecision();
+        d.setUniqueEquipmentId(ue.getId());
+        d.setOperationKey("то");
+        d.setOperationName("Техническое обслуживание");
+        d.setRateCode("21-ET-1");
+        d.setPeriodicity("раз в год");
+        d.setPerYear(BigDecimal.ONE);
+        d.setSource(EstimateRateDecision.SOURCE_REFERENCE);
+        decisionRepository.saveAndFlush(d);
+
+        Facility f = new Facility();
+        f.setName("Объект 3");
+        f = facilityRepository.saveAndFlush(f);
+        EngineeringSystem s = new EngineeringSystem();
+        s.setFacilityId(f.getId());
+        s.setName("СКУД");
+        long sys = systemRepository.saveAndFlush(s).getId();
+        Equipment eq = new Equipment();
+        eq.setFacilityId(f.getId());
+        eq.setEngineeringSystemId(sys);
+        eq.setName("Считыватель бесконтактный EM");   // похоже, но не точно как в эталоне
+        eq.setModel("RD-NEW");
+        eq.setQuantity(new BigDecimal("1"));
+        equipmentRepository.saveAndFlush(eq);
+
+        Mockito.when(aiClient.hasMatchModel()).thenReturn(true);
+        Mockito.when(aiClient.completeMatch(anyString(), anyString()))
+                .thenReturn("[{\"code\":\"21-AI-1\",\"reason\":\"похожий считыватель\"}]");
+
+        String est = mockMvc.perform(post("/api/estimates?facilityId=" + f.getId()).header("Authorization", bearer())
+                        .contentType("application/json").content("{\"name\":\"Смета\"}"))
+                .andReturn().getResponse().getContentAsString();
+        long estId = json.readTree(est).get("id").asLong();
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(1));
+
+        JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        JsonNode row = view.get("rows").get(0).get("row");
+        assertThat(row.get("matchSource").asText()).isEqualTo("CHOICE");
+        assertThat(row.get("needsReview").asBoolean()).isTrue();
+        String suggestions = row.get("suggestions").asText();
+        // варианты содержат и эталонную расценку, и предложение ИИ
+        assertThat(suggestions).contains("21-ET-1").contains("ETALON").contains("21-AI-1");
     }
 }

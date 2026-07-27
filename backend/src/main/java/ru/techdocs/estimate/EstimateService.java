@@ -35,7 +35,7 @@ public class EstimateService {
                            BigDecimal opsPerYear, BigDecimal qty, BigDecimal unitBasis,
                            BigDecimal priceZp, BigDecimal priceEm, BigDecimal priceZpm, BigDecimal priceMr,
                            BigDecimal correction, BigDecimal laborHours,
-                           Boolean needsReview, String matchSource) {}
+                           Boolean needsReview, String matchSource, String suggestions) {}
 
     // ---- представление ----
 
@@ -181,11 +181,13 @@ public class EstimateService {
         if (in.laborHours() != null) row.setLaborHours(in.laborHours());
         if (in.needsReview() != null) row.setNeedsReview(in.needsReview());
         if (in.matchSource() != null) row.setMatchSource(blank(in.matchSource()));
+        if (in.suggestions() != null) row.setSuggestions(blank(in.suggestions()));
 
-        // ручная правка шифра расценки снимает пометку «на проверку»
+        // ручная правка шифра расценки снимает пометку «на проверку» и варианты выбора
         if (rateChanged && !creating) {
             row.setNeedsReview(false);
             row.setMatchSource("MANUAL");
+            row.setSuggestions(null);
         }
 
         // периодичность → операций в год (если явно не задано)

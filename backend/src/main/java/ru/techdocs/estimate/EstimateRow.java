@@ -85,7 +85,11 @@ public class EstimateRow {
     @Column(name = "needs_review", nullable = false)
     private boolean needsReview = false;
 
-    /** Источник расценки: LEARNED / AI / AI_FAILED / CATALOG / MANUAL. */
+    /** Источник расценки: LEARNED / ETALON_TYPE / AI_ETALON / AI / AI_FAILED / CATALOG / CHOICE / MANUAL. */
     @Column(name = "match_source")
     private String matchSource;
+
+    /** Варианты расценки для выбора (JSON), если совпадение с эталоном неточное. */
+    @Column(columnDefinition = "text")
+    private String suggestions;
 }
