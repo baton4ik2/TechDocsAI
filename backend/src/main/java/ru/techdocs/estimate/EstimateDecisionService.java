@@ -236,4 +236,13 @@ public class EstimateDecisionService {
     public void delete(Long id) {
         repository.deleteById(id);
     }
+
+    /** Массовое удаление решений; возвращает число фактически удалённых. */
+    @Transactional
+    public int deleteAll(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return 0;
+        List<EstimateRateDecision> existing = repository.findAllById(ids);
+        repository.deleteAll(existing);
+        return existing.size();
+    }
 }

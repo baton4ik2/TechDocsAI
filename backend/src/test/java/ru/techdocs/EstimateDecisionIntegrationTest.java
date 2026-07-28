@@ -260,6 +260,30 @@ class EstimateDecisionIntegrationTest extends IntegrationTestBase {
                 .isEqualTo(10.0);
     }
 
+    /** Массовое удаление решений (выбор нескольких строк/систем в UI). */
+    @Test
+    void bulkDeleteRemovesSelectedDecisions() throws Exception {
+        mockMvc.perform(multipart("/api/estimates/import-reference")
+                        .file(new MockMultipartFile("file", "etalon.xlsx",
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", duplicatesXlsx()))
+                        .header("Authorization", bearer()))
+                .andExpect(status().isOk());
+
+        JsonNode all = json.readTree(mockMvc.perform(get("/api/estimate-decisions").header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString());
+        org.assertj.core.api.Assertions.assertThat(all).hasSize(2);
+        String ids = all.get(0).get("decision").get("id").asText() + ","
+                + all.get(1).get("decision").get("id").asText();
+
+        mockMvc.perform(post("/api/estimate-decisions/bulk-delete").header("Authorization", bearer())
+                        .contentType("application/json").content("{\"ids\":[" + ids + "]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deleted").value(2));
+
+        mockMvc.perform(get("/api/estimate-decisions").header("Authorization", bearer()))
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
     @Test
     void promoteStoresDecisionsFromEstimate() throws Exception {
         seedRate();

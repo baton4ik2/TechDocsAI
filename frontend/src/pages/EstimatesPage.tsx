@@ -131,15 +131,20 @@ export default function EstimatesPage() {
   )
 }
 
+const NO_SYSTEM = '__none__'
+
 function DecisionsModal({ onClose, onChange }: { onClose: () => void; onChange: () => void }) {
   const [rows, setRows] = useState<DecisionView[]>([])
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
+  const [systems, setSystems] = useState<string[]>([])       // выбранные системы, [] = все
+  const [checked, setChecked] = useState<number[]>([])       // отмеченные решения
+  const [confirmBulk, setConfirmBulk] = useState(false)
 
   const load = () => {
     setLoading(true)
     api.get<DecisionView[]>('/api/estimate-decisions')
-      .then(setRows).catch(() => {}).finally(() => setLoading(false))
+      .then((d) => { setRows(d); setChecked([]) }).catch(() => {}).finally(() => setLoading(false))
   }
   useEffect(load, [])
 
@@ -147,6 +152,20 @@ function DecisionsModal({ onClose, onChange }: { onClose: () => void; onChange: 
     try {
       await api.delete(`/api/estimate-decisions/${id}`)
       setRows((prev) => prev.filter((r) => r.decision.id !== id))
+      setChecked((prev) => prev.filter((x) => x !== id))
+      onChange()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Ошибка удаления', 'error')
+    }
+  }
+
+  const removeChecked = async () => {
+    try {
+      const res = await api.post<{ deleted: number }>('/api/estimate-decisions/bulk-delete', { ids: checked })
+      toast(`Удалено решений: ${res.deleted}`, 'success')
+      setRows((prev) => prev.filter((r) => !checked.includes(r.decision.id)))
+      setChecked([])
+      setConfirmBulk(false)
       onChange()
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Ошибка удаления', 'error')
@@ -154,12 +173,35 @@ function DecisionsModal({ onClose, onChange }: { onClose: () => void; onChange: 
   }
 
   const sourceLabel = (s: string) => (s === 'REFERENCE' ? 'эталон' : s === 'APPROVED' ? '«В эталон»' : s)
+  const systemKey = (r: DecisionView) => r.system ?? NO_SYSTEM
+  // системы для чипов: с количеством решений
+  const systemCounts = rows.reduce<Record<string, number>>((acc, r) => {
+    const k = systemKey(r)
+    acc[k] = (acc[k] ?? 0) + 1
+    return acc
+  }, {})
+  const systemKeys = Object.keys(systemCounts).sort((a, b) =>
+    a === NO_SYSTEM ? 1 : b === NO_SYSTEM ? -1 : a.localeCompare(b, 'ru'))
+
+  const toggleSystem = (k: string) =>
+    setSystems((prev) => prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k])
+
   const filtered = rows.filter((r) => {
+    if (systems.length > 0 && !systems.includes(systemKey(r))) return false
     if (!query.trim()) return true
     const q = query.toLowerCase()
     return [r.equipmentName, r.model, r.manufacturer, r.system, r.decision.operationName, r.decision.rateCode]
       .some((v) => (v ?? '').toLowerCase().includes(q))
   })
+
+  const filteredIds = filtered.map((r) => r.decision.id)
+  const allShownChecked = filteredIds.length > 0 && filteredIds.every((id) => checked.includes(id))
+  const toggleAllShown = () =>
+    setChecked((prev) => allShownChecked
+      ? prev.filter((id) => !filteredIds.includes(id))
+      : [...new Set([...prev, ...filteredIds])])
+  const toggleOne = (id: number) =>
+    setChecked((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
 
   return (
     <Modal title="Эталонные решения" onClose={onClose} wide>
@@ -169,6 +211,44 @@ function DecisionsModal({ onClose, onChange }: { onClose: () => void; onChange: 
       </p>
       <input className="input mb-3" placeholder="Поиск по оборудованию, системе, шифру…"
              value={query} onChange={(e) => setQuery(e.target.value)} />
+
+      {systemKeys.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <button type="button" onClick={() => setSystems([])}
+                  className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+                    systems.length === 0
+                      ? 'bg-primary-600 text-white border-primary-600'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'}`}>
+            Все ({rows.length})
+          </button>
+          {systemKeys.map((k) => (
+            <button type="button" key={k} onClick={() => toggleSystem(k)}
+                    className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+                      systems.includes(k)
+                        ? 'bg-primary-600 text-white border-primary-600'
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'}`}>
+              {k === NO_SYSTEM ? 'без системы' : k} ({systemCounts[k]})
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between gap-3 mb-2 text-xs text-slate-500">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" checked={allShownChecked} onChange={toggleAllShown}
+                 disabled={filtered.length === 0} />
+          Выбрать показанные ({filtered.length})
+        </label>
+        {checked.length > 0 && (
+          <div className="flex items-center gap-3">
+            <span>Выбрано: <b>{checked.length}</b></span>
+            <button className="btn-ghost text-xs text-red-600" onClick={() => setConfirmBulk(true)}>
+              Удалить выбранные
+            </button>
+          </div>
+        )}
+      </div>
+
       {loading ? (
         <div className="text-center text-slate-400 py-10">Загрузка…</div>
       ) : filtered.length === 0 ? (
@@ -180,6 +260,9 @@ function DecisionsModal({ onClose, onChange }: { onClose: () => void; onChange: 
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-white">
               <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
+                <th className="py-2 pr-2 w-8">
+                  <input type="checkbox" checked={allShownChecked} onChange={toggleAllShown} />
+                </th>
                 <th className="py-2 pr-3">Оборудование</th>
                 <th className="py-2 pr-3">Система</th>
                 <th className="py-2 pr-3">Операция</th>
@@ -191,7 +274,12 @@ function DecisionsModal({ onClose, onChange }: { onClose: () => void; onChange: 
             </thead>
             <tbody>
               {filtered.map((r) => (
-                <tr key={r.decision.id} className="border-b border-slate-100 align-top">
+                <tr key={r.decision.id} className={`border-b border-slate-100 align-top ${
+                      checked.includes(r.decision.id) ? 'bg-primary-50/60' : ''}`}>
+                  <td className="py-2 pr-2">
+                    <input type="checkbox" checked={checked.includes(r.decision.id)}
+                           onChange={() => toggleOne(r.decision.id)} />
+                  </td>
                   <td className="py-2 pr-3">
                     <div className="font-medium text-slate-800">{r.equipmentName ?? '—'}</div>
                     <div className="text-xs text-slate-400">
@@ -219,6 +307,12 @@ function DecisionsModal({ onClose, onChange }: { onClose: () => void; onChange: 
             </tbody>
           </table>
         </div>
+      )}
+      {confirmBulk && (
+        <ConfirmDialog title="Удалить выбранные решения?"
+                       message={`Будет удалено решений: ${checked.length}. Оборудование и сметы не затрагиваются — только память эталонных решений.`}
+                       confirmLabel="Удалить" danger
+                       onConfirm={removeChecked} onClose={() => setConfirmBulk(false)} />
       )}
     </Modal>
   )

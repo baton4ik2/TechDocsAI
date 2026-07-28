@@ -41,4 +41,13 @@ public class EstimateDecisionController {
         decisionService.delete(id);
         return ResponseEntity.noContent().build();
     }
+
+    public record BulkDeleteRequest(List<Long> ids) {}
+
+    /** Массовое удаление решений (выбор по системам/строкам в UI). */
+    @PostMapping("/bulk-delete")
+    public Map<String, Integer> bulkDelete(@RequestBody BulkDeleteRequest request) {
+        int deleted = decisionService.deleteAll(request == null ? null : request.ids());
+        return Map.of("deleted", deleted);
+    }
 }
