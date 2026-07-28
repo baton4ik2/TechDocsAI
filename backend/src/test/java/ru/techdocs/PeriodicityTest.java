@@ -21,6 +21,17 @@ class PeriodicityTest {
         assertThat(Periodicity.perYear("4 раза в год")).isEqualByComparingTo("4");
     }
 
+    /** Формулировки из реальных регламентов: числительные словами и опечатка «разв». */
+    @Test
+    void recognisesRussianNumeralsAndTypos() {
+        assertThat(Periodicity.perYear("Один раз в шесть месяцев")).isEqualByComparingTo("2");
+        assertThat(Periodicity.perYear("Один разв шесть месяцев")).isEqualByComparingTo("2");
+        assertThat(Periodicity.perYear("Один раз в год")).isEqualByComparingTo("1");
+        assertThat(Periodicity.perYear("Два раза в год")).isEqualByComparingTo("2");
+        assertThat(Periodicity.perYear("Один раз в три месяца")).isEqualByComparingTo("4");
+        assertThat(Periodicity.perYear("Дважды в год")).isEqualByComparingTo("2");
+    }
+
     @Test
     void returnsNullForUnknownOrBlank() {
         assertThat(Periodicity.perYear(null)).isNull();

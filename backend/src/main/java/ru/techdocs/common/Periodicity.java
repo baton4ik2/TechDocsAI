@@ -20,6 +20,11 @@ public final class Periodicity {
                 .strip();
         if (s.isEmpty()) return null;
 
+        // «Один разв шесть месяцев» — частая опечатка в регламентах (пропущен пробел)
+        s = s.replaceAll("(?<!\\p{L})разв(?=\\s)", "раз в");
+        // числительные словами → цифры: «Один раз в шесть месяцев» → «1 раз в 6 месяцев»
+        s = numeralsToDigits(s);
+
         // явное «N раз(а) в год»
         var m = java.util.regex.Pattern.compile("(\\d+)\\s*раз\\p{L}*\\s+в\\s+год").matcher(s);
         if (m.find()) return bd(Integer.parseInt(m.group(1)));
@@ -45,6 +50,21 @@ public final class Periodicity {
                 "раз в полгода", "полугодов", "раз в 6 мес")) return bd(2);
         if (contains(s, "ежегодн", "раз в год", "один раз в год", "1 раз в год", "годов")) return bd(1);
         return null;
+    }
+
+    /** Числительные словами → цифры (только целые слова, чтобы не портить другие). */
+    private static String numeralsToDigits(String s) {
+        String[][] numerals = {
+                {"двенадцать", "12"}, {"одиннадцать", "11"}, {"десять", "10"}, {"девять", "9"},
+                {"восемь", "8"}, {"семь", "7"}, {"шесть", "6"}, {"пять", "5"},
+                {"четыре", "4"}, {"три", "3"}, {"два", "2"}, {"две", "2"},
+                {"дважды", "2 раза"}, {"один", "1"}, {"одну", "1"}, {"однократно", "1 раз в год"},
+        };
+        String out = s;
+        for (String[] n : numerals) {
+            out = out.replaceAll("(?<!\\p{L})" + n[0] + "(?!\\p{L})", n[1]);
+        }
+        return out;
     }
 
     private static boolean contains(String s, String... needles) {

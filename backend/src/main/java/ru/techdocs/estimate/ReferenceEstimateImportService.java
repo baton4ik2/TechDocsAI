@@ -83,6 +83,11 @@ public class ReferenceEstimateImportService {
                 break;
             }
         }
+        // Система листа: не во всех эталонах есть строки-разделы («РАЗДЕЛ А. …»).
+        // Тогда берём её из названия листа («АПС СН-2012 расчёт»), иначе из заголовка
+        // над таблицей — чтобы решения не сохранялись «без системы».
+        String sheetSystem = ru.techdocs.common.SystemNormalizer.recognized(sheet.getSheetName());
+        if (sheetSystem == null) sheetSystem = titleSystem(sheet, headerRow);
         java.util.List<EstimateDecisionService.DecisionData> data = new java.util.ArrayList<>();
         String currentSystem = null;   // текущая инженерная система блока (из строки-раздела)
         for (Row row : sheet) {
@@ -101,9 +106,17 @@ public class ReferenceEstimateImportService {
             String periodicity = cell(row, cols.get("periodicity"));
             BigDecimal perYear = numeric(cell(row, cols.get("opsPerYear")));  // фактическая колонка
             if (perYear == null) perYear = Periodicity.perYear(periodicity);   // иначе — из текста
+
+            // система строки: раздел → распознанная по мероприятию (в смешанном листе
+            // «АПС и СОУЭ» строки оповещателей уходят в СОУЭ) → система листа
+            String operation = cell(row, cols.get("operation"));
+            String system = currentSystem;
+            if (system == null) system = ru.techdocs.common.SystemNormalizer.recognized(operation);
+            if (system == null) system = sheetSystem;
+
             data.add(new EstimateDecisionService.DecisionData(
-                    name, cell(row, cols.get("type")), cell(row, cols.get("manufacturer")), currentSystem,
-                    cell(row, cols.get("operation")), code, null,
+                    name, cell(row, cols.get("type")), cell(row, cols.get("manufacturer")), system,
+                    operation, code, null,
                     blank(periodicity), perYear, null));
         }
         int imported = decisionService.saveAll(data, EstimateRateDecision.SOURCE_REFERENCE).size();
@@ -114,6 +127,20 @@ public class ReferenceEstimateImportService {
         if (col == null || row == null) return "";
         Cell c = row.getCell(col);
         return c == null ? "" : formatter.formatCellValue(c).strip();
+    }
+
+    /** Система из заголовка над таблицей («АПС и СОУЭ» в строке над шапкой). */
+    private String titleSystem(Sheet sheet, int headerRow) {
+        for (int r = sheet.getFirstRowNum(); r < headerRow && r >= 0; r++) {
+            Row row = sheet.getRow(r);
+            if (row == null) continue;
+            for (Cell c : row) {
+                String recognized = ru.techdocs.common.SystemNormalizer.recognized(
+                        formatter.formatCellValue(c).strip());
+                if (recognized != null) return recognized;
+            }
+        }
+        return null;
     }
 
     /** Число из ячейки (пробелы/запятая), иначе null. */

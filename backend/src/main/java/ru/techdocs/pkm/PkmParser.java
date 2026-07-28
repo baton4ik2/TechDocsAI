@@ -119,10 +119,19 @@ public class PkmParser {
     private List<PkmOperation> parseDocx(InputStream docx) throws Exception {
         List<PkmOperation> operations = new ArrayList<>();
         try (XWPFDocument doc = new XWPFDocument(docx)) {
+            // В части регламентов шапка вынесена в ОТДЕЛЬНУЮ таблицу («№ | Категория |
+            // Вид и состав работ | Периодичность»), а строки работ идут следующей таблицей
+            // (её первая строка — только номера колонок). Поэтому найденную разметку
+            // колонок продолжаем применять к последующим таблицам без своей шапки.
+            int lastPeriodicityCol = -1;
             for (XWPFTable table : doc.getTables()) {
                 int periodicityCol = findPeriodicityColumn(table);
-                if (periodicityCol < 0) continue; // не та таблица
-                parseTable(table, periodicityCol, operations);
+                if (periodicityCol >= 0) {
+                    lastPeriodicityCol = periodicityCol;
+                } else if (lastPeriodicityCol < 0) {
+                    continue;                       // шапки ещё не было — не та таблица
+                }
+                parseTable(table, periodicityCol >= 0 ? periodicityCol : lastPeriodicityCol, operations);
             }
         }
         int pos = 1;
