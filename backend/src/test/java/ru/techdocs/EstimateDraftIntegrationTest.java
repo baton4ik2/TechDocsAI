@@ -112,20 +112,20 @@ class EstimateDraftIntegrationTest extends IntegrationTestBase {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.created").value(1));
 
-        // строка: расценка подобрана по каталогу, цены заполнены,
-        // периодичность — из ПКМ (Ежемесячно → 12), количество из реестра
+        // строка: расценка подобрана по каталогу, цены заполнены; периодичность для
+        // извещателя без паспорта — дефолт по типу (раз в 6 мес. → 2), а не генерик ПКМ
         JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + est)
                         .header("Authorization", bearer()))
                 .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
         JsonNode row = view.get("rows").get(0).get("row");
         org.assertj.core.api.Assertions.assertThat(row.get("rateCode").asText()).isEqualTo("22-2203-128-1/1");
         org.assertj.core.api.Assertions.assertThat(row.get("priceZp").asDouble()).isEqualTo(139.33);
-        org.assertj.core.api.Assertions.assertThat(row.get("opsPerYear").asDouble()).isEqualTo(12.0);
-        org.assertj.core.api.Assertions.assertThat(row.get("periodicity").asText()).isEqualTo("Ежемесячно");
+        org.assertj.core.api.Assertions.assertThat(row.get("opsPerYear").asDouble()).isEqualTo(2.0);
+        org.assertj.core.api.Assertions.assertThat(row.get("periodicity").asText()).isEqualTo("раз в 6 мес.");
         org.assertj.core.api.Assertions.assertThat(row.get("qty").asDouble()).isEqualTo(5.0);
-        // расчёт: ЗП = 139.33 * (5*12) = 8359.8
+        // расчёт: ЗП = 139.33 * (5*2) = 1393.3
         org.assertj.core.api.Assertions.assertThat(view.get("rows").get(0).get("calc").get("zp").asDouble())
-                .isEqualTo(8359.8);
+                .isEqualTo(1393.3);
     }
 
     @Test

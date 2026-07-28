@@ -88,6 +88,8 @@ public class EstimateDraftService {
         int created = 0, skipped = 0;
         for (Equipment eq : equipment) {
             if (existing.contains(eq.getId())) { skipped++; continue; }
+            // аккумуляторы в смету не вносим
+            if (isExcluded(eq.getName())) { skipped++; continue; }
 
             String systemType = systemName(eq.getEngineeringSystemId());
 
@@ -107,9 +109,21 @@ public class EstimateDraftService {
                 continue;
             }
 
-            // 2) паспорт/ПКМ + ИИ-подбор расценки (с few-shot из эталона и консистентностью по типу)
             EstimateDecisionService.SystemEtalon etalon = etalonCache.computeIfAbsent(
                     systemType, s -> decisionService.systemEtalon(s, EXAMPLE_LIMIT));
+
+            // 2) эталон по наименованию: если оборудование есть в эталоне по имени — берём ВСЕ
+            //    его операции (напр. осмотр + ТО), детерминированно, каждую отдельной строкой.
+            List<EstimateDecisionService.EtalonOp> etalonOps = etalon.byName().get(EstimateDecisionService.nameKey(eq.getName()));
+            if (etalonOps != null && !etalonOps.isEmpty()) {
+                for (EstimateDecisionService.EtalonOp eop : etalonOps) {
+                    addRowFromEtalonOp(estimateId, eq, systemType, eop);
+                    created++;
+                }
+                continue;
+            }
+
+            // 3) паспорт/ПКМ + ИИ-подбор расценки (с few-shot из эталона и консистентностью по типу)
             List<EquipmentMaintenanceResolver.Planned> operations =
                     maintenanceResolver.resolveOperations(eq, systemType);
             if (operations.isEmpty()) {
@@ -151,25 +165,7 @@ public class EstimateDraftService {
             return;
         }
 
-        // Эталон по наименованию: если в эталоне системы есть оборудование с тем же
-        // названием и операцией — берём его расценку и периодичность ДЕТЕРМИНИРОВАННО,
-        // не полагаясь на угадывание ИИ (фикс: модуль сопряжения не должен получать
-        // расценку контроллера, если в эталоне он есть отдельно).
-        String nk = EstimateDecisionService.nameKey(eq.getName()) + "|"
-                + EstimateDecisionService.operationKey(operationName);
-        EstimateDecisionService.EtalonRate byName = etalon.byNameOp().get(nk);
-        if (byName != null && byName.rateCode() != null) {
-            NormativeRate rate = catalogRate(byName.rateCode());
-            BigDecimal perYear = byName.perYear() != null ? byName.perYear()
-                    : maintenanceResolver.perYearFromRate(rate == null ? null : rate.getName());
-            String periodicityText = byName.periodicity() != null ? byName.periodicity()
-                    : maintenanceResolver.label(perYear);
-            consistency.put(tkey, new RatePick(byName.rateCode(), "ETALON_TYPE", false, periodicityText, perYear, null));
-            addRow(estimateId, eq, systemType, operationName, byName.rateCode(), periodicityText, perYear,
-                    "Расценка и периодичность из эталона (то же наименование в этой системе).",
-                    false, "ETALON_TYPE", null);
-            return;
-        }
+        // (точное совпадение по наименованию обработано на уровне generate — п.2)
 
         // подбор расценки под конкретную операцию (с few-shot примерами из эталона)
         String query = op == null ? describe(eq) : describe(eq) + " " + op.operationName();
@@ -194,10 +190,9 @@ public class EstimateDraftService {
                 defCode = fuzzy.get(0).rate().rateCode();
                 defSource = "CHOICE";
             }
-            BigDecimal defPerYear = op != null && op.perYear() != null ? op.perYear()
-                    : maintenanceResolver.perYearFromRate(defRate == null ? null : defRate.getName());
-            String defPeriodicity = op != null && op.periodicityText() != null ? op.periodicityText()
-                    : maintenanceResolver.label(defPerYear);
+            Per defPer = periodicity(op, eq.getName(), defRate);
+            BigDecimal defPerYear = defPer.perYear();
+            String defPeriodicity = defPer.text();
             consistency.put(tkey, new RatePick(defCode, defSource, true, defPeriodicity, defPerYear, suggestionsJson));
             addRow(estimateId, eq, systemType, operationName, defCode, defPeriodicity, defPerYear,
                     "Похожее оборудование есть в эталоне — выберите расценку из вариантов. Периодичность: " + note,
@@ -238,10 +233,9 @@ public class EstimateDraftService {
             periodicityText = etalonRate.periodicity() != null ? etalonRate.periodicity()
                     : maintenanceResolver.label(perYear);
         } else {
-            perYear = op != null && op.perYear() != null ? op.perYear()
-                    : maintenanceResolver.perYearFromRate(rate == null ? null : rate.getName());
-            periodicityText = op != null && op.periodicityText() != null ? op.periodicityText()
-                    : maintenanceResolver.label(perYear);
+            Per per = periodicity(op, eq.getName(), rate);
+            perYear = per.perYear();
+            periodicityText = per.text();
         }
 
         consistency.put(tkey, new RatePick(rateCode, source, needsReview, periodicityText, perYear, null));
@@ -347,6 +341,59 @@ public class EstimateDraftService {
 
     private NormativeRate catalogRate(String code) {
         return rateRepository.findFirstByCodeOrderById(code).orElse(null);
+    }
+
+    /** Оборудование, которое не вносим в смету (аккумуляторы). */
+    private boolean isExcluded(String name) {
+        String n = EstimateDecisionService.nameKey(name);
+        if (n.contains("аккумулятор")) return true;
+        for (String token : n.split("[^\\p{L}\\p{N}]+")) {
+            if (token.equals("акб")) return true;
+        }
+        return false;
+    }
+
+    /** Строка из операции эталона (по совпадению наименования) — расценка/периодичность из эталона. */
+    private void addRowFromEtalonOp(Long estimateId, Equipment eq, String systemType,
+                                    EstimateDecisionService.EtalonOp eop) {
+        NormativeRate rate = catalogRate(eop.rate().rateCode());
+        BigDecimal perYear = eop.rate().perYear() != null ? eop.rate().perYear()
+                : maintenanceResolver.perYearFromRate(rate == null ? null : rate.getName());
+        String periodicityText = eop.rate().periodicity() != null ? eop.rate().periodicity()
+                : maintenanceResolver.label(perYear);
+        String operationName = eop.operationName() != null ? eop.operationName() : operationName(eq);
+        addRow(estimateId, eq, systemType, operationName, eop.rate().rateCode(), periodicityText, perYear,
+                "Расценка и периодичность из эталона (то же наименование в этой системе).",
+                false, "ETALON_TYPE", null);
+    }
+
+    /** Периодичность строки в единый год выполнений/текст. */
+    private record Per(BigDecimal perYear, String text) {}
+
+    /**
+     * Периодичность операции: паспорт (если есть) → дефолт по типу оборудования
+     * (напр. извещатель без паспорта → раз в 6 мес.) → ПКМ/наименование расценки.
+     */
+    private Per periodicity(EquipmentMaintenanceResolver.Planned op, String name, NormativeRate rate) {
+        boolean passport = op != null && EquipmentMaintenanceResolver.SOURCE_PASSPORT.equals(op.source());
+        if (passport && op.perYear() != null) {
+            return new Per(op.perYear(), op.periodicityText() != null ? op.periodicityText()
+                    : maintenanceResolver.label(op.perYear()));
+        }
+        Per td = typeDefault(name);
+        if (td != null) return td;
+        BigDecimal py = op != null && op.perYear() != null ? op.perYear()
+                : maintenanceResolver.perYearFromRate(rate == null ? null : rate.getName());
+        String txt = op != null && op.periodicityText() != null ? op.periodicityText()
+                : maintenanceResolver.label(py);
+        return new Per(py, txt);
+    }
+
+    /** Периодичность по умолчанию для типа оборудования (без паспорта). */
+    private Per typeDefault(String name) {
+        String n = EstimateDecisionService.nameKey(name);
+        if (n.contains("извещател")) return new Per(new BigDecimal("2"), "раз в 6 мес.");
+        return null;
     }
 
     /** Строка из эталонного решения — расценка и периодичность известны, ИИ не нужен. */

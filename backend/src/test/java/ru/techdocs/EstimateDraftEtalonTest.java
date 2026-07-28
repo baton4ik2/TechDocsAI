@@ -256,4 +256,141 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
         // варианты содержат и эталонную расценку, и предложение ИИ
         assertThat(suggestions).contains("21-ET-1").contains("ETALON").contains("21-AI-1");
     }
+
+    private long facilitySystem(String facilityName) {
+        Facility f = new Facility();
+        f.setName(facilityName);
+        f = facilityRepository.saveAndFlush(f);
+        EngineeringSystem s = new EngineeringSystem();
+        s.setFacilityId(f.getId());
+        s.setName("СКУД");
+        return systemRepository.saveAndFlush(s).getId();
+    }
+
+    private long estimateFor(long facilityId) throws Exception {
+        String est = mockMvc.perform(post("/api/estimates?facilityId=" + facilityId).header("Authorization", bearer())
+                        .contentType("application/json").content("{\"name\":\"Смета\"}"))
+                .andReturn().getResponse().getContentAsString();
+        return json.readTree(est).get("id").asLong();
+    }
+
+    private void equip(long sys, String name, String model) {
+        Long facilityId = systemRepository.findById(sys).orElseThrow().getFacilityId();
+        Equipment e = new Equipment();
+        e.setFacilityId(facilityId);
+        e.setEngineeringSystemId(sys);
+        e.setName(name);
+        e.setModel(model);
+        e.setQuantity(new BigDecimal("1"));
+        equipmentRepository.saveAndFlush(e);
+    }
+
+    /** Аккумуляторы в смету не вносятся. */
+    @Test
+    void batteriesAreExcluded() throws Exception {
+        long sys = facilitySystem("Объект-акб");
+        equip(sys, "Аккумулятор", "12В 7Ач");
+        equip(sys, "АКБ", "12В 17Ач");
+        long estId = estimateFor(estFacility(sys));
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(0))
+                .andExpect(jsonPath("$.skipped").value(2));
+    }
+
+    private long estFacility(long sys) {
+        return systemRepository.findById(sys).orElseThrow().getFacilityId();
+    }
+
+    /** Извещатель без паспорта → периодичность по умолчанию раз в 6 мес. */
+    @Test
+    void detectorDefaultsToSemiannual() throws Exception {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник изв");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        NormativeRate rate = new NormativeRate();
+        rate.setSourcebookId(book.getId());
+        rate.setCode("22-ИЗВ-1");
+        rate.setName("Техническое обслуживание извещателя охранного");
+        rate.setUnit("1 шт.");
+        rate.setLaborCost(new BigDecimal("50.00"));
+        rateRepository.saveAndFlush(rate);
+
+        long sys = facilitySystem("Объект-изв");
+        equip(sys, "Извещатель охранный ИО102", "СМК-1");
+        // ИИ выключен → расценка из поиска, но периодичность — дефолт по типу
+        Mockito.when(aiClient.hasMatchModel()).thenReturn(false);
+        long estId = estimateFor(estFacility(sys));
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(1));
+
+        JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        JsonNode row = view.get("rows").get(0).get("row");
+        assertThat(row.get("periodicity").asText()).isEqualTo("раз в 6 мес.");
+        assertThat(row.get("opsPerYear").asDouble()).isEqualTo(2.0);
+    }
+
+    /** Оборудование с двумя операциями в эталоне → две строки (осмотр + ТО). */
+    @Test
+    void twoEtalonOperationsGiveTwoRows() throws Exception {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник ивэпр");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        for (String[] r : new String[][]{
+                {"22-2201-78-1/1", "Технический осмотр источника питания"},
+                {"22-2203-91-1/1", "Техническое обслуживание источника питания"}}) {
+            NormativeRate rate = new NormativeRate();
+            rate.setSourcebookId(book.getId());
+            rate.setCode(r[0]);
+            rate.setName(r[1]);
+            rate.setUnit("1 шт.");
+            rate.setLaborCost(new BigDecimal("100.00"));
+            rateRepository.saveAndFlush(rate);
+        }
+
+        // эталон: «Источник вторичного электропитания» с ДВУМЯ операциями
+        UniqueEquipment ue = new UniqueEquipment();
+        ue.setNormKey("источник вторичного электропитания|old||скуд");
+        ue.setEquipKey("источник вторичного электропитания|old|");
+        ue.setSystemType("скуд");
+        ue.setName("Источник вторичного электропитания");
+        ue.setModel("OLD");
+        ue = uniqueRepository.saveAndFlush(ue);
+        addDecision(ue.getId(), "осмотр", "Технический осмотр", "22-2201-78-1/1", "раз в 1 мес.", "12");
+        addDecision(ue.getId(), "то", "Техническое обслуживание", "22-2203-91-1/1", "раз в 6 мес.", "2");
+
+        long sys = facilitySystem("Объект-ивэпр");
+        equip(sys, "Источник вторичного электропитания", "ИВЭПР-NEW");
+        Mockito.when(aiClient.hasMatchModel()).thenReturn(true);
+        long estId = estimateFor(estFacility(sys));
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(2));   // осмотр + ТО
+
+        JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        java.util.Set<String> codes = new java.util.HashSet<>();
+        java.util.Set<String> periods = new java.util.HashSet<>();
+        view.get("rows").forEach(r -> {
+            codes.add(r.get("row").get("rateCode").asText());
+            periods.add(r.get("row").get("periodicity").asText());
+            assertThat(r.get("row").get("matchSource").asText()).isEqualTo("ETALON_TYPE");
+        });
+        assertThat(codes).containsExactlyInAnyOrder("22-2201-78-1/1", "22-2203-91-1/1");
+        assertThat(periods).containsExactlyInAnyOrder("раз в 1 мес.", "раз в 6 мес.");
+        Mockito.verify(aiClient, Mockito.never()).completeMatch(anyString(), anyString());
+    }
+
+    private void addDecision(long ueId, String opKey, String opName, String code, String periodicity, String perYear) {
+        EstimateRateDecision d = new EstimateRateDecision();
+        d.setUniqueEquipmentId(ueId);
+        d.setOperationKey(opKey);
+        d.setOperationName(opName);
+        d.setRateCode(code);
+        d.setPeriodicity(periodicity);
+        d.setPerYear(new BigDecimal(perYear));
+        d.setSource(EstimateRateDecision.SOURCE_REFERENCE);
+        decisionRepository.saveAndFlush(d);
+    }
 }
