@@ -203,6 +203,11 @@ public class UniqueEquipmentService {
         return canonicalSystem == null ? List.of() : repository.findBySystemType(canonicalSystem);
     }
 
+    /** Всё оборудование реестра (запасной слой эталона — по всем системам). */
+    public List<UniqueEquipment> all() {
+        return repository.findAll();
+    }
+
     public List<PlannedWork> plannedWorks(Long id) {
         get(id);
         return plannedWorkRepository.findByUniqueEquipmentIdOrderByPosition(id);

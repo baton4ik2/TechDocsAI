@@ -89,6 +89,8 @@ public class EstimateDraftService {
         Map<String, RatePick> consistency = new HashMap<>();
         // ИИ-сопоставление типа с эталоном: один запрос на (система|наименование)
         Map<String, EstimateDecisionService.EtalonType> typeMatchCache = new HashMap<>();
+        // эталон по всем системам — строится лениво, один раз на сборку
+        EstimateDecisionService.SystemEtalon[] globalEtalonHolder = new EstimateDecisionService.SystemEtalon[1];
         int created = 0, skipped = 0;
         for (Equipment eq : equipment) {
             if (existing.contains(eq.getId())) { skipped++; continue; }
@@ -131,6 +133,19 @@ public class EstimateDraftService {
             if (etalonOps.isEmpty()) {
                 List<EstimateDecisionService.EtalonOp> byModel = etalonOpsByModel(etalon, eq.getModel());
                 if (!byModel.isEmpty()) etalonOps = byModel;
+            }
+
+            // 2в) эталон ДРУГИХ систем: одно и то же оборудование (источник питания,
+            //     коммутатор) есть и в АПС, и в СОУЭ, но в эталон попало под одной
+            //     системой. Не заставляем инженера выбирать — берём готовое решение.
+            if (etalonOps.isEmpty()) {
+                EstimateDecisionService.SystemEtalon all = globalEtalon(globalEtalonHolder);
+                List<EstimateDecisionService.EtalonOp> cross = etalonOpsForType(all, eq.getName());
+                if (cross.isEmpty()) cross = etalonOpsByModel(all, eq.getModel());
+                if (!cross.isEmpty()) {
+                    etalonOps = cross;
+                    etalonSource = "ETALON_XSYS";
+                }
             }
 
             if (etalonOps.isEmpty() && !etalon.types().isEmpty()) {
@@ -273,6 +288,12 @@ public class EstimateDraftService {
         consistency.put(tkey, new RatePick(rateCode, source, needsReview, periodicityText, perYear, null));
         addRow(estimateId, eq, systemType, operationName, rateCode, periodicityText, perYear,
                 justification(match, note, source), needsReview, source, null);
+    }
+
+    /** Ленивое построение эталона по всем системам (один раз на сборку). */
+    private EstimateDecisionService.SystemEtalon globalEtalon(EstimateDecisionService.SystemEtalon[] holder) {
+        if (holder[0] == null) holder[0] = decisionService.globalEtalon(EXAMPLE_LIMIT);
+        return holder[0];
     }
 
     /** Записи эталона системы с похожим (не точным) наименованием — для выбора инженером. */
@@ -481,9 +502,12 @@ public class EstimateDraftService {
         String periodicityText = eop.rate().periodicity() != null ? eop.rate().periodicity()
                 : maintenanceResolver.label(perYear);
         String operationName = eop.operationName() != null ? eop.operationName() : operationName(eq);
-        String note = "AI_TYPE".equals(source)
-                ? "Расценка и периодичность из эталона (тип определён ИИ как то же оборудование)."
-                : "Расценка и периодичность из эталона (то же наименование в этой системе).";
+        String note = switch (source) {
+            case "AI_TYPE" -> "Расценка и периодичность из эталона (тип определён ИИ как то же оборудование).";
+            case "ETALON_XSYS" -> "Расценка и периодичность из эталона другой системы "
+                    + "(то же оборудование уже считали там).";
+            default -> "Расценка и периодичность из эталона (то же наименование в этой системе).";
+        };
         addRow(estimateId, eq, systemType, operationName, eop.rate().rateCode(), periodicityText, perYear,
                 note, false, source, null);
     }

@@ -572,6 +572,85 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
         assertThat(codes).containsExactlyInAnyOrder("22-2201-78-1/1", "22-2203-91-1/1");
     }
 
+    /**
+     * Одно и то же оборудование в двух системах: источник питания есть в эталоне АПС,
+     * а на объекте такой же стоит в СОУЭ. Строка СОУЭ должна взять готовое решение из
+     * эталона АПС, а не уходить в «выбрать» с расценками оповещателей.
+     */
+    @Test
+    void equipmentFallsBackToEtalonOfAnotherSystem() throws Exception {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник кросс");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        for (String[] r : new String[][]{
+                {"22-2201-78-1/1", "Проверка автономного питания источника"},
+                {"22-2203-91-1/1", "Технический осмотр блока питания"},
+                {"22-2201-80-2/1", "Техническое обслуживание оповещателя светового"}}) {
+            NormativeRate rate = new NormativeRate();
+            rate.setSourcebookId(book.getId());
+            rate.setCode(r[0]);
+            rate.setName(r[1]);
+            rate.setUnit("1 шт.");
+            rate.setLaborCost(new BigDecimal("100.00"));
+            rateRepository.saveAndFlush(rate);
+        }
+
+        // эталон АПС: источник вторичного электропитания с двумя работами
+        UniqueEquipment aps = new UniqueEquipment();
+        aps.setNormKey("источник вторичного электропитания резервированный|ивэпр r3||апс");
+        aps.setEquipKey("источник вторичного электропитания резервированный|ивэпр r3|");
+        aps.setSystemType("апс");
+        aps.setName("Источник вторичного электропитания резервированный");
+        aps.setModel("ИВЭПР R3");
+        aps = uniqueRepository.saveAndFlush(aps);
+        addDecision(aps.getId(), "проверка", "Проверка автономного питания", "22-2201-78-1/1", "раз в 1 мес.", "10");
+        addDecision(aps.getId(), "осмотр", "Технический осмотр блока питания", "22-2203-91-1/1", "раз в 6 мес.", "2");
+
+        // эталон СОУЭ: только оповещатели (источника там нет)
+        UniqueEquipment soue = new UniqueEquipment();
+        soue.setNormKey("оповещатель световой адресный|опоп 1-r3||соуэ");
+        soue.setEquipKey("оповещатель световой адресный|опоп 1-r3|");
+        soue.setSystemType("соуэ");
+        soue.setName("Оповещатель световой адресный");
+        soue.setModel("ОПОП 1-R3");
+        soue = uniqueRepository.saveAndFlush(soue);
+        addDecision(soue.getId(), "то", "Техническое обслуживание оповещателя", "22-2201-80-2/1", "раз в 1 год", "1");
+
+        // объект: такой же источник, но в системе СОУЭ
+        Facility f = new Facility();
+        f.setName("Объект кросс-система");
+        f = facilityRepository.saveAndFlush(f);
+        EngineeringSystem s = new EngineeringSystem();
+        s.setFacilityId(f.getId());
+        s.setName("СОУЭ");
+        long sys = systemRepository.saveAndFlush(s).getId();
+        Equipment eq = new Equipment();
+        eq.setFacilityId(f.getId());
+        eq.setEngineeringSystemId(sys);
+        eq.setName("Источник вторичного электропитания резервированный адресный");
+        eq.setModel("ИВЭПР R3");
+        eq.setQuantity(new BigDecimal("2"));
+        equipmentRepository.saveAndFlush(eq);
+
+        Mockito.when(aiClient.hasMatchModel()).thenReturn(true);
+
+        long estId = estimateFor(f.getId());
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(2));   // обе работы из эталона АПС
+
+        JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        java.util.List<String> codes = new java.util.ArrayList<>();
+        view.get("rows").forEach(r -> {
+            assertThat(r.get("row").get("matchSource").asText()).isEqualTo("ETALON_XSYS");
+            assertThat(r.get("row").get("needsReview").asBoolean()).isFalse();
+            codes.add(r.get("row").get("rateCode").asText());
+        });
+        assertThat(codes).containsExactlyInAnyOrder("22-2201-78-1/1", "22-2203-91-1/1");
+        Mockito.verify(aiClient, Mockito.never()).completeMatch(anyString(), anyString());
+    }
+
     private void addDecision(long ueId, String opKey, String opName, String code, String periodicity, String perYear) {
         EstimateRateDecision d = new EstimateRateDecision();
         d.setUniqueEquipmentId(ueId);

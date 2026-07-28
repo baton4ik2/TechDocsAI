@@ -92,6 +92,19 @@ public class EstimateDecisionService {
     public SystemEtalon systemEtalon(String system, int limit) {
         String canonical = ru.techdocs.common.SystemNormalizer.canonical(system);
         if (canonical == null) return new SystemEtalon(List.of(), Map.of(), Map.of(), List.of(), List.of());
+        return buildEtalon(uniqueEquipmentService.bySystemType(canonical), limit);
+    }
+
+    /**
+     * Эталон по ВСЕМ системам — запасной слой: одно и то же оборудование (напр. источник
+     * питания) встречается и в АПС, и в СОУЭ, но в эталон попало только под одной системой.
+     * Используется, когда в эталоне своей системы совпадения нет.
+     */
+    public SystemEtalon globalEtalon(int limit) {
+        return buildEtalon(uniqueEquipmentService.all(), limit);
+    }
+
+    private SystemEtalon buildEtalon(List<UniqueEquipment> equipment, int limit) {
         List<ru.techdocs.normative.NormativeAiMatchService.Example> examples = new ArrayList<>();
         Map<String, EtalonRate> byRateCode = new HashMap<>();
         Map<String, List<EtalonOp>> byName = new HashMap<>();
@@ -100,7 +113,7 @@ public class EstimateDecisionService {
         // с разными моделями (БИРП и ИВЭПР) должны остаться разными типами, иначе
         // сопоставление по модели теряет одну из них
         List<EtalonType> types = new ArrayList<>();
-        for (UniqueEquipment ue : uniqueEquipmentService.bySystemType(canonical)) {
+        for (UniqueEquipment ue : equipment) {
             String name = ue.getName() == null ? "" : ue.getName();
             String descr = ue.getModel() == null || ue.getModel().isBlank() ? name : name + " " + ue.getModel();
             List<EtalonOp> ueOps = new ArrayList<>();
