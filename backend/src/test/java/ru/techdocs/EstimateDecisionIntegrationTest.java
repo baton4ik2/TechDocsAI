@@ -225,6 +225,41 @@ class EstimateDecisionIntegrationTest extends IntegrationTestBase {
         org.assertj.core.api.Assertions.assertThat(code0).isNotBlank().isEqualTo(code1);
     }
 
+    /** Эталон: «количество операций в год» из колонки важнее текста периодичности (осмотр — 10, не 12). */
+    @Test
+    void importUsesOpsPerYearColumnOverPeriodicityText() throws Exception {
+        byte[] xlsx;
+        try (XSSFWorkbook wb = new XSSFWorkbook()) {
+            Sheet sheet = wb.createSheet("Расчёт");
+            Row h = sheet.createRow(0);
+            h.createCell(0).setCellValue("Наименование оборудования");
+            h.createCell(1).setCellValue("Наименование мероприятия");
+            h.createCell(2).setCellValue("Шифр расценки");
+            h.createCell(3).setCellValue("периодичность операции");
+            h.createCell(4).setCellValue("количество операций в год");
+            Row r = sheet.createRow(1);
+            r.createCell(0).setCellValue("Источник питания");
+            r.createCell(1).setCellValue("Технический осмотр");
+            r.createCell(2).setCellValue("22-2201-78-1/1");
+            r.createCell(3).setCellValue("раз в месяц");   // текст → 12
+            r.createCell(4).setCellValue(10);              // но фактически 10 (ТО поглощает осмотры)
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            wb.write(out);
+            xlsx = out.toByteArray();
+        }
+        mockMvc.perform(multipart("/api/estimates/import-reference")
+                        .file(new MockMultipartFile("file", "etalon.xlsx",
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xlsx))
+                        .header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.imported").value(1));
+
+        JsonNode decisions = json.readTree(mockMvc.perform(get("/api/estimate-decisions").header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString());
+        org.assertj.core.api.Assertions.assertThat(decisions.get(0).get("decision").get("perYear").asDouble())
+                .isEqualTo(10.0);
+    }
+
     @Test
     void promoteStoresDecisionsFromEstimate() throws Exception {
         seedRate();

@@ -112,10 +112,11 @@ public class EstimateDraftService {
             EstimateDecisionService.SystemEtalon etalon = etalonCache.computeIfAbsent(
                     systemType, s -> decisionService.systemEtalon(s, EXAMPLE_LIMIT));
 
-            // 2) эталон по наименованию: если оборудование есть в эталоне по имени — берём ВСЕ
-            //    его операции (напр. осмотр + ТО), детерминированно, каждую отдельной строкой.
-            List<EstimateDecisionService.EtalonOp> etalonOps = etalon.byName().get(EstimateDecisionService.nameKey(eq.getName()));
-            if (etalonOps != null && !etalonOps.isEmpty()) {
+            // 2) эталон по наименованию (совпадение по значимым словам, с учётом суффиксов
+            //    моделей): если оборудование есть в эталоне — берём ВСЕ его операции
+            //    (напр. осмотр + ТО), детерминированно, каждую отдельной строкой.
+            List<EstimateDecisionService.EtalonOp> etalonOps = etalonOpsForType(etalon, eq.getName());
+            if (!etalonOps.isEmpty()) {
                 for (EstimateDecisionService.EtalonOp eop : etalonOps) {
                     addRowFromEtalonOp(estimateId, eq, systemType, eop);
                     created++;
@@ -351,6 +352,30 @@ public class EstimateDraftService {
             if (token.equals("акб")) return true;
         }
         return false;
+    }
+
+    /**
+     * Все операции эталона для типа оборудования: эталонная запись подходит, если её
+     * значимые слова — подмножество слов объекта или наоборот (учитывает суффиксы моделей,
+     * напр. «Источник вторичного электропитания (для STR-1AP)» ⊇ «Источник вторичного
+     * электропитания»). Операции разных подходящих записей объединяются (дедуп по категории).
+     */
+    private List<EstimateDecisionService.EtalonOp> etalonOpsForType(
+            EstimateDecisionService.SystemEtalon etalon, String objName) {
+        Set<String> objT = tokens(objName);
+        if (objT.isEmpty()) return List.of();
+        List<EstimateDecisionService.EtalonOp> result = new ArrayList<>();
+        Set<String> seenOp = new HashSet<>();
+        for (Map.Entry<String, List<EstimateDecisionService.EtalonOp>> e : etalon.byName().entrySet()) {
+            Set<String> etT = tokens(e.getKey());
+            if (etT.isEmpty()) continue;
+            boolean typeMatch = objT.containsAll(etT) || etT.containsAll(objT);
+            if (!typeMatch) continue;
+            for (EstimateDecisionService.EtalonOp op : e.getValue()) {
+                if (seenOp.add(op.operationKey())) result.add(op);
+            }
+        }
+        return result;
     }
 
     /** Строка из операции эталона (по совпадению наименования) — расценка/периодичность из эталона. */

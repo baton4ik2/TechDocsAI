@@ -203,12 +203,13 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
             rateRepository.saveAndFlush(rate);
         }
 
-        // эталон: «Считыватель» → 21-ET-1 (объект — «Считыватель бесконтактный EM», совпадение нечёткое)
+        // эталон: «Считыватель настольный USB» → 21-ET-1. Объект — «Считыватель бесконтактный EM»:
+        // общее слово «считыватель», но ни одно имя не является подмножеством другого → выбор, не детерминизм
         UniqueEquipment ue = new UniqueEquipment();
-        ue.setNormKey("считыватель|rd-old||скуд");
-        ue.setEquipKey("считыватель|rd-old|");
+        ue.setNormKey("считыватель настольный usb|rd-old||скуд");
+        ue.setEquipKey("считыватель настольный usb|rd-old|");
         ue.setSystemType("скуд");
-        ue.setName("Считыватель");
+        ue.setName("Считыватель настольный USB");
         ue.setModel("RD-OLD");
         ue = uniqueRepository.saveAndFlush(ue);
         EstimateRateDecision d = new EstimateRateDecision();
@@ -362,23 +363,25 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
         addDecision(ue.getId(), "то", "Техническое обслуживание", "22-2203-91-1/1", "раз в 6 мес.", "2");
 
         long sys = facilitySystem("Объект-ивэпр");
-        equip(sys, "Источник вторичного электропитания", "ИВЭПР-NEW");
+        // два источника РАЗНЫХ моделей с суффиксами — совпадение с эталоном по подмножеству слов
+        equip(sys, "Источник вторичного электропитания резервированный (для STR-1AP)", "ИВЭПР 2x7");
+        equip(sys, "Источник вторичного электропитания резервированный (для STR20-IP)", "ИВЭПР 2x17");
         Mockito.when(aiClient.hasMatchModel()).thenReturn(true);
         long estId = estimateFor(estFacility(sys));
         mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
-                .andExpect(jsonPath("$.created").value(2));   // осмотр + ТО
+                .andExpect(jsonPath("$.created").value(4));   // по 2 строки (осмотр + ТО) на каждый источник
 
         JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
-        java.util.Set<String> codes = new java.util.HashSet<>();
-        java.util.Set<String> periods = new java.util.HashSet<>();
+        // у каждого источника обе операции: осмотр (…78, раз в 1 мес) и ТО (…91, раз в 6 мес)
+        java.util.Map<String, java.util.Set<String>> byQty = new java.util.HashMap<>();
         view.get("rows").forEach(r -> {
-            codes.add(r.get("row").get("rateCode").asText());
-            periods.add(r.get("row").get("periodicity").asText());
             assertThat(r.get("row").get("matchSource").asText()).isEqualTo("ETALON_TYPE");
+            byQty.computeIfAbsent(r.get("row").get("equipmentType").asText(), k -> new java.util.HashSet<>())
+                    .add(r.get("row").get("rateCode").asText());
         });
-        assertThat(codes).containsExactlyInAnyOrder("22-2201-78-1/1", "22-2203-91-1/1");
-        assertThat(periods).containsExactlyInAnyOrder("раз в 1 мес.", "раз в 6 мес.");
+        assertThat(byQty.get("ИВЭПР 2x7")).containsExactlyInAnyOrder("22-2201-78-1/1", "22-2203-91-1/1");
+        assertThat(byQty.get("ИВЭПР 2x17")).containsExactlyInAnyOrder("22-2201-78-1/1", "22-2203-91-1/1");
         Mockito.verify(aiClient, Mockito.never()).completeMatch(anyString(), anyString());
     }
 

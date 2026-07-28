@@ -63,6 +63,9 @@ public class ReferenceEstimateImportService {
                 else if (t.contains("наименование меропр")) cols.put("operation", c);
                 // «периодичность операции», а не «обоснование периодичности» (там длинный текст)
                 else if (t.contains("периодичность") && !t.contains("обоснован")) cols.put("periodicity", c);
+                // фактическое число операций в год (осмотр «раз в месяц» может быть 10, а не 12,
+                // т.к. ТО поглощает часть осмотров) — приоритетнее, чем разбор текста периодичности
+                else if (t.contains("количество операций")) cols.put("opsPerYear", c);
             }
             if (cols.containsKey("code") && cols.containsKey("name")) {
                 return cols;
@@ -96,7 +99,8 @@ public class ReferenceEstimateImportService {
             }
 
             String periodicity = cell(row, cols.get("periodicity"));
-            BigDecimal perYear = Periodicity.perYear(periodicity);
+            BigDecimal perYear = numeric(cell(row, cols.get("opsPerYear")));  // фактическая колонка
+            if (perYear == null) perYear = Periodicity.perYear(periodicity);   // иначе — из текста
             data.add(new EstimateDecisionService.DecisionData(
                     name, cell(row, cols.get("type")), cell(row, cols.get("manufacturer")), currentSystem,
                     cell(row, cols.get("operation")), code, null,
@@ -110,6 +114,18 @@ public class ReferenceEstimateImportService {
         if (col == null || row == null) return "";
         Cell c = row.getCell(col);
         return c == null ? "" : formatter.formatCellValue(c).strip();
+    }
+
+    /** Число из ячейки (пробелы/запятая), иначе null. */
+    private BigDecimal numeric(String s) {
+        if (s == null || s.isBlank()) return null;
+        String v = s.replaceAll("[\\s\\u00A0]", "").replace(',', '.');
+        try {
+            BigDecimal n = new BigDecimal(v);
+            return n.signum() <= 0 ? null : n;
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private String blank(String s) {
