@@ -37,6 +37,7 @@ public class EstimateDraftService {
     private final NormativeAiMatchService aiMatchService;
     private final EquipmentMaintenanceResolver maintenanceResolver;
     private final EstimateDecisionService decisionService;
+    private final EtalonTypeMatchService typeMatchService;
     private final NormativeRateRepository rateRepository;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
 
@@ -85,6 +86,8 @@ public class EstimateDraftService {
         // эталон по системам (примеры + периодичность) и кэш выбора «по типу» в пределах сметы
         Map<String, EstimateDecisionService.SystemEtalon> etalonCache = new HashMap<>();
         Map<String, RatePick> consistency = new HashMap<>();
+        // ИИ-сопоставление типа с эталоном: один запрос на (система|наименование)
+        Map<String, EstimateDecisionService.EtalonType> typeMatchCache = new HashMap<>();
         int created = 0, skipped = 0;
         for (Equipment eq : equipment) {
             if (existing.contains(eq.getId())) { skipped++; continue; }
@@ -116,9 +119,24 @@ public class EstimateDraftService {
             //    моделей): если оборудование есть в эталоне — берём ВСЕ его операции
             //    (напр. осмотр + ТО), детерминированно, каждую отдельной строкой.
             List<EstimateDecisionService.EtalonOp> etalonOps = etalonOpsForType(etalon, eq.getName());
+            String etalonSource = "ETALON_TYPE";
+            if (etalonOps.isEmpty() && !etalon.types().isEmpty()) {
+                // 2б) синонимы: в эталоне «Блок питания», на объекте «Источник вторичного
+                //     электропитания» — общих слов нет, но это одно и то же. Тип определяет ИИ,
+                //     расценки и периодичность всех операций берутся из эталона детерминированно.
+                String tk = (systemType == null ? "" : systemType) + "|" + EstimateDecisionService.nameKey(eq.getName());
+                if (!typeMatchCache.containsKey(tk)) {      // один запрос на наименование
+                    typeMatchCache.put(tk, typeMatchService.match(eq, etalon.types()));
+                }
+                EstimateDecisionService.EtalonType matched = typeMatchCache.get(tk);
+                if (matched != null) {
+                    etalonOps = matched.ops();
+                    etalonSource = "AI_TYPE";
+                }
+            }
             if (!etalonOps.isEmpty()) {
                 for (EstimateDecisionService.EtalonOp eop : etalonOps) {
-                    addRowFromEtalonOp(estimateId, eq, systemType, eop);
+                    addRowFromEtalonOp(estimateId, eq, systemType, eop, etalonSource);
                     created++;
                 }
                 continue;
@@ -378,18 +396,20 @@ public class EstimateDraftService {
         return result;
     }
 
-    /** Строка из операции эталона (по совпадению наименования) — расценка/периодичность из эталона. */
+    /** Строка из операции эталона — расценка/периодичность из эталона (ИИ в цифрах не участвует). */
     private void addRowFromEtalonOp(Long estimateId, Equipment eq, String systemType,
-                                    EstimateDecisionService.EtalonOp eop) {
+                                    EstimateDecisionService.EtalonOp eop, String source) {
         NormativeRate rate = catalogRate(eop.rate().rateCode());
         BigDecimal perYear = eop.rate().perYear() != null ? eop.rate().perYear()
                 : maintenanceResolver.perYearFromRate(rate == null ? null : rate.getName());
         String periodicityText = eop.rate().periodicity() != null ? eop.rate().periodicity()
                 : maintenanceResolver.label(perYear);
         String operationName = eop.operationName() != null ? eop.operationName() : operationName(eq);
+        String note = "AI_TYPE".equals(source)
+                ? "Расценка и периодичность из эталона (тип определён ИИ как то же оборудование)."
+                : "Расценка и периодичность из эталона (то же наименование в этой системе).";
         addRow(estimateId, eq, systemType, operationName, eop.rate().rateCode(), periodicityText, perYear,
-                "Расценка и периодичность из эталона (то же наименование в этой системе).",
-                false, "ETALON_TYPE", null);
+                note, false, source, null);
     }
 
     /** Периодичность строки в единый год выполнений/текст. */

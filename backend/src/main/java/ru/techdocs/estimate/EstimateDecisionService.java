@@ -66,6 +66,9 @@ public class EstimateDecisionService {
     /** Операция эталона: имя мероприятия, категория, расценка+периодичность. */
     public record EtalonOp(String operationName, String operationKey, EtalonRate rate) {}
 
+    /** Тип оборудования эталона: наименование/модель + все его операции (для ИИ-сопоставления). */
+    public record EtalonType(String nameKey, String name, String model, List<EtalonOp> ops) {}
+
     /**
      * Данные эталона по системе:
      *  - examples — few-shot примеры «оборудование → шифр» для ИИ;
@@ -76,7 +79,7 @@ public class EstimateDecisionService {
      */
     public record SystemEtalon(List<ru.techdocs.normative.NormativeAiMatchService.Example> examples,
                                Map<String, EtalonRate> byRateCode, Map<String, List<EtalonOp>> byName,
-                               List<EtalonEntry> entries) {}
+                               List<EtalonEntry> entries, List<EtalonType> types) {}
 
     /** Каноническое наименование оборудования для сопоставления по типу. */
     public static String nameKey(String name) {
@@ -85,10 +88,12 @@ public class EstimateDecisionService {
 
     public SystemEtalon systemEtalon(String system, int limit) {
         String canonical = ru.techdocs.common.SystemNormalizer.canonical(system);
-        if (canonical == null) return new SystemEtalon(List.of(), Map.of(), Map.of(), List.of());
+        if (canonical == null) return new SystemEtalon(List.of(), Map.of(), Map.of(), List.of(), List.of());
         List<ru.techdocs.normative.NormativeAiMatchService.Example> examples = new ArrayList<>();
         Map<String, EtalonRate> byRateCode = new HashMap<>();
         Map<String, List<EtalonOp>> byName = new HashMap<>();
+        Map<String, String> modelByKey = new java.util.LinkedHashMap<>();
+        Map<String, String> displayByKey = new java.util.LinkedHashMap<>();
         List<EtalonEntry> entries = new ArrayList<>();
         for (UniqueEquipment ue : uniqueEquipmentService.bySystemType(canonical)) {
             String name = ue.getName() == null ? "" : ue.getName();
@@ -99,16 +104,24 @@ public class EstimateDecisionService {
                 byRateCode.putIfAbsent(er.rateCode(), er);
                 entries.add(new EtalonEntry(name, d.getOperationKey(), er));
                 // все операции по наименованию (дедуп по категории операции — осмотр/ТО/…)
-                List<EtalonOp> ops = byName.computeIfAbsent(nameKey(name), k -> new ArrayList<>());
+                String key = nameKey(name);
+                List<EtalonOp> ops = byName.computeIfAbsent(key, k -> new ArrayList<>());
                 if (ops.stream().noneMatch(o -> o.operationKey().equals(d.getOperationKey()))) {
                     ops.add(new EtalonOp(d.getOperationName(), d.getOperationKey(), er));
                 }
+                displayByKey.putIfAbsent(key, name);
+                if (ue.getModel() != null && !ue.getModel().isBlank()) modelByKey.putIfAbsent(key, ue.getModel());
                 if (examples.size() < limit) {
                     examples.add(new ru.techdocs.normative.NormativeAiMatchService.Example(descr.strip(), d.getRateCode()));
                 }
             }
         }
-        return new SystemEtalon(examples, byRateCode, byName, entries);
+        List<EtalonType> types = new ArrayList<>();
+        for (Map.Entry<String, List<EtalonOp>> e : byName.entrySet()) {
+            types.add(new EtalonType(e.getKey(), displayByKey.getOrDefault(e.getKey(), e.getKey()),
+                    modelByKey.get(e.getKey()), e.getValue()));
+        }
+        return new SystemEtalon(examples, byRateCode, byName, entries, types);
     }
 
     /**

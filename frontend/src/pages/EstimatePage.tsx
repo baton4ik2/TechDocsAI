@@ -14,6 +14,7 @@ function SourceBadge({ source }: { source?: string }) {
   const map: Record<string, { label: string; cls: string; title: string }> = {
     LEARNED:     { label: 'эталон',       cls: 'bg-emerald-100 text-emerald-800', title: 'Расценка из памяти эталонов (та же модель уже считалась)' },
     ETALON_TYPE: { label: 'эталон (тип)', cls: 'bg-emerald-100 text-emerald-800', title: 'В эталоне есть оборудование с тем же наименованием — расценка и периодичность взяты оттуда детерминированно' },
+    AI_TYPE:     { label: 'эталон (ИИ)',  cls: 'bg-emerald-100 text-emerald-800', title: 'ИИ определил, что это то же оборудование, что в эталоне (синонимичное название); расценки и периодичность всех операций взяты из эталона' },
     AI_ETALON:   { label: 'ИИ ← эталон',  cls: 'bg-teal-100 text-teal-800',       title: 'ИИ выбрал расценку, которая есть в эталоне этой системы; периодичность тоже из эталона' },
     CHOICE:      { label: 'выбрать',      cls: 'bg-orange-100 text-orange-800',   title: 'Похожее оборудование есть в эталоне, но не точно — откройте строку и выберите расценку из вариантов' },
     AI:         { label: 'ИИ',          cls: 'bg-sky-100 text-sky-800',         title: 'Расценку подобрал ИИ из каталога СН-2012' },
