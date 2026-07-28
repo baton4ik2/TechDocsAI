@@ -42,10 +42,13 @@ public class EstimateDecisionService {
         if (s.contains("осмотр")) return "осмотр";
         if (s.contains("замен")) return "замена";
         if (s.contains("ремонт")) return "ремонт";
+        // «обслуж» проверяем раньше «проверк»/«контрол»: «Техническое обслуживание …,
+        // проверка АКБ» — это ТО, а не отдельная проверка (иначе одна и та же расценка
+        // попадает в две категории и строка дублируется)
+        if (s.contains("обслуж")) return "то";
         if (s.contains("контрол")) return "контроль";
         if (s.contains("проверк")) return "проверка";
         if (s.contains("наладк")) return "наладка";
-        if (s.contains("обслуж")) return "то";
         String norm = s.replaceAll("[\\s\\u00A0]+", " ").strip();
         if (norm.isBlank()) return "прочее";
         return norm.length() > 200 ? norm.substring(0, 200) : norm;
@@ -92,36 +95,40 @@ public class EstimateDecisionService {
         List<ru.techdocs.normative.NormativeAiMatchService.Example> examples = new ArrayList<>();
         Map<String, EtalonRate> byRateCode = new HashMap<>();
         Map<String, List<EtalonOp>> byName = new HashMap<>();
-        Map<String, String> modelByKey = new java.util.LinkedHashMap<>();
-        Map<String, String> displayByKey = new java.util.LinkedHashMap<>();
         List<EtalonEntry> entries = new ArrayList<>();
+        // тип — на каждую запись эталона (со своей моделью): две записи «Блок питания»
+        // с разными моделями (БИРП и ИВЭПР) должны остаться разными типами, иначе
+        // сопоставление по модели теряет одну из них
+        List<EtalonType> types = new ArrayList<>();
         for (UniqueEquipment ue : uniqueEquipmentService.bySystemType(canonical)) {
             String name = ue.getName() == null ? "" : ue.getName();
             String descr = ue.getModel() == null || ue.getModel().isBlank() ? name : name + " " + ue.getModel();
+            List<EtalonOp> ueOps = new ArrayList<>();
             for (EstimateRateDecision d : repository.findByUniqueEquipmentIdOrderByOperationKey(ue.getId())) {
                 if (d.getRateCode() == null || d.getRateCode().isBlank()) continue;
                 EtalonRate er = new EtalonRate(d.getRateCode().strip(), d.getPeriodicity(), d.getPerYear());
                 byRateCode.putIfAbsent(er.rateCode(), er);
                 entries.add(new EtalonEntry(name, d.getOperationKey(), er));
-                // все операции по наименованию (дедуп по категории операции — осмотр/ТО/…)
-                String key = nameKey(name);
-                List<EtalonOp> ops = byName.computeIfAbsent(key, k -> new ArrayList<>());
-                if (ops.stream().noneMatch(o -> o.operationKey().equals(d.getOperationKey()))) {
-                    ops.add(new EtalonOp(d.getOperationName(), d.getOperationKey(), er));
-                }
-                displayByKey.putIfAbsent(key, name);
-                if (ue.getModel() != null && !ue.getModel().isBlank()) modelByKey.putIfAbsent(key, ue.getModel());
+                // одна расценка = одна работа: дедуп и по категории операции, и по шифру
+                // (в эталоне ТО могло попасть в разные категории — «ТО» и «ТО, проверка АКБ»)
+                addOp(ueOps, d, er);
+                addOp(byName.computeIfAbsent(nameKey(name), k -> new ArrayList<>()), d, er);
                 if (examples.size() < limit) {
                     examples.add(new ru.techdocs.normative.NormativeAiMatchService.Example(descr.strip(), d.getRateCode()));
                 }
             }
-        }
-        List<EtalonType> types = new ArrayList<>();
-        for (Map.Entry<String, List<EtalonOp>> e : byName.entrySet()) {
-            types.add(new EtalonType(e.getKey(), displayByKey.getOrDefault(e.getKey(), e.getKey()),
-                    modelByKey.get(e.getKey()), e.getValue()));
+            if (!ueOps.isEmpty()) types.add(new EtalonType(nameKey(name), name, ue.getModel(), ueOps));
         }
         return new SystemEtalon(examples, byRateCode, byName, entries, types);
+    }
+
+    /** Добавляет операцию, если такой категории и такой расценки ещё нет. */
+    private void addOp(List<EtalonOp> ops, EstimateRateDecision d, EtalonRate er) {
+        if (ops.stream().anyMatch(o -> o.operationKey().equals(d.getOperationKey())
+                || o.rate().rateCode().equals(er.rateCode()))) {
+            return;
+        }
+        ops.add(new EtalonOp(d.getOperationName(), d.getOperationKey(), er));
     }
 
     /**

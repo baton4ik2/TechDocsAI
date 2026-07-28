@@ -29,4 +29,14 @@ class EstimateDecisionKeyTest {
         assertThat(EstimateDecisionService.operationKey("Техническое обслуживание"))
                 .isNotEqualTo(EstimateDecisionService.operationKey("Технический осмотр"));
     }
+
+    /** «Техническое обслуживание …, проверка АКБ» — это ТО, а не отдельная «проверка». */
+    @Test
+    void maintenanceWinsOverCheckWording() {
+        assertThat(EstimateDecisionService.operationKey(
+                "Техническое обслуживание источника вторичного электропитания, проверка АКБ"))
+                .isEqualTo("то")
+                .isEqualTo(EstimateDecisionService.operationKey(
+                        "Техническое обслуживание источника вторичного электропитания"));
+    }
 }

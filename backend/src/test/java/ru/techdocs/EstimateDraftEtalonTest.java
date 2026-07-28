@@ -511,6 +511,67 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
         Mockito.verify(aiClient, Mockito.never()).completeMatch(anyString(), anyString());
     }
 
+    /**
+     * В эталоне одна и та же расценка попала в разные категории («то» у одной модели и
+     * «проверка» у другой — из-за формулировки «ТО …, проверка АКБ»). Строка не должна
+     * дублироваться: одна расценка = одна работа.
+     */
+    @Test
+    void sameRateInDifferentCategoriesDoesNotDuplicateRow() throws Exception {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник дубль");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        for (String[] r : new String[][]{
+                {"22-2201-78-1/1", "Технический осмотр источника вторичного электропитания"},
+                {"22-2203-91-1/1", "Техническое обслуживание источника вторичного электропитания"}}) {
+            NormativeRate rate = new NormativeRate();
+            rate.setSourcebookId(book.getId());
+            rate.setCode(r[0]);
+            rate.setName(r[1]);
+            rate.setUnit("1 шт.");
+            rate.setLaborCost(new BigDecimal("100.00"));
+            rateRepository.saveAndFlush(rate);
+        }
+
+        // две эталонные записи с одним наименованием «Блок питания», но разными моделями:
+        // у одной ТО сохранено с категорией «то», у другой — «проверка» (та же расценка 91)
+        UniqueEquipment a = new UniqueEquipment();
+        a.setNormKey("блок питания|бирп 12-10||скуд");
+        a.setEquipKey("блок питания|бирп 12-10|");
+        a.setSystemType("скуд");
+        a.setName("Блок питания");
+        a.setModel("БИРП 12-10");
+        a = uniqueRepository.saveAndFlush(a);
+        addDecision(a.getId(), "осмотр", "Технический осмотр", "22-2201-78-1/1", "раз в 1 мес.", "10");
+        addDecision(a.getId(), "то", "Техническое обслуживание", "22-2203-91-1/1", "раз в 6 мес.", "2");
+
+        UniqueEquipment b = new UniqueEquipment();
+        b.setNormKey("блок питания|ивэпр 12/2 rsr3 2x7-р бр||скуд");
+        b.setEquipKey("блок питания|ивэпр 12/2 rsr3 2x7-р бр|");
+        b.setSystemType("скуд");
+        b.setName("Блок питания");
+        b.setModel("ИВЭПР 12/2 RSR3 2x7-Р БР");
+        b = uniqueRepository.saveAndFlush(b);
+        addDecision(b.getId(), "осмотр", "Технический осмотр", "22-2201-78-1/1", "раз в 1 мес.", "10");
+        addDecision(b.getId(), "проверка", "Техническое обслуживание, проверка АКБ",
+                "22-2203-91-1/1", "раз в 6 мес.", "2");
+
+        long sys = facilitySystem("Объект-дубль");
+        equip(sys, "Источник вторичного электропитания резервированный (для STR-1AP)", "ИВЭПР 12/2 RS-R3 2x7 БР");
+        Mockito.when(aiClient.hasMatchModel()).thenReturn(true);
+
+        long estId = estimateFor(estFacility(sys));
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(2));   // осмотр + ТО, без дубля ТО
+
+        JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        java.util.List<String> codes = new java.util.ArrayList<>();
+        view.get("rows").forEach(r -> codes.add(r.get("row").get("rateCode").asText()));
+        assertThat(codes).containsExactlyInAnyOrder("22-2201-78-1/1", "22-2203-91-1/1");
+    }
+
     private void addDecision(long ueId, String opKey, String opName, String code, String periodicity, String perYear) {
         EstimateRateDecision d = new EstimateRateDecision();
         d.setUniqueEquipmentId(ueId);

@@ -103,7 +103,10 @@ public class EstimateDraftService {
                     : decisionService.resolveUniqueId(eq.getName(), eq.getModel(), eq.getManufacturer(), systemType);
             List<EstimateRateDecision> decisions = decisionService.lookup(uniqueId);
             if (!decisions.isEmpty()) {
+                Set<String> seenRates = new HashSet<>();
                 for (EstimateRateDecision d : decisions) {
+                    // одна расценка = одна строка (категории могли разойтись: «ТО» и «ТО, проверка АКБ»)
+                    if (d.getRateCode() != null && !seenRates.add(d.getRateCode())) continue;
                     addRowFromDecision(estimateId, eq, systemType, d);
                     // из памяти пополняем кэш «по типу»: новые модели того же типа возьмут ту же расценку
                     consistency.putIfAbsent(typeKey(systemType, eq.getName(), d.getOperationName()),
@@ -394,13 +397,18 @@ public class EstimateDraftService {
         if (objT.isEmpty()) return List.of();
         List<EstimateDecisionService.EtalonOp> result = new ArrayList<>();
         Set<String> seenOp = new HashSet<>();
+        Set<String> seenRate = new HashSet<>();
         for (Map.Entry<String, List<EstimateDecisionService.EtalonOp>> e : etalon.byName().entrySet()) {
             Set<String> etT = tokens(e.getKey());
             if (etT.isEmpty()) continue;
             boolean typeMatch = objT.containsAll(etT) || etT.containsAll(objT);
             if (!typeMatch) continue;
             for (EstimateDecisionService.EtalonOp op : e.getValue()) {
-                if (seenOp.add(op.operationKey())) result.add(op);
+                // одна расценка = одна работа (даже если категории операции разошлись)
+                if (seenOp.contains(op.operationKey()) || seenRate.contains(op.rate().rateCode())) continue;
+                seenOp.add(op.operationKey());
+                seenRate.add(op.rate().rateCode());
+                result.add(op);
             }
         }
         return result;
