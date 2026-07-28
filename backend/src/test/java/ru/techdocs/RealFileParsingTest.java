@@ -75,4 +75,25 @@ class RealFileParsingTest extends IntegrationTestBase {
         assertThat(decisions).allSatisfy(d ->
                 assertThat(d.getSource()).isEqualTo(EstimateRateDecision.SOURCE_REFERENCE));
     }
+
+    /**
+     * У извещателя дымового в эталоне ЧЕТЫРЕ работы: осмотр и ТО 1/2/3 с разными
+     * расценками (106-1, 106-2, 106-3). Все должны попасть в память, а не схлопнуться
+     * в одно решение по категории «то».
+     */
+    @Test
+    @Transactional
+    void allFourWorksOfSmokeDetectorAreKept() throws Exception {
+        var file = new MockMultipartFile("file", "aps.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", sample("reference-aps.xlsx"));
+        importService.importXlsx(file);
+
+        UniqueEquipment detector = uniqueRepository.findAll().stream()
+                .filter(ue -> ue.getName() != null && ue.getName().toLowerCase().contains("дымовой адресно"))
+                .findFirst().orElseThrow();
+        var works = decisionRepository.findByUniqueEquipmentIdOrderByOperationKey(detector.getId());
+        assertThat(works).extracting(EstimateRateDecision::getRateCode)
+                .containsExactlyInAnyOrder("1-2201-35-1/1", "22-2203-106-1/1",
+                        "22-2203-106-2/1", "22-2203-106-3/1");
+    }
 }

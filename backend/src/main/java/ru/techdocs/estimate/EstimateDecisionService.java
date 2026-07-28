@@ -39,6 +39,23 @@ public class EstimateDecisionService {
      */
     public static String operationKey(String operationName) {
         String s = operationName == null ? "" : operationName.toLowerCase().replace('ё', 'е');
+        String base = category(s);
+        if (base == null) {
+            String norm = s.replaceAll("[\\s\\u00A0]+", " ").strip();
+            if (norm.isBlank()) return "прочее";
+            return norm.length() > 200 ? norm.substring(0, 200) : norm;
+        }
+        // Номер работы внутри категории: у одного оборудования бывает несколько разных
+        // работ одной категории с РАЗНЫМИ расценками («Техническое обслуживание 1 / 2 /
+        // 3» — 106-1, 106-2, 106-3). Без номера они схлопывались в одно решение.
+        var m = java.util.regex.Pattern
+                .compile("(?:обслуж|осмотр|проверк|контрол|ремонт|замен|наладк)\\p{L}*\\s*(\\d)")
+                .matcher(s);
+        return m.find() ? base + m.group(1) : base;
+    }
+
+    /** Категория операции или null, если формулировка не типовая. */
+    private static String category(String s) {
         if (s.contains("осмотр")) return "осмотр";
         if (s.contains("замен")) return "замена";
         if (s.contains("ремонт")) return "ремонт";
@@ -49,9 +66,7 @@ public class EstimateDecisionService {
         if (s.contains("контрол")) return "контроль";
         if (s.contains("проверк")) return "проверка";
         if (s.contains("наладк")) return "наладка";
-        String norm = s.replaceAll("[\\s\\u00A0]+", " ").strip();
-        if (norm.isBlank()) return "прочее";
-        return norm.length() > 200 ? norm.substring(0, 200) : norm;
+        return null;
     }
 
     /** Решения для оборудования (по уникальному id). */
