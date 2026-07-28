@@ -408,13 +408,13 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
             rateRepository.saveAndFlush(rate);
         }
 
-        // эталон: «Блок питания» (ИВЭПР) с двумя операциями, осмотр — фактически 10 в год
+        // эталон: «Блок питания» с ДРУГОЙ моделью (совпадения по модели нет — только через ИИ)
         UniqueEquipment ue = new UniqueEquipment();
-        ue.setNormKey("блок питания|ивэпр 12/2 rsr3 2x7-р бр||скуд");
-        ue.setEquipKey("блок питания|ивэпр 12/2 rsr3 2x7-р бр|");
+        ue.setNormKey("блок питания|бирп 12-10||скуд");
+        ue.setEquipKey("блок питания|бирп 12-10|");
         ue.setSystemType("скуд");
         ue.setName("Блок питания");
-        ue.setModel("ИВЭПР 12/2 RSR3 2x7-Р БР");
+        ue.setModel("БИРП 12-10");
         ue = uniqueRepository.saveAndFlush(ue);
         addDecision(ue.getId(), "осмотр", "Технический осмотр источника вторичного электропитания",
                 "22-2201-78-1/1", "раз в 1 мес.", "10");
@@ -443,6 +443,72 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
         assertThat(perYearByCode).containsOnlyKeys("22-2201-78-1/1", "22-2203-91-1/1");
         assertThat(perYearByCode.get("22-2201-78-1/1")).isEqualTo(10.0);   // осмотр из эталона, не 12
         assertThat(perYearByCode.get("22-2203-91-1/1")).isEqualTo(2.0);
+    }
+
+    /**
+     * Реальный случай пользователя: в эталоне ОДИН ИВЭПР («Блок питания») с двумя работами,
+     * на объекте ДВА разных ИВЭПР с другим наименованием. Обе позиции должны получить обе
+     * работы эталона по совпадению МОДЕЛИ — детерминированно, без ИИ.
+     */
+    @Test
+    void twoObjectIvepersMatchSingleEtalonIveprByModelWithoutAi() throws Exception {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник ивэпр-модель");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        for (String[] r : new String[][]{
+                {"22-2201-78-1/1", "Технический осмотр источника вторичного электропитания"},
+                {"22-2203-91-1/1", "Техническое обслуживание источника вторичного электропитания"}}) {
+            NormativeRate rate = new NormativeRate();
+            rate.setSourcebookId(book.getId());
+            rate.setCode(r[0]);
+            rate.setName(r[1]);
+            rate.setUnit("1 шт.");
+            rate.setLaborCost(new BigDecimal("100.00"));
+            rateRepository.saveAndFlush(rate);
+        }
+
+        // эталон: «Блок питания» ИВЭПР 12/2 RSR3 2x7-Р БР — осмотр 10/год + ТО 2/год
+        UniqueEquipment ue = new UniqueEquipment();
+        ue.setNormKey("блок питания|ивэпр 12/2 rsr3 2x7-р бр||скуд");
+        ue.setEquipKey("блок питания|ивэпр 12/2 rsr3 2x7-р бр|");
+        ue.setSystemType("скуд");
+        ue.setName("Блок питания");
+        ue.setModel("ИВЭПР 12/2 RSR3 2x7-Р БР");
+        ue = uniqueRepository.saveAndFlush(ue);
+        addDecision(ue.getId(), "осмотр", "Технический осмотр источника вторичного электропитания",
+                "22-2201-78-1/1", "раз в 1 мес.", "10");
+        addDecision(ue.getId(), "то", "Техническое обслуживание источника вторичного электропитания",
+                "22-2203-91-1/1", "раз в 6 мес.", "2");
+
+        long sys = facilitySystem("Объект-2ивэпр");
+        // два разных ИВЭПР на объекте, наименование не пересекается с «Блок питания»
+        equip(sys, "Источник вторичного электропитания резервированный (для STR-1AP)", "ИВЭПР 12/2 RS-R3 2x7 БР");
+        equip(sys, "Источник вторичного электропитания резервированный (для STR20-IP)", "ИВЭПР 12/2 RS-R3 2х7 БР");
+
+        // ИИ доступен, но НЕ должен вызываться — совпадение по модели детерминированно
+        Mockito.when(aiClient.hasMatchModel()).thenReturn(true);
+
+        long estId = estimateFor(estFacility(sys));
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(4));   // по 2 работы на каждый ИВЭПР
+
+        JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        java.util.Map<String, java.util.Map<String, Double>> byModel = new java.util.HashMap<>();
+        view.get("rows").forEach(r -> {
+            JsonNode row = r.get("row");
+            assertThat(row.get("matchSource").asText()).isEqualTo("ETALON_TYPE");
+            byModel.computeIfAbsent(row.get("equipmentType").asText(), k -> new java.util.HashMap<>())
+                    .put(row.get("rateCode").asText(), row.get("opsPerYear").asDouble());
+        });
+        assertThat(byModel).hasSize(2);
+        byModel.values().forEach(ops -> {
+            assertThat(ops).containsOnlyKeys("22-2201-78-1/1", "22-2203-91-1/1");
+            assertThat(ops.get("22-2201-78-1/1")).isEqualTo(10.0);   // осмотр из эталона
+            assertThat(ops.get("22-2203-91-1/1")).isEqualTo(2.0);    // ТО из эталона
+        });
+        Mockito.verify(aiClient, Mockito.never()).completeMatch(anyString(), anyString());
     }
 
     private void addDecision(long ueId, String opKey, String opName, String code, String periodicity, String perYear) {

@@ -42,6 +42,7 @@ public class EstimateDraftService {
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
 
     private static final int EXAMPLE_LIMIT = 20;   // сколько эталонных примеров подкладывать ИИ
+    private static final double MODEL_MATCH_THRESHOLD = 0.75;  // схожесть моделей для «то же изделие»
 
     public record DraftResult(int created, int skipped, boolean aiUsed) {}
 
@@ -120,6 +121,15 @@ public class EstimateDraftService {
             //    (напр. осмотр + ТО), детерминированно, каждую отдельной строкой.
             List<EstimateDecisionService.EtalonOp> etalonOps = etalonOpsForType(etalon, eq.getName());
             String etalonSource = "ETALON_TYPE";
+
+            // 2б) совпадение по МОДЕЛИ (детерминированно): «ИВЭПР 12/2 RS-R3 2x7 БР» на объекте
+            //     и «ИВЭПР 12/2 RSR3 2x7-Р БР» в эталоне — одно и то же, хотя названия разные
+            //     («Источник вторичного электропитания» vs «Блок питания»).
+            if (etalonOps.isEmpty()) {
+                List<EstimateDecisionService.EtalonOp> byModel = etalonOpsByModel(etalon, eq.getModel());
+                if (!byModel.isEmpty()) etalonOps = byModel;
+            }
+
             if (etalonOps.isEmpty() && !etalon.types().isEmpty()) {
                 // 2б) синонимы: в эталоне «Блок питания», на объекте «Источник вторичного
                 //     электропитания» — общих слов нет, но это одно и то же. Тип определяет ИИ,
@@ -394,6 +404,64 @@ public class EstimateDraftService {
             }
         }
         return result;
+    }
+
+    /**
+     * Операции эталона по совпадению МОДЕЛИ. Модели одного изделия пишут по-разному
+     * («ИВЭПР 12/2 RS-R3 2x7 БР» / «ИВЭПР 12/2 RSR3 2x7-Р БР», латинская x и кириллическая х),
+     * поэтому сравниваем нормализованные строки по схожести. Детерминированно, без ИИ.
+     */
+    private List<EstimateDecisionService.EtalonOp> etalonOpsByModel(
+            EstimateDecisionService.SystemEtalon etalon, String model) {
+        String objKey = modelKey(model);
+        if (objKey.length() < 4) return List.of();
+        EstimateDecisionService.EtalonType best = null;
+        double bestScore = 0;
+        for (EstimateDecisionService.EtalonType t : etalon.types()) {
+            String etKey = modelKey(t.model());
+            if (etKey.length() < 4) continue;
+            double score = similarity(objKey, etKey);
+            if (score > bestScore) { bestScore = score; best = t; }
+        }
+        return bestScore >= MODEL_MATCH_THRESHOLD && best != null ? best.ops() : List.of();
+    }
+
+    /** Нормализация модели: регистр, ё→е, похожие кириллические буквы → латиница, только буквы/цифры. */
+    private String modelKey(String model) {
+        if (model == null) return "";
+        String s = model.toLowerCase().replace('ё', 'е');
+        StringBuilder sb = new StringBuilder();
+        for (char c : s.toCharArray()) {
+            char m = switch (c) {          // визуально одинаковые кириллица/латиница
+                case 'х' -> 'x'; case 'а' -> 'a'; case 'е' -> 'e'; case 'о' -> 'o';
+                case 'р' -> 'p'; case 'с' -> 'c'; case 'у' -> 'y'; case 'к' -> 'k';
+                default -> c;
+            };
+            if (Character.isLetterOrDigit(m)) sb.append(m);
+        }
+        return sb.toString();
+    }
+
+    /** Схожесть строк 0..1 по расстоянию Левенштейна. */
+    private double similarity(String a, String b) {
+        int max = Math.max(a.length(), b.length());
+        if (max == 0) return 0;
+        return 1.0 - (double) levenshtein(a, b) / max;
+    }
+
+    private int levenshtein(String a, String b) {
+        int[] prev = new int[b.length() + 1];
+        int[] cur = new int[b.length() + 1];
+        for (int j = 0; j <= b.length(); j++) prev[j] = j;
+        for (int i = 1; i <= a.length(); i++) {
+            cur[0] = i;
+            for (int j = 1; j <= b.length(); j++) {
+                int cost = a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1;
+                cur[j] = Math.min(Math.min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+            }
+            int[] tmp = prev; prev = cur; cur = tmp;
+        }
+        return prev[b.length()];
     }
 
     /** Строка из операции эталона — расценка/периодичность из эталона (ИИ в цифрах не участвует). */
