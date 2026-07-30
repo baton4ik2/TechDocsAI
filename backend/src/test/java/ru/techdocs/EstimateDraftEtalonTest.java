@@ -651,6 +651,109 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
         Mockito.verify(aiClient, Mockito.never()).completeMatch(anyString(), anyString());
     }
 
+    /**
+     * Пара «ежемесячное + полугодовое» ТО одного оборудования (разные расценки, одна
+     * категория) не должна схлопываться — в смету идут обе строки. Аудит, п. 3.3/3.4.
+     */
+    @Test
+    void monthlyAndPeriodicMaintenancePairBothReachEstimate() throws Exception {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник 22 пара");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        for (String[] r : new String[][]{
+                {"22-2203-119-1/1", "РСПИ «Стрелец-Мониторинг», объектовая станция — ежемесячное"},
+                {"22-2203-119-2/1", "РСПИ «Стрелец-Мониторинг», объектовая станция — полугодовое"}}) {
+            NormativeRate rate = new NormativeRate();
+            rate.setSourcebookId(book.getId());
+            rate.setCode(r[0]);
+            rate.setName(r[1]);
+            rate.setUnit("шт.");
+            rate.setLaborCost(new BigDecimal("417.99"));
+            rateRepository.saveAndFlush(rate);
+        }
+
+        UniqueEquipment ue = new UniqueEquipment();
+        ue.setNormKey("объектовая станция рспи|стрелец||апс");
+        ue.setEquipKey("объектовая станция рспи|стрелец|");
+        ue.setSystemType("апс");
+        ue.setName("Объектовая станция РСПИ");
+        ue.setModel("Стрелец");
+        ue = uniqueRepository.saveAndFlush(ue);
+        // обе работы — категория «то», но расценки разные
+        addDecision(ue.getId(), "то", "Техническое обслуживание — ежемесячное", "22-2203-119-1/1", "раз в 1 мес.", "10");
+        addDecision(ue.getId(), "то", "Техническое обслуживание — полугодовое", "22-2203-119-2/1", "раз в 6 мес.", "2");
+
+        long sys = facilitySystem("Объект-пара");
+        equip(sys, "Объектовая станция РСПИ", "Стрелец");
+        Mockito.when(aiClient.hasMatchModel()).thenReturn(true);
+
+        long estId = estimateFor(estFacility(sys));
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(2));   // обе работы пары
+
+        JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        java.util.List<String> codes = new java.util.ArrayList<>();
+        view.get("rows").forEach(r -> codes.add(r.get("row").get("rateCode").asText()));
+        assertThat(codes).containsExactlyInAnyOrder("22-2203-119-1/1", "22-2203-119-2/1");
+    }
+
+    /**
+     * Одно наименование на два изделия («Адресный релейный модуль» — РМ-1 и РМ-4):
+     * различаем по модели, суффикс протокола не мешает. Аудит, п. 2.
+     */
+    @Test
+    void sameNameDifferentModelsPickRateByModel() throws Exception {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник 22 модули");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        for (String[] r : new String[][]{
+                {"22-2203-104-4/1", "С2000, блок сигнально-пусковой адресный С2000-СП2 — годовое"},
+                {"22-2203-104-11/1", "С2000, блок сигнально-пусковой С2000-СП4 — годовое"}}) {
+            NormativeRate rate = new NormativeRate();
+            rate.setSourcebookId(book.getId());
+            rate.setCode(r[0]);
+            rate.setName(r[1]);
+            rate.setUnit("1 шт.");
+            rate.setLaborCost(new BigDecimal("181.13"));
+            rateRepository.saveAndFlush(rate);
+        }
+
+        UniqueEquipment rm1 = new UniqueEquipment();
+        rm1.setNormKey("адресный релейный модуль|рм-1 прот. r3||апс");
+        rm1.setEquipKey("адресный релейный модуль|рм-1 прот. r3|");
+        rm1.setSystemType("апс");
+        rm1.setName("Адресный релейный модуль");
+        rm1.setModel("РМ-1 прот. R3");
+        rm1 = uniqueRepository.saveAndFlush(rm1);
+        addDecision(rm1.getId(), "то", "ТО адресного релейного модуля", "22-2203-104-4/1", "раз в 6 мес.", "2");
+
+        UniqueEquipment rm4 = new UniqueEquipment();
+        rm4.setNormKey("адресный релейный модуль|рм-4 прот. r3||апс");
+        rm4.setEquipKey("адресный релейный модуль|рм-4 прот. r3|");
+        rm4.setSystemType("апс");
+        rm4.setName("Адресный релейный модуль");
+        rm4.setModel("РМ-4 прот. R3");
+        rm4 = uniqueRepository.saveAndFlush(rm4);
+        addDecision(rm4.getId(), "то", "ТО адресного релейного модуля", "22-2203-104-11/1", "раз в 6 мес.", "2");
+
+        long sys = facilitySystem("Объект-модули");
+        equip(sys, "Адресный релейный модуль", "РМ-4-R3");   // на объекте суффикс написан иначе
+        Mockito.when(aiClient.hasMatchModel()).thenReturn(true);
+
+        long estId = estimateFor(estFacility(sys));
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(1));
+
+        JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        JsonNode row = view.get("rows").get(0).get("row");
+        // взята расценка РМ-4 (СП4), а не первое совпадение по наименованию (РМ-1/СП2)
+        assertThat(row.get("rateCode").asText()).isEqualTo("22-2203-104-11/1");
+    }
+
     private void addDecision(long ueId, String opKey, String opName, String code, String periodicity, String perYear) {
         EstimateRateDecision d = new EstimateRateDecision();
         d.setUniqueEquipmentId(ueId);

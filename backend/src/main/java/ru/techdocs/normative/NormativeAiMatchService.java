@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * ИИ-подбор расценки под описание работы/оборудования.
@@ -51,8 +52,22 @@ public class NormativeAiMatchService {
     }
 
     public MatchResult match(String query) {
-        return match(query, List.of());
+        return match(query, List.of(), null);
     }
+
+    public MatchResult match(String query, List<Example> examples) {
+        return match(query, examples, null);
+    }
+
+    /**
+     * Сборники, допустимые для системы. Ограничение убирает ложные срабатывания
+     * кросс-сборникового поиска по одному слову (фильтр трансляционной линии СОУЭ
+     * не должен уходить в сборник 24 «Аэропонный комплекс»).
+     */
+    private static final Map<String, Set<String>> ALLOWED_BOOKS = Map.of(
+            "апс", Set.of("1", "22"),
+            "соуэ", Set.of("1", "22"),
+            "ос", Set.of("1", "22"));
 
     /**
      * Подбор с few-shot примерами из эталона (как похожее оборудование этой системы уже
@@ -60,12 +75,13 @@ public class NormativeAiMatchService {
      * кандидатов (чтобы модель могла их выбрать), а в промпте прямо указано держаться
      * прецедента при отсутствии явного противопоказания.
      */
-    public MatchResult match(String query, List<Example> examples) {
+    public MatchResult match(String query, List<Example> examples, String system) {
         if (query == null || query.isBlank()) {
             throw new BadRequestException("Опишите работу или оборудование для подбора расценки.");
         }
         boolean configured = aiClient.hasMatchModel();
         List<NormativeRate> candidates = new ArrayList<>(rateRepository.search(query.strip(), CANDIDATE_LIMIT));
+        restrictToAllowedBooks(candidates, system);
         // расценки из эталонных примеров добавляем в кандидаты — иначе модель не сможет их выбрать
         mergeExampleRates(candidates, examples);
         if (candidates.isEmpty()) {
@@ -84,6 +100,32 @@ public class NormativeAiMatchService {
 
         List<Match> matches = parse(answer, candidates);
         return new MatchResult(matches, candidates, true, true);
+    }
+
+    /**
+     * Оставляет кандидатов только из сборников, допустимых для системы. Если после
+     * фильтра не осталось ничего — ограничение снимается (лучше показать что-то, чем
+     * ничего), строку всё равно проверит инженер.
+     */
+    private void restrictToAllowedBooks(List<NormativeRate> candidates, String system) {
+        String canonical = ru.techdocs.common.SystemNormalizer.canonical(system);
+        if (canonical == null || candidates.isEmpty()) return;   // Map.of не принимает null-ключ
+        Set<String> allowed = ALLOWED_BOOKS.get(canonical);
+        if (allowed == null) return;
+        List<NormativeRate> filtered = candidates.stream()
+                .filter(r -> allowed.contains(bookOf(r.getCode())))
+                .toList();
+        if (!filtered.isEmpty()) {
+            candidates.clear();
+            candidates.addAll(filtered);
+        }
+    }
+
+    /** Номер сборника из шифра расценки: «22-2203-91-1/1» → «22». */
+    private static String bookOf(String code) {
+        if (code == null) return "";
+        int dash = code.indexOf('-');
+        return dash > 0 ? code.substring(0, dash) : code;
     }
 
     /** Добавляет в список кандидатов расценки из эталонных примеров (без дублей). */

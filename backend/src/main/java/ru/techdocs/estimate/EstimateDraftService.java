@@ -124,7 +124,7 @@ public class EstimateDraftService {
             // 2) эталон по наименованию (совпадение по значимым словам, с учётом суффиксов
             //    моделей): если оборудование есть в эталоне — берём ВСЕ его операции
             //    (напр. осмотр + ТО), детерминированно, каждую отдельной строкой.
-            List<EstimateDecisionService.EtalonOp> etalonOps = etalonOpsForType(etalon, eq.getName());
+            List<EstimateDecisionService.EtalonOp> etalonOps = etalonOpsForType(etalon, eq.getName(), eq.getModel());
             String etalonSource = "ETALON_TYPE";
 
             // 2б) совпадение по МОДЕЛИ (детерминированно): «ИВЭПР 12/2 RS-R3 2x7 БР» на объекте
@@ -140,7 +140,7 @@ public class EstimateDraftService {
             //     системой. Не заставляем инженера выбирать — берём готовое решение.
             if (etalonOps.isEmpty()) {
                 EstimateDecisionService.SystemEtalon all = globalEtalon(globalEtalonHolder);
-                List<EstimateDecisionService.EtalonOp> cross = etalonOpsForType(all, eq.getName());
+                List<EstimateDecisionService.EtalonOp> cross = etalonOpsForType(all, eq.getName(), eq.getModel());
                 if (cross.isEmpty()) cross = etalonOpsByModel(all, eq.getModel());
                 if (!cross.isEmpty()) {
                     etalonOps = cross;
@@ -216,7 +216,7 @@ public class EstimateDraftService {
 
         // подбор расценки под конкретную операцию (с few-shot примерами из эталона)
         String query = op == null ? describe(eq) : describe(eq) + " " + op.operationName();
-        var match = aiMatchService.match(query, etalon.examples());
+        var match = aiMatchService.match(query, etalon.examples(), systemType);
 
         // Похожее (не точное) наименование в эталоне → НЕ решаем за инженера: строим
         // список вариантов (эталон + топ ИИ) и даём выбрать. Первый вариант ИИ — его
@@ -373,10 +373,28 @@ public class EstimateDraftService {
         return s == null ? "" : s;
     }
 
-    /** Общая сборка строки черновика. */
+    /** Что не так со строкой (иначе null): такие строки дают в смете ноль. */
+    private String rowProblem(String rateCode, String periodicity, BigDecimal perYear, BigDecimal qty) {
+        if (rateCode == null || rateCode.isBlank()) return "не подобрана расценка.";
+        if (periodicity == null || periodicity.isBlank()) return "не определена периодичность.";
+        if (perYear == null || perYear.signum() <= 0) return "не определено количество операций в год.";
+        if (qty == null || qty.signum() <= 0) return "нулевое количество оборудования.";
+        return null;
+    }
+
+    /**
+     * Общая сборка строки черновика. Перед записью — валидация: строка без расценки,
+     * без периодичности или с нулевым числом операций/выполнений считается нерешённой
+     * и помечается «на проверку», а не попадает в смету молча нулевой.
+     */
     private void addRow(Long estimateId, Equipment eq, String systemType, String operationName,
                         String rateCode, String periodicityText, BigDecimal perYear,
                         String justification, boolean needsReview, String source, String suggestions) {
+        String problem = rowProblem(rateCode, periodicityText, perYear, eq.getQuantity());
+        if (problem != null) {
+            needsReview = true;
+            justification = "⚠ НА ПРОВЕРКУ: " + problem + (justification == null ? "" : " " + justification);
+        }
         EstimateService.RowInput input = new EstimateService.RowInput(
                 systemType, eq.getId(), eq.getName(), eq.getModel(), eq.getManufacturer(),
                 operationName,
@@ -413,26 +431,62 @@ public class EstimateDraftService {
      * электропитания»). Операции разных подходящих записей объединяются (дедуп по категории).
      */
     private List<EstimateDecisionService.EtalonOp> etalonOpsForType(
-            EstimateDecisionService.SystemEtalon etalon, String objName) {
+            EstimateDecisionService.SystemEtalon etalon, String objName, String objModel) {
         Set<String> objT = tokens(objName);
         if (objT.isEmpty()) return List.of();
-        List<EstimateDecisionService.EtalonOp> result = new ArrayList<>();
-        Set<String> seenOp = new HashSet<>();
-        Set<String> seenRate = new HashSet<>();
-        for (Map.Entry<String, List<EstimateDecisionService.EtalonOp>> e : etalon.byName().entrySet()) {
-            Set<String> etT = tokens(e.getKey());
+
+        // типы эталона, подходящие по наименованию
+        List<EstimateDecisionService.EtalonType> byName = new ArrayList<>();
+        for (EstimateDecisionService.EtalonType t : etalon.types()) {
+            Set<String> etT = tokens(t.nameKey());
             if (etT.isEmpty()) continue;
-            boolean typeMatch = objT.containsAll(etT) || etT.containsAll(objT);
-            if (!typeMatch) continue;
-            for (EstimateDecisionService.EtalonOp op : e.getValue()) {
-                // одна расценка = одна работа (даже если категории операции разошлись)
-                if (seenOp.contains(op.operationKey()) || seenRate.contains(op.rate().rateCode())) continue;
-                seenOp.add(op.operationKey());
-                seenRate.add(op.rate().rateCode());
-                result.add(op);
+            if (objT.containsAll(etT) || etT.containsAll(objT)) byName.add(t);
+        }
+        if (byName.isEmpty()) return List.of();
+
+        // Одно наименование на несколько изделий («Адресный релейный модуль» — РМ-1 и
+        // РМ-4 с разными расценками): различаем по модели. Если модель не совпала ни с
+        // одним — не берём молча первое, отдаём решение инженеру (строка «выбрать»).
+        if (byName.size() > 1 && differentRates(byName)) {
+            EstimateDecisionService.EtalonType best = null;
+            double bestScore = 0;
+            String objKey = modelKey(objModel);
+            if (objKey.length() >= 2) {
+                for (EstimateDecisionService.EtalonType t : byName) {
+                    String etKey = modelKey(t.model());
+                    if (etKey.length() < 2) continue;
+                    double score = similarity(objKey, etKey);
+                    if (score > bestScore) { bestScore = score; best = t; }
+                }
+            }
+            return best != null && bestScore >= MODEL_MATCH_THRESHOLD ? best.ops() : List.of();
+        }
+
+        List<EstimateDecisionService.EtalonOp> result = new ArrayList<>();
+        Set<String> seenRate = new HashSet<>();
+        for (EstimateDecisionService.EtalonType t : byName) {
+            for (EstimateDecisionService.EtalonOp op : t.ops()) {
+                // одна расценка = одна работа; несколько работ одной категории
+                // («ежемесячное» + «полугодовое» ТО) сохраняем обе
+                if (seenRate.add(op.rate().rateCode())) result.add(op);
             }
         }
         return result;
+    }
+
+    /** У подходящих по имени типов эталона разные наборы расценок — значит это разные изделия. */
+    private boolean differentRates(List<EstimateDecisionService.EtalonType> types) {
+        Set<String> first = rateCodes(types.get(0));
+        for (int i = 1; i < types.size(); i++) {
+            if (!first.equals(rateCodes(types.get(i)))) return true;
+        }
+        return false;
+    }
+
+    private Set<String> rateCodes(EstimateDecisionService.EtalonType t) {
+        Set<String> codes = new HashSet<>();
+        for (EstimateDecisionService.EtalonOp op : t.ops()) codes.add(op.rate().rateCode());
+        return codes;
     }
 
     /**
@@ -455,18 +509,26 @@ public class EstimateDraftService {
         return bestScore >= MODEL_MATCH_THRESHOLD && best != null ? best.ops() : List.of();
     }
 
-    /** Нормализация модели: регистр, ё→е, похожие кириллические буквы → латиница, только буквы/цифры. */
+    /** Служебные части модели, не различающие изделия: маркер протокола Рубеж. */
+    private static final Set<String> MODEL_NOISE = Set.of("прот", "r3", "р3");
+
+    /**
+     * Нормализация модели: регистр, ё→е, похожие кириллические буквы → латиница,
+     * только буквы/цифры. Маркер протокола отбрасывается — «РМ-4-R3» на объекте и
+     * «РМ-4 прот. R3» в эталоне это одно изделие, а «РМ-1 прот. R3» — другое.
+     */
     private String modelKey(String model) {
         if (model == null) return "";
-        String s = model.toLowerCase().replace('ё', 'е');
         StringBuilder sb = new StringBuilder();
-        for (char c : s.toCharArray()) {
-            char m = switch (c) {          // визуально одинаковые кириллица/латиница
-                case 'х' -> 'x'; case 'а' -> 'a'; case 'е' -> 'e'; case 'о' -> 'o';
-                case 'р' -> 'p'; case 'с' -> 'c'; case 'у' -> 'y'; case 'к' -> 'k';
-                default -> c;
-            };
-            if (Character.isLetterOrDigit(m)) sb.append(m);
+        for (String token : model.toLowerCase().replace('ё', 'е').split("[^\\p{L}\\p{N}]+")) {
+            if (token.isBlank() || MODEL_NOISE.contains(token)) continue;
+            for (char c : token.toCharArray()) {
+                sb.append(switch (c) {     // визуально одинаковые кириллица/латиница
+                    case 'х' -> 'x'; case 'а' -> 'a'; case 'е' -> 'e'; case 'о' -> 'o';
+                    case 'р' -> 'p'; case 'с' -> 'c'; case 'у' -> 'y'; case 'к' -> 'k';
+                    default -> c;
+                });
+            }
         }
         return sb.toString();
     }

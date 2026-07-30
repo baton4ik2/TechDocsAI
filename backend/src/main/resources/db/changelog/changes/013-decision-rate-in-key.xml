@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        У одного оборудования бывает НЕСКОЛЬКО работ одной категории с разными
+        расценками: «ежемесячное» + «полугодовое» ТО (22-2203-118-1/1 и 118-2/1,
+        119-1/1 и 119-2/1). Прежний ключ (оборудование, категория) схлопывал их в
+        одно решение — в смету попадала только одна расценка из пары.
+        Теперь расценка входит в ключ.
+    -->
+    <changeSet id="013-01-decision-rate-in-key" author="techdocs">
+        <sql>
+            ALTER TABLE estimate_rate_decisions DROP CONSTRAINT uq_decision;
+            ALTER TABLE estimate_rate_decisions
+                ADD CONSTRAINT uq_decision UNIQUE (unique_equipment_id, operation_key, rate_code);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

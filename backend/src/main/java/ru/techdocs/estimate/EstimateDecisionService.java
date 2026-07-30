@@ -150,12 +150,14 @@ public class EstimateDecisionService {
         return new SystemEtalon(examples, byRateCode, byName, entries, types);
     }
 
-    /** Добавляет операцию, если такой категории и такой расценки ещё нет. */
+    /**
+     * Добавляет операцию, если такой расценки ещё нет. Дедуп именно по расценке:
+     * одна расценка = одна работа. По категории дедуплицировать нельзя — у одного
+     * оборудования бывает несколько работ одной категории («ежемесячное» +
+     * «полугодовое» ТО), и они должны попасть в смету обе.
+     */
     private void addOp(List<EtalonOp> ops, EstimateRateDecision d, EtalonRate er) {
-        if (ops.stream().anyMatch(o -> o.operationKey().equals(d.getOperationKey())
-                || o.rate().rateCode().equals(er.rateCode()))) {
-            return;
-        }
+        if (ops.stream().anyMatch(o -> o.rate().rateCode().equals(er.rateCode()))) return;
         ops.add(new EtalonOp(d.getOperationName(), d.getOperationKey(), er));
     }
 
@@ -177,30 +179,40 @@ public class EstimateDecisionService {
 
     /**
      * Сохраняет набор решений в одной транзакции с дедупликацией по
-     * (оборудование, категория операции): эталон/смета часто повторяют одно и то
-     * же оборудование на многих строках — иначе повторная вставка упирается в
-     * уникальный ключ (DataIntegrityViolation). Побеждает последняя строка.
+     * (оборудование, категория операции, расценка): эталон повторяет одно и то же
+     * оборудование на многих строках, но у одной категории бывает НЕСКОЛЬКО работ с
+     * разными расценками — «ежемесячное» + «полугодовое» ТО. Их нельзя схлопывать,
+     * иначе в смету попадёт половина пары.
+     * <p>
+     * Для «В эталон» (APPROVED) правка инженера должна заменять прежний выбор, поэтому
+     * решения той же категории с другими расценками удаляются.
      */
     @Transactional
     public List<EstimateRateDecision> saveAll(List<DecisionData> data, String source) {
-        // сворачиваем к одному решению на (оборудование+система, операция)
+        // сворачиваем к одному решению на (оборудование+система, операция, расценка)
         Map<String, DecisionData> deduped = new LinkedHashMap<>();
         for (DecisionData d : data) {
             if (d.rateCode() == null || d.rateCode().isBlank()) continue; // без расценки — не эталон
             String key = UniqueEquipmentService.normKey(d.equipmentName(), d.model(), d.manufacturer(), d.system())
-                    + "|" + operationKey(d.operationName());
+                    + "|" + operationKey(d.operationName()) + "|" + d.rateCode().strip();
             deduped.put(key, d);
         }
 
         Map<String, UniqueEquipment> equipmentCache = new HashMap<>();
         List<EstimateRateDecision> result = new ArrayList<>();
+        // какие (оборудование, категория) затронуты — для замены при «В эталон»
+        Map<String, java.util.Set<String>> approvedRates = new HashMap<>();
         for (DecisionData d : deduped.values()) {
             String normKey = UniqueEquipmentService.normKey(d.equipmentName(), d.model(), d.manufacturer(), d.system());
             UniqueEquipment ue = equipmentCache.computeIfAbsent(normKey,
                     k -> uniqueEquipmentService.resolve(d.equipmentName(), d.model(), d.manufacturer(), d.system()));
             String opKey = operationKey(d.operationName());
+            String rateCode = d.rateCode().strip();
+            if (EstimateRateDecision.SOURCE_APPROVED.equals(source)) {
+                approvedRates.computeIfAbsent(ue.getId() + "|" + opKey, k -> new java.util.HashSet<>()).add(rateCode);
+            }
             EstimateRateDecision decision = repository
-                    .findByUniqueEquipmentIdAndOperationKey(ue.getId(), opKey)
+                    .findByUniqueEquipmentIdAndOperationKeyAndRateCode(ue.getId(), opKey, rateCode)
                     .orElseGet(EstimateRateDecision::new);
             decision.setUniqueEquipmentId(ue.getId());
             decision.setOperationKey(opKey);
@@ -213,6 +225,16 @@ public class EstimateDecisionService {
             decision.setSource(source);
             decision.setUpdatedAt(Instant.now());
             result.add(repository.save(decision));
+        }
+
+        // «В эталон»: выбор инженера заменяет прежние расценки той же категории
+        for (Map.Entry<String, java.util.Set<String>> e : approvedRates.entrySet()) {
+            String[] parts = e.getKey().split("\\|", 2);
+            Long equipmentId = Long.valueOf(parts[0]);
+            for (EstimateRateDecision stale : repository
+                    .findByUniqueEquipmentIdAndOperationKey(equipmentId, parts[1])) {
+                if (!e.getValue().contains(stale.getRateCode())) repository.delete(stale);
+            }
         }
         return result;
     }

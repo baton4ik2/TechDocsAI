@@ -9,7 +9,11 @@ public interface EstimateRateDecisionRepository extends JpaRepository<EstimateRa
 
     List<EstimateRateDecision> findByUniqueEquipmentIdOrderByOperationKey(Long uniqueEquipmentId);
 
-    Optional<EstimateRateDecision> findByUniqueEquipmentIdAndOperationKey(Long uniqueEquipmentId, String operationKey);
+    /** Решения одной категории операции — их может быть несколько (разные расценки). */
+    List<EstimateRateDecision> findByUniqueEquipmentIdAndOperationKey(Long uniqueEquipmentId, String operationKey);
+
+    Optional<EstimateRateDecision> findByUniqueEquipmentIdAndOperationKeyAndRateCode(
+            Long uniqueEquipmentId, String operationKey, String rateCode);
 
     List<EstimateRateDecision> findAllByOrderByUpdatedAtDesc();
 }
