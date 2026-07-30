@@ -41,17 +41,18 @@ class EstimateXlsxExporterTest {
         byte[] xlsx = exporter.export(estimate, List.of(row));
 
         try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(xlsx))) {
-            assertThat(wb.getSheet("Данные для расчёта")).isNotNull();
+            assertThat(wb.getSheet("Данные для расчета")).isNotNull();
             Sheet calc = wb.getSheet("Расчёт СН-2012");
             assertThat(calc).isNotNull();
 
-            Row data = calc.getRow(1);
+            // 0 — строка-заголовок расчёта, 1 — шапка, данные с 2-й (как в эталоне)
+            Row data = calc.getRow(2);
             assertThat(data.getCell(5).getStringCellValue()).isEqualTo("22-2203-113-1/1"); // шифр
             assertThat(data.getCell(19).getNumericCellValue()).isEqualTo(4347.12);          // Всего ЗП
             assertThat(data.getCell(26).getNumericCellValue()).isEqualTo(1721.86);          // НДС
 
-            Row total = calc.getRow(2);
-            assertThat(total.getCell(1).getStringCellValue()).isEqualTo("ИТОГО");
+            Row total = calc.getRow(3);
+            assertThat(total.getCell(1).getStringCellValue()).isEqualTo("ИТОГО в год");
             assertThat(total.getCell(25).getNumericCellValue()).isEqualTo(7826.616);        // без НДС
             assertThat(total.getCell(27).getNumericCellValue()).isEqualTo(9548.476);        // с НДС
         }
