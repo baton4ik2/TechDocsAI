@@ -12,10 +12,16 @@ import java.math.RoundingMode;
  * <pre>
  *   L = K·J                      N = L/M
  *   T(ЗП)=O·N·S  U(ЭМ)=P·N·S  V(ЗПМ)=Q·N·S  W(МР)=R·N
- *   X(НР)=T·нрЗП + U·нрЭМ         Y(НП)=T·нпЗП + V·нпЭМ
+ *   X(НР)=T·нрЗП + V·нрЭМ         Y(НП)=T·нпЗП + V·нпЭМ
  *   Z = T+U+W+X+Y                НДС=round(Z·ставка,2)   Итого=Z+НДС
+ *   AQ(трудозатраты за год) = L·AP   (итог сметы — сумма по строкам)
  *   РТ: ЗП/ЗПМ делятся на коэффициент РТ, ЭМ = ЭМ−ЗПМ+ЗПМ_рт, МР без изменений
+ *       (в т.ч. без поправочного коэффициента — как и W)
  * </pre>
+ * НР и НП начисляются на фонд оплаты труда: ЗП рабочих и ЗПМ (оплата труда
+ * машинистов), а не на полную стоимость эксплуатации машин — в ЭМ входят
+ * амортизация, ГСМ и ремонт, они не являются базой для начислений.
+ * <p>
  * Округляется только НДС (до копеек), как в эталоне; остальное — полная точность.
  */
 @Service
@@ -64,7 +70,8 @@ public class EstimateCalculator {
         BigDecimal em = p.multiply(n).multiply(s);      // U
         BigDecimal zpm = q.multiply(n).multiply(s);     // V
         BigDecimal mr = r.multiply(n);                  // W (без S)
-        BigDecimal nr = zp.multiply(c.nrZp()).add(em.multiply(c.nrEm()));   // X
+        // база начислений — ФОТ: ЗП рабочих (T) и ЗПМ (V), не полный ЭМ
+        BigDecimal nr = zp.multiply(c.nrZp()).add(zpm.multiply(c.nrEm()));  // X
         BigDecimal np = zp.multiply(c.npZp()).add(zpm.multiply(c.npEm()));  // Y
         BigDecimal noVat = zp.add(em).add(mr).add(nr).add(np);              // Z
         BigDecimal vat = round2(noVat.multiply(c.vat()));                   // AA
@@ -78,7 +85,7 @@ public class EstimateCalculator {
         BigDecimal zpRt = oRt.multiply(n).multiply(s);   // AG
         BigDecimal emRt = pRt.multiply(n).multiply(s);   // AH
         BigDecimal zpmRt = qRt.multiply(n).multiply(s);  // AI
-        BigDecimal mrRt = r.multiply(n);                 // AJ
+        BigDecimal mrRt = r.multiply(n);                 // AJ (без поправочного коэффициента, как и W)
         // в блоке РТ НР и НП начисляются от ЗПМ_рт (AI), а не от полного ЭМ_рт —
         // как в эталоне (AK=AG·нрЗП+AI·нрЭМ, AL=AG·нпЗП+AI·нпЭМ)
         BigDecimal nrRt = zpRt.multiply(c.nrZp()).add(zpmRt.multiply(c.nrEm())); // AK
@@ -87,7 +94,9 @@ public class EstimateCalculator {
         BigDecimal vatRt = round2(noVatRt.multiply(c.vat()));                    // AN
         BigDecimal withVatRt = noVatRt.add(vatRt);                               // AO
 
-        BigDecimal laborTotal = n.multiply(nz(row.getLaborHours()));             // AQ
+        // трудозатраты за год по строке = выполнений в год × чел-ч на единицу; итог сметы —
+        // сумма по строкам (см. EstimateXlsxExporter/EstimateService)
+        BigDecimal laborTotal = performed.multiply(nz(row.getLaborHours()));     // AQ = L·AP
 
         return new RowResult(performed, n,
                 zp, em, zpm, mr, nr, np, noVat, vat, withVat,

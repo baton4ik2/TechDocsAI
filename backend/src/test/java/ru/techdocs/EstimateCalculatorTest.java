@@ -117,12 +117,54 @@ class EstimateCalculatorTest {
                 row("2", "2", "1", "1", "2116.73", "1.18", "0.01", "0", "2.62"),
                 defaults());
 
-        // блок Москва (СН-2012)
-        assertThat(r2(res.totalWithVat())).isEqualByComparingTo("18603.62");   // AB
-        // блок РТ: НР и НП начисляются от ЗПМ, а не от полного ЭМ
+        // НР и НП в обоих блоках начисляются на ФОТ (ЗП + ЗПМ), не на полный ЭМ
+        assertThat(r2(res.totalWithVat())).isEqualByComparingTo("18599.17");   // AB
         assertThat(r2(res.totalNoVatRt())).isEqualByComparingTo("7632.58");    // AM
         assertThat(res.vatRt()).isEqualByComparingTo("1679.17");               // AN
         assertThat(r2(res.totalWithVatRt())).isEqualByComparingTo("9311.75");  // AO
+    }
+
+    /**
+     * НР считается от ЗПМ, а не от полного ЭМ — как в эталоне АПС.
+     * Строка эталона: ЗП=71302.09, ЭМ=7533.55, ЗПМ=4539.27 → НР=53452.09
+     * (от ЭМ было бы 55787.63 — расхождение больше 2 тыс. ₽ на строке).
+     */
+    @Test
+    void overheadsUseMachineOperatorsWagesNotFullMachineCost() {
+        // подбираем цены так, чтобы получить эталонные ЗП/ЭМ/ЗПМ при N=1
+        EstimateRow r = row("1", "1", "1", "1", "71302.09", "7533.55", "4539.27", "0", "0");
+        var res = calc.compute(r, defaults());
+
+        assertThat(res.zp()).isEqualByComparingTo("71302.09");
+        assertThat(res.em()).isEqualByComparingTo("7533.55");
+        assertThat(res.zpm()).isEqualByComparingTo("4539.27");
+        // X = 71302.09·0.7 + 4539.27·0.78 = 49911.463 + 3540.6306
+        assertThat(r2(res.nr())).isEqualByComparingTo("53452.09");
+        // Y = 71302.09·0.1 + 4539.27·0.3 = 7130.209 + 1361.781
+        assertThat(r2(res.np())).isEqualByComparingTo("8491.99");
+    }
+
+    /** Трудозатраты за год = выполнений в год × чел-ч (не «всего ед. измер.»). */
+    @Test
+    void labourHoursUsePerformancesPerYear() {
+        // K=38, J=2, M=10 → L=76, N=7.6; AP=0.5 → AQ = 76·0.5 = 38 (а не 7.6·0.5)
+        var res = calc.compute(
+                row("38", "2", "10", "1", "100", "0", "0", "0", "0.5"),
+                defaults());
+        assertThat(res.performedPerYear()).isEqualByComparingTo("76");
+        assertThat(res.totalUnits()).isEqualByComparingTo("7.6");
+        assertThat(res.laborHoursTotal()).isEqualByComparingTo("38");
+    }
+
+    /** МР в блоке РТ — без поправочного коэффициента (как и в блоке СН-2012). */
+    @Test
+    void materialsIgnoreCorrectionInBothBlocks() {
+        // R=10, K=2, J=3, M=1 → N=6, S=0.75: МР = 10·6 = 60 в обоих блоках
+        var res = calc.compute(
+                row("2", "3", "1", "0.75", "0", "0", "0", "10", "0"),
+                defaults());
+        assertThat(res.mr()).isEqualByComparingTo("60");
+        assertThat(res.mrRt()).isEqualByComparingTo("60");
     }
 
     /** ЭМ с ЗПМ: коэффициент РТ применяется только к ЗПМ внутри ЭМ. */
