@@ -71,14 +71,18 @@ class EstimateExportStyleTest {
                     .getFillForegroundColorColor().getARGBHex()).endsWith("00B050");
             assertThat(blue.getBorderBottom()).isEqualTo(BorderStyle.THIN);
 
-            // закрепление шапки и первых колонок
+            // закрепление шапки и колонок-описания (до шифра расценки)
             assertThat(sheet.getPaneInformation()).isNotNull();
             assertThat(sheet.getPaneInformation().getHorizontalSplitPosition()).isEqualTo((short) 2);
-            assertThat(sheet.getPaneInformation().getVerticalSplitPosition()).isEqualTo((short) 9);
+            assertThat(sheet.getPaneInformation().getVerticalSplitPosition()).isEqualTo((short) 6);
 
-            // ширины колонок заданы (не дефолтные)
-            assertThat(sheet.getColumnWidth(1)).isGreaterThan(20 * 256);
-            assertThat(sheet.getColumnWidth(6)).isGreaterThan(40 * 256);
+            // ширины заданы и компактны: закреплённый блок не занимает пол-экрана
+            int frozenWidth = 0;
+            for (int c = 0; c < 6; c++) frozenWidth += sheet.getColumnWidth(c) / 256;
+            assertThat(frozenWidth).isBetween(80, 100);
+            // денежные колонки узкие, но читаемые
+            assertThat(sheet.getColumnWidth(19) / 256).isBetween(9, 13);
+            assertThat(sheet.getColumnWidth(6) / 256).isLessThanOrEqualTo(30);
 
             // раздел выделен и объединён
             Row section = sheet.getRow(2);
