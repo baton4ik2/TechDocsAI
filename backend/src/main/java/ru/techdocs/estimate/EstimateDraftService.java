@@ -39,10 +39,13 @@ public class EstimateDraftService {
     private final EstimateDecisionService decisionService;
     private final EtalonTypeMatchService typeMatchService;
     private final NormativeRateRepository rateRepository;
+    private final ru.techdocs.object.FacilityRepository facilityRepository;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
 
     private static final int EXAMPLE_LIMIT = 20;   // сколько эталонных примеров подкладывать ИИ
     private static final double MODEL_MATCH_THRESHOLD = 0.75;  // схожесть моделей для «то же изделие»
+    /** Комплексные испытания систем противопожарной защиты — раз в год, измеритель 1000 м². */
+    private static final String FIRE_TEST_RATE = "22-2203-117-1/1";
 
     public record DraftResult(int created, int skipped, boolean aiUsed) {}
 
@@ -91,6 +94,8 @@ public class EstimateDraftService {
         Map<String, EstimateDecisionService.EtalonType> typeMatchCache = new HashMap<>();
         // эталон по всем системам — строится лениво, один раз на сборку
         EstimateDecisionService.SystemEtalon[] globalEtalonHolder = new EstimateDecisionService.SystemEtalon[1];
+        // системы, попавшие в смету — для общесистемных работ (комплексные испытания СПЗ)
+        Set<String> systemsInEstimate = new java.util.LinkedHashSet<>();
         int created = 0, skipped = 0;
         for (Equipment eq : equipment) {
             if (existing.contains(eq.getId())) { skipped++; continue; }
@@ -98,6 +103,7 @@ public class EstimateDraftService {
             if (isExcluded(eq.getName())) { skipped++; continue; }
 
             String systemType = systemName(eq.getEngineeringSystemId());
+            systemsInEstimate.add(systemType);
 
             // 1) память решений (эталоны): то же оборудование уже считали — берём готовое,
             //    без ИИ, консистентно. По строке на каждое запомненное решение.
@@ -183,9 +189,50 @@ public class EstimateDraftService {
                 }
             }
         }
+        created += addSystemWideRows(estimateId, estimate, systemsInEstimate);
+
         log.info("Черновик сметы {}: создано {} строк, пропущено {} (ИИ: {})",
                 estimateId, created, skipped, aiAvailable);
         return new DraftResult(created, skipped, aiAvailable);
+    }
+
+
+    /**
+     * Общесистемные работы, не привязанные к оборудованию. Для АПС это комплексные
+     * испытания систем противопожарной защиты (раз в год, измеритель 1000 м²):
+     * количество берётся из площади объекта. Площадь не указана — строка добавляется
+     * с пустым количеством и пометкой «на проверку», чтобы её не потеряли.
+     */
+    private int addSystemWideRows(Long estimateId, Estimate estimate, Set<String> systems) {
+        boolean hasFireAlarm = systems.stream()
+                .anyMatch(s -> "апс".equals(ru.techdocs.common.SystemNormalizer.canonical(s)));
+        if (!hasFireAlarm) return 0;
+
+        NormativeRate rate = catalogRate(FIRE_TEST_RATE);
+        if (rate == null) return 0;                       // расценки нет в каталоге — нечего добавлять
+        for (EstimateRow row : rowRepository.findByEstimateIdOrderByPosition(estimateId)) {
+            if (FIRE_TEST_RATE.equals(row.getRateCode())) return 0;   // уже добавлена
+        }
+
+        String system = systems.stream()
+                .filter(s -> "апс".equals(ru.techdocs.common.SystemNormalizer.canonical(s)))
+                .findFirst().orElse(null);
+        BigDecimal area = facilityRepository.findById(estimate.getFacilityId())
+                .map(ru.techdocs.object.Facility::getAreaSqm).orElse(null);
+        boolean noArea = area == null || area.signum() <= 0;
+
+        EstimateService.RowInput input = new EstimateService.RowInput(
+                system, null, "Системы противопожарной защиты объекта", null, null,
+                "Комплексные испытания систем пожарной сигнализации, оповещения и управления эвакуацией",
+                FIRE_TEST_RATE, null, "раз в год",
+                noArea ? "⚠ НА ПРОВЕРКУ: укажите площадь объекта — количество для расценки с измерителем в м² берётся из неё."
+                       : "Комплексные испытания СПЗ, количество — площадь объекта (измеритель расценки в м²).",
+                BigDecimal.ONE, noArea ? null : area,
+                null, null, null, null, null,
+                null, null,
+                noArea, "SYSTEM", null);
+        estimateService.addRow(estimateId, input);
+        return 1;
     }
 
     private void addRowForOperation(Long estimateId, Equipment eq, String systemType,

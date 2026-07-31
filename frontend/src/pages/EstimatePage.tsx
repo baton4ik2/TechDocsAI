@@ -21,6 +21,7 @@ function SourceBadge({ source }: { source?: string }) {
     AI:         { label: 'ИИ',          cls: 'bg-sky-100 text-sky-800',         title: 'Расценку подобрал ИИ из каталога СН-2012' },
     AI_FAILED: { label: 'ИИ не смог', cls: 'bg-amber-100 text-amber-800',    title: 'ИИ не подобрал расценку — выберите вручную' },
     CATALOG:   { label: 'поиск',     cls: 'bg-amber-100 text-amber-800',     title: 'Верхний результат поиска по каталогу (ИИ был выключен)' },
+    SYSTEM:    { label: 'по системе', cls: 'bg-indigo-100 text-indigo-800',  title: 'Общесистемная работа: добавляется в каждую смету этой инженерной системы (например, комплексные испытания АПС). Количество — площадь объекта' },
     MANUAL:    { label: 'вручную',   cls: 'bg-slate-100 text-slate-700',     title: 'Расценка задана вручную' },
   }
   const s = source ? map[source] : undefined

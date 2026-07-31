@@ -4,6 +4,7 @@ import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.usermodel.XSSFCellStyle;
 import org.apache.poi.xssf.usermodel.XSSFColor;
+import org.apache.poi.xssf.usermodel.XSSFFormulaEvaluator;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
 
@@ -56,6 +57,8 @@ public class EstimateXlsxExporter {
     private static final String GREEN = "00B050";   // блок РТ
     private static final String AMBER = "FFC000";   // расчётные колонки
     private static final String MONEY = "_-* #,##0.00_-;\\-* #,##0.00_-;_-* \\-??_-;_-@_-";
+    /** Лист параметров: НР/НП/НДС/коэффициент РТ/площадь — на него ссылаются все формулы. */
+    private static final String DATA_SHEET = "Данные для расчета";
 
     /** Янтарные колонки (как в эталоне): поправочный коэффициент и «Всего ЗП». */
     private static boolean amber(int col) {
@@ -85,8 +88,11 @@ public class EstimateXlsxExporter {
     public byte[] export(Estimate estimate, java.util.List<EstimateRow> rows, BigDecimal areaSqm) throws Exception {
         try (XSSFWorkbook wb = new XSSFWorkbook()) {
             Styles st = buildStyles(wb);
-            writeCalcSheet(wb, st, estimate, rows);  // первым — сам расчёт
-            writeDataSheet(wb, st, estimate, areaSqm);
+            writeDataSheet(wb, st, estimate, areaSqm);   // параметры — на них ссылаются формулы
+            writeCalcSheet(wb, st, estimate, rows);
+            wb.setSheetOrder("Расчёт СН-2012", 0);       // расчёт показываем первым
+            // считаем формулы, чтобы в файле были и формулы, и готовые значения
+            XSSFFormulaEvaluator.evaluateAllFormulaCells(wb);
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             wb.write(out);
             return out.toByteArray();
@@ -175,7 +181,7 @@ public class EstimateXlsxExporter {
     }
 
     private void writeDataSheet(Workbook wb, Styles st, Estimate e, BigDecimal areaSqm) {
-        Sheet sheet = wb.createSheet("Данные для расчета");
+        Sheet sheet = wb.createSheet(DATA_SHEET);
         sheet.setColumnWidth(0, 52 * 256);
         sheet.setColumnWidth(1, 12 * 256);
         Row head = sheet.createRow(0);
@@ -254,16 +260,24 @@ public class EstimateXlsxExporter {
         for (int c = 0; c <= 42; c++) total.createCell(c).setCellStyle(st.totalLabel);
         total.getCell(1).setCellValue("ИТОГО в год");
         sheet.addMergedRegion(new CellRangeAddress(r, r, 1, 8));
-        totalNum(total, 25, sumNoVat, st);
-        totalNum(total, 26, sumVat, st);
-        totalNum(total, 27, sumWithVat, st);
-        totalNum(total, 38, sumNoVatRt, st);
-        totalNum(total, 39, sumVatRt, st);
-        totalNum(total, 40, sumWithVatRt, st);
-        totalNum(total, 42, sumLabor, st);
+        // итоги — СУММ() по строкам расчёта, а не числом: пересчитываются вместе со строками
+        int firstDataRow = 3, lastDataRow = r;   // 1-based; строки-разделы пусты и в сумму не мешают
+        for (int col : new int[]{19, 20, 21, 22, 23, 24, 25, 26, 27,
+                                 32, 33, 34, 35, 36, 37, 38, 39, 40, 42}) {
+            String letter = org.apache.poi.ss.util.CellReference.convertNumToColString(col);
+            Cell c = total.getCell(col);
+            c.setCellFormula("SUM(" + letter + firstDataRow + ":" + letter + lastDataRow + ")");
+            c.setCellStyle(st.totalMoney);
+        }
     }
 
+    /**
+     * Строка расчёта: входные величины — значениями, все производные колонки — ФОРМУЛАМИ
+     * со ссылками на параметры листа «Данные для расчета» ($B$2…$B$7). Файл остаётся
+     * живым: меняются количество, коэффициент или НДС — Excel пересчитывает сам.
+     */
     private void writeRow(Row row, Styles st, EstimateRow src, EstimateCalculator.RowResult calc) {
+        int n = row.getRowNum() + 1;   // номер строки в адресах Excel (1-based)
         cell(row, 0, src.getPosition() == null ? null : String.valueOf(src.getPosition()), st.center);
         cell(row, 1, src.getEquipmentName(), st.textWrap);
         cell(row, 2, src.getEquipmentType(), st.text);
@@ -273,38 +287,54 @@ public class EstimateXlsxExporter {
         cell(row, 6, src.getRateName(), st.textWrap);
         cell(row, 7, src.getPeriodicity(), st.center);
         cell(row, 8, src.getJustification(), st.textWrap);
+        // входные величины
         num(row, 9, src.getOpsPerYear(), st.intNum);
         num(row, 10, src.getQty(), st.intNum);
-        num(row, 11, calc.performedPerYear(), st.intNum);
+        formula(row, 11, "K" + n + "*J" + n, st.intNum);                       // выполнений в год
         num(row, 12, src.getUnitBasis(), st.intNum);
-        num(row, 13, calc.totalUnits(), st.money);
+        formula(row, 13, "IFERROR(L" + n + "/M" + n + ",0)", st.money);        // всего ед. измер.
         num(row, 14, src.getPriceZp(), st.money);
         num(row, 15, src.getPriceEm(), st.money);
         num(row, 16, src.getPriceZpm(), st.money);
         num(row, 17, src.getPriceMr(), st.money);
         num(row, 18, src.getCorrection(), st.intNum);
-        num(row, 19, calc.zp(), st.money);
-        num(row, 20, calc.em(), st.money);
-        num(row, 21, calc.zpm(), st.money);
-        num(row, 22, calc.mr(), st.money);
-        num(row, 23, calc.nr(), st.money);
-        num(row, 24, calc.np(), st.money);
-        num(row, 25, calc.totalNoVat(), st.money);
-        num(row, 26, calc.vat(), st.money);
-        num(row, 27, calc.totalWithVat(), st.money);
-        // блок РТ (колонки цен на единицу 28–31 — справочные, опускаем; заполняем «всего»)
-        for (int c = 28; c <= 31; c++) row.createCell(c).setCellStyle(st.money);
-        num(row, 32, calc.zpRt(), st.money);
-        num(row, 33, calc.emRt(), st.money);
-        num(row, 34, calc.zpmRt(), st.money);
-        num(row, 35, calc.mrRt(), st.money);
-        num(row, 36, calc.nrRt(), st.money);
-        num(row, 37, calc.npRt(), st.money);
-        num(row, 38, calc.totalNoVatRt(), st.money);
-        num(row, 39, calc.vatRt(), st.money);
-        num(row, 40, calc.totalWithVatRt(), st.money);
+        // блок СН-2012
+        formula(row, 19, "O" + n + "*N" + n + "*S" + n, st.money);             // всего ЗП
+        formula(row, 20, "P" + n + "*N" + n + "*S" + n, st.money);             // всего ЭМ
+        formula(row, 21, "Q" + n + "*N" + n + "*S" + n, st.money);             // в т.ч. ЗПМ
+        formula(row, 22, "R" + n + "*N" + n, st.money);                        // всего МР (без коэф.)
+        formula(row, 23, "T" + n + "*" + p("B", 2) + "+V" + n + "*" + p("B", 4), st.money);  // НР
+        formula(row, 24, "T" + n + "*" + p("B", 3) + "+V" + n + "*" + p("B", 5), st.money);  // НП
+        formula(row, 25, "T" + n + "+U" + n + "+W" + n + "+X" + n + "+Y" + n, st.money);
+        formula(row, 26, "ROUND(Z" + n + "*" + p("B", 6) + ",2)", st.money);   // НДС
+        formula(row, 27, "Z" + n + "+AA" + n, st.money);
+        // блок РТ: цены на единицу тоже формулами — их ищет проверяющий
+        formula(row, 28, "IFERROR(O" + n + "/" + p("B", 7) + ",0)", st.money);
+        formula(row, 29, "(P" + n + "-Q" + n + ")+AE" + n, st.money);
+        formula(row, 30, "IFERROR(Q" + n + "/" + p("B", 7) + ",0)", st.money);
+        formula(row, 31, "R" + n, st.money);
+        formula(row, 32, "AC" + n + "*N" + n + "*S" + n, st.money);
+        formula(row, 33, "AD" + n + "*N" + n + "*S" + n, st.money);
+        formula(row, 34, "AE" + n + "*N" + n + "*S" + n, st.money);
+        formula(row, 35, "AF" + n + "*N" + n, st.money);                       // МР без коэф.
+        formula(row, 36, "AG" + n + "*" + p("B", 2) + "+AI" + n + "*" + p("B", 4), st.money);
+        formula(row, 37, "AG" + n + "*" + p("B", 3) + "+AI" + n + "*" + p("B", 5), st.money);
+        formula(row, 38, "AG" + n + "+AH" + n + "+AJ" + n + "+AK" + n + "+AL" + n, st.money);
+        formula(row, 39, "ROUND(AM" + n + "*" + p("B", 6) + ",2)", st.money);
+        formula(row, 40, "AM" + n + "+AN" + n, st.money);
         num(row, 41, src.getLaborHours(), st.money);
-        num(row, 42, calc.laborHoursTotal(), st.money);
+        formula(row, 42, "N" + n + "*AP" + n, st.money);                       // трудозатраты за год
+    }
+
+    /** Абсолютная ссылка на параметр листа «Данные для расчета». */
+    private static String p(String col, int excelRow) {
+        return "'" + DATA_SHEET + "'!$" + col + "$" + excelRow;
+    }
+
+    private void formula(Row row, int col, String formula, CellStyle style) {
+        Cell c = row.createCell(col);
+        c.setCellFormula(formula);
+        c.setCellStyle(style);
     }
 
     private void cell(Row row, int col, String value, CellStyle style) {

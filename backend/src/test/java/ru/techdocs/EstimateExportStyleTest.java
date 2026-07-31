@@ -107,6 +107,37 @@ class EstimateExportStyleTest {
         }
     }
 
+    /**
+     * Файл живой: производные колонки — формулы со ссылками на параметры, итог — СУММ().
+     * Значения при этом посчитаны, поэтому файл читается и без пересчёта.
+     */
+    @Test
+    void computedColumnsAreFormulas() throws Exception {
+        byte[] bytes = exporter.export(estimate(), List.of(row("АПС", "Извещатель")));
+        try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet sheet = wb.getSheet("Расчёт СН-2012");
+            Row data = sheet.getRow(3);   // 0 заголовок, 1 шапка, 2 раздел, 3 данные
+
+            assertThat(data.getCell(11).getCellFormula()).isEqualTo("K4*J4");            // выполнений в год
+            assertThat(data.getCell(13).getCellFormula()).contains("L4/M4");             // всего ед. измер.
+            assertThat(data.getCell(19).getCellFormula()).isEqualTo("O4*N4*S4");         // всего ЗП
+            // НР/НП и НДС ссылаются на лист параметров
+            assertThat(data.getCell(23).getCellFormula()).contains("'Данные для расчета'!$B$2");
+            assertThat(data.getCell(26).getCellFormula()).startsWith("ROUND(Z4*");
+            // блок РТ: цены на единицу заполнены формулами (колонки AC–AF)
+            assertThat(data.getCell(28).getCellFormula()).contains("O4/'Данные для расчета'!$B$7");
+            assertThat(data.getCell(31).getCellFormula()).isEqualTo("R4");
+            assertThat(data.getCell(42).getCellFormula()).isEqualTo("N4*AP4");           // трудозатраты
+
+            // значения посчитаны: ЗП = 139.33 × (5×2) = 1393.30
+            assertThat(data.getCell(19).getNumericCellValue()).isEqualTo(1393.30, org.assertj.core.data.Offset.offset(0.01));
+
+            // итог — СУММ по строкам
+            Row total = sheet.getRow(sheet.getLastRowNum());
+            assertThat(total.getCell(25).getCellFormula()).startsWith("SUM(Z3:Z");
+        }
+    }
+
     /** Площадь объекта попадает на лист коэффициентов — её берут расценки с измерителем в м². */
     @Test
     void areaGoesToDataSheet() throws Exception {
