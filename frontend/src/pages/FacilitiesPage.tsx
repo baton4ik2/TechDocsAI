@@ -86,6 +86,7 @@ export default function FacilitiesPage() {
 function CreateFacilityModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
+  const [areaSqm, setAreaSqm] = useState('')
   const [description, setDescription] = useState('')
   const [systems, setSystems] = useState<string[]>([])
   const [customSystem, setCustomSystem] = useState('')
@@ -103,7 +104,11 @@ function CreateFacilityModal({ onClose, onCreated }: { onClose: () => void; onCr
     try {
       const allSystems = [...systems]
       if (customSystem.trim()) allSystems.push(customSystem.trim())
-      await api.post('/api/facilities', { name, address, description, systems: allSystems })
+      await api.post('/api/facilities', {
+        name, address, description,
+        areaSqm: areaSqm.trim() ? Number(areaSqm.replace(',', '.')) : null,
+        systems: allSystems,
+      })
       onCreated()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ошибка')
@@ -121,6 +126,15 @@ function CreateFacilityModal({ onClose, onCreated }: { onClose: () => void; onCr
         <div>
           <label className="label">Адрес</label>
           <input className="input" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="г. Казань, ул. …" />
+        </div>
+        <div>
+          <label className="label">Площадь объекта, м²</label>
+          <input className="input" type="number" step="0.01" min="0" value={areaSqm}
+                 onChange={(e) => setAreaSqm(e.target.value)} placeholder="необязательно" />
+          <p className="text-xs text-slate-400 mt-1">
+            Нужна расценкам с измерителем в м² (например, проверка работоспособности систем
+            противопожарной защиты — измеритель 1000 м²).
+          </p>
         </div>
         <div>
           <label className="label">Описание</label>

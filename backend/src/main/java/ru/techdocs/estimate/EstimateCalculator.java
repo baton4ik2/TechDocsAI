@@ -14,7 +14,7 @@ import java.math.RoundingMode;
  *   T(ЗП)=O·N·S  U(ЭМ)=P·N·S  V(ЗПМ)=Q·N·S  W(МР)=R·N
  *   X(НР)=T·нрЗП + V·нрЭМ         Y(НП)=T·нпЗП + V·нпЭМ
  *   Z = T+U+W+X+Y                НДС=round(Z·ставка,2)   Итого=Z+НДС
- *   AQ(трудозатраты за год) = L·AP   (итог сметы — сумма по строкам)
+ *   AQ(трудозатраты за год) = N·AP   (AP — на единицу измерения; итог — сумма строк)
  *   РТ: ЗП/ЗПМ делятся на коэффициент РТ, ЭМ = ЭМ−ЗПМ+ЗПМ_рт, МР без изменений
  *       (в т.ч. без поправочного коэффициента — как и W)
  * </pre>
@@ -94,9 +94,10 @@ public class EstimateCalculator {
         BigDecimal vatRt = round2(noVatRt.multiply(c.vat()));                    // AN
         BigDecimal withVatRt = noVatRt.add(vatRt);                               // AO
 
-        // трудозатраты за год по строке = выполнений в год × чел-ч на единицу; итог сметы —
-        // сумма по строкам (см. EstimateXlsxExporter/EstimateService)
-        BigDecimal laborTotal = performed.multiply(nz(row.getLaborHours()));     // AQ = L·AP
+        // AP — затраты труда НА ЕДИНИЦУ ИЗМЕРЕНИЯ расценки, поэтому за год берём
+        // N (всего единиц измерения), а не L: у расценок с измерителем «10 шт.»
+        // L завышает трудозатраты в 10 раз. Итог сметы — сумма по строкам.
+        BigDecimal laborTotal = n.multiply(nz(row.getLaborHours()));             // AQ = N·AP
 
         return new RowResult(performed, n,
                 zp, em, zpm, mr, nr, np, noVat, vat, withVat,

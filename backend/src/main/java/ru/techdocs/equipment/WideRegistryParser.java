@@ -25,6 +25,15 @@ public class WideRegistryParser {
     private static final Set<String> NOTE_ROWS = Set.of(
             "по итд", "нет итд", "по пд и итд", "по пд", "итд", "-", "—");
 
+    /**
+     * Подзаголовки, которые НЕ выделяются в отдельную инженерную систему: оборудование
+     * под ними обслуживается в составе системы блока и попадает в ту же смету
+     * (АГПТ/АУПТ — автоматическое пожаротушение внутри блока пожарной сигнализации).
+     */
+    private static final Set<String> SAME_SYSTEM_SUBHEADERS = Set.of(
+            "агпт", "аупт", "апт", "пожаротушение", "газовое пожаротушение",
+            "автоматическое газовое пожаротушение");
+
     private record Block(String systemName, int manufacturerCol, int nameCol,
                          int modelCol, int qtyCol, int unitCol) {}
 
@@ -87,9 +96,16 @@ public class WideRegistryParser {
                 if (NOTE_ROWS.contains(lower)) continue;
 
                 boolean onlyName = manufacturer.isBlank() && model.isBlank() && qtyRaw.isBlank();
-                if (onlyName && name.length() <= 30) {
-                    // подзаголовок внутри блока: «СОУЭ», «АОВ», «АДУ»
-                    subsystemOf.put(b, name.strip());
+                if (onlyName && name.length() <= 60) {
+                    // подзаголовок внутри блока: «СОУЭ», «АОВ», «АДУ», «АГПТ».
+                    // Пожаротушение остаётся в системе блока — считаем в той же смете;
+                    // остальные подзаголовки выделяются в свою систему.
+                    String sub = name.strip();
+                    if (SAME_SYSTEM_SUBHEADERS.contains(sub.toLowerCase(Locale.ROOT))) {
+                        subsystemOf.remove(b);
+                    } else {
+                        subsystemOf.put(b, sub);
+                    }
                     continue;
                 }
 

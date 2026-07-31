@@ -106,4 +106,17 @@ class EstimateExportStyleTest {
             assertThat(wb.getSheet("Данные для расчета")).isNotNull();
         }
     }
+
+    /** Площадь объекта попадает на лист коэффициентов — её берут расценки с измерителем в м². */
+    @Test
+    void areaGoesToDataSheet() throws Exception {
+        byte[] bytes = exporter.export(estimate(), List.of(row("АПС", "Извещатель")),
+                new BigDecimal("5000"));
+        try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet data = wb.getSheet("Данные для расчета");
+            Row area = data.getRow(7);
+            assertThat(area.getCell(0).getStringCellValue()).contains("Площадь объекта");
+            assertThat(area.getCell(1).getNumericCellValue()).isEqualTo(5000.0);
+        }
+    }
 }

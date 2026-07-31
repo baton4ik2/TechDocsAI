@@ -78,10 +78,15 @@ public class EstimateXlsxExporter {
     }
 
     public byte[] export(Estimate estimate, java.util.List<EstimateRow> rows) throws Exception {
+        return export(estimate, rows, null);
+    }
+
+    /** areaSqm — площадь объекта, м² (для расценок с измерителем в м²); может быть null. */
+    public byte[] export(Estimate estimate, java.util.List<EstimateRow> rows, BigDecimal areaSqm) throws Exception {
         try (XSSFWorkbook wb = new XSSFWorkbook()) {
             Styles st = buildStyles(wb);
             writeCalcSheet(wb, st, estimate, rows);  // первым — сам расчёт
-            writeDataSheet(wb, st, estimate);
+            writeDataSheet(wb, st, estimate, areaSqm);
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             wb.write(out);
             return out.toByteArray();
@@ -169,7 +174,7 @@ public class EstimateXlsxExporter {
                 (byte) Integer.parseInt(hex.substring(4, 6), 16)};
     }
 
-    private void writeDataSheet(Workbook wb, Styles st, Estimate e) {
+    private void writeDataSheet(Workbook wb, Styles st, Estimate e, BigDecimal areaSqm) {
         Sheet sheet = wb.createSheet("Данные для расчета");
         sheet.setColumnWidth(0, 52 * 256);
         sheet.setColumnWidth(1, 12 * 256);
@@ -183,6 +188,8 @@ public class EstimateXlsxExporter {
         putKv(sheet, 4, "Нормативная прибыль, в % от затрат на эксплуатацию", e.getNpEm());
         putKv(sheet, 5, "НДС", e.getVat());
         putKv(sheet, 6, "Коэффициент перехода в уровень РТ", e.getRtCoefficient());
+        // площадь нужна расценкам с измерителем в м² (напр. проверка работоспособности СПЗ)
+        putKv(sheet, 7, "Площадь объекта, м²", areaSqm);
     }
 
     private void putKv(Sheet sheet, int rowIdx, String label, BigDecimal value) {

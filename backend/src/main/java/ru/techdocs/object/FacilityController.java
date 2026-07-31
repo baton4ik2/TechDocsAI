@@ -27,7 +27,7 @@ public class FacilityController {
     private final FacilityStatsService statsService;
 
     public record FacilityRequest(@NotBlank String name, String address, String description,
-                                  String status, List<String> systems) {}
+                                  String status, java.math.BigDecimal areaSqm, List<String> systems) {}
 
     @GetMapping
     public List<FacilityStatsService.FacilityWithStats> list(@RequestParam(required = false) String search) {
@@ -50,6 +50,7 @@ public class FacilityController {
         facility.setName(request.name());
         facility.setAddress(request.address());
         facility.setDescription(request.description());
+        facility.setAreaSqm(request.areaSqm());
         if (request.status() != null) facility.setStatus(request.status());
         facility = facilityRepository.save(facility);
 
@@ -73,6 +74,7 @@ public class FacilityController {
         facility.setName(request.name());
         facility.setAddress(request.address());
         facility.setDescription(request.description());
+        facility.setAreaSqm(request.areaSqm());
         if (request.status() != null) facility.setStatus(request.status());
         facilityRepository.save(facility);
         return statsService.withStats(List.of(facility)).getFirst();

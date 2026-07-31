@@ -144,16 +144,19 @@ class EstimateCalculatorTest {
         assertThat(r2(res.np())).isEqualByComparingTo("8491.99");
     }
 
-    /** Трудозатраты за год = выполнений в год × чел-ч (не «всего ед. измер.»). */
+    /**
+     * Трудозатраты за год = всего ед. измерения × чел-ч на единицу. AP нормирован
+     * на измеритель расценки, поэтому у «10 шт.» брать выполнения нельзя — завысит вдесятеро.
+     */
     @Test
-    void labourHoursUsePerformancesPerYear() {
-        // K=38, J=2, M=10 → L=76, N=7.6; AP=0.5 → AQ = 76·0.5 = 38 (а не 7.6·0.5)
+    void labourHoursUseTotalUnitsNotPerformances() {
+        // K=38, J=2, M=10 → L=76, N=7.6; AP=0.5 → AQ = 7.6·0.5 = 3.8 (а не 76·0.5)
         var res = calc.compute(
                 row("38", "2", "10", "1", "100", "0", "0", "0", "0.5"),
                 defaults());
         assertThat(res.performedPerYear()).isEqualByComparingTo("76");
         assertThat(res.totalUnits()).isEqualByComparingTo("7.6");
-        assertThat(res.laborHoursTotal()).isEqualByComparingTo("38");
+        assertThat(res.laborHoursTotal()).isEqualByComparingTo("3.8");
     }
 
     /** МР в блоке РТ — без поправочного коэффициента (как и в блоке СН-2012). */

@@ -3,6 +3,7 @@ export interface Facility {
   name: string
   address?: string
   description?: string
+  areaSqm?: number
   status: string
   createdAt: string
   documentCount: number

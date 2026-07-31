@@ -28,6 +28,10 @@ public class Facility {
 
     private String description;
 
+    /** Площадь объекта, м² — для расценок с измерителем в м². Необязательное. */
+    @Column(name = "area_sqm")
+    private java.math.BigDecimal areaSqm;
+
     @Column(nullable = false)
     private String status = "ACTIVE";
 

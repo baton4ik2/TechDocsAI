@@ -26,6 +26,7 @@ public class EstimateController {
     private final EstimateDraftService draftService;
     private final EstimateDecisionService decisionService;
     private final ReferenceEstimateImportService referenceImportService;
+    private final ru.techdocs.object.FacilityRepository facilityRepository;
 
     @PostMapping
     public Estimate create(@RequestParam Long facilityId,
@@ -94,7 +95,9 @@ public class EstimateController {
     public ResponseEntity<ByteArrayResource> export(@PathVariable Long id) throws Exception {
         Estimate estimate = estimateService.get(id);
         List<EstimateRow> rows = rowRepository.findByEstimateIdOrderByPosition(id);
-        byte[] xlsx = exporter.export(estimate, rows);
+        java.math.BigDecimal area = facilityRepository.findById(estimate.getFacilityId())
+                .map(ru.techdocs.object.Facility::getAreaSqm).orElse(null);
+        byte[] xlsx = exporter.export(estimate, rows, area);
         String filename = "Смета_" + estimate.getName().replaceAll("[^\\p{L}\\p{N}._-]", "_") + ".xlsx";
         String encoded = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
         return ResponseEntity.ok()

@@ -52,6 +52,14 @@ class WideRegistryParserTest {
             // строка 5: строка-пометка «По ИТД» — должна игнорироваться
             Row r5 = sheet.createRow(5);
             r5.createCell(1).setCellValue("По ИТД");
+            // строка 6: подзаголовок «АГПТ» — пожаротушение считаем в системе блока
+            Row r6 = sheet.createRow(6);
+            r6.createCell(5).setCellValue("АГПТ");
+            // строка 7: позиция под АГПТ
+            Row r7 = sheet.createRow(7);
+            r7.createCell(5).setCellValue("Модуль пожаротушения");
+            r7.createCell(6).setCellValue("FR750E");
+            r7.createCell(7).setCellValue("1");
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             wb.write(out);
@@ -85,6 +93,20 @@ class WideRegistryParserTest {
                 .filter(i -> i.name().contains("Громкоговоритель")).findFirst().orElseThrow();
         assertThat(gromko.systemName()).isEqualTo("СОУЭ");
         assertThat(gromko.model()).isEqualTo("LPA-6W");
+    }
+
+    /** АГПТ — не отдельная система: оборудование остаётся в системе блока и идёт в ту же смету. */
+    @Test
+    void fireSuppressionSubheaderStaysInBlockSystem() throws Exception {
+        List<WideRegistryParser.WideItem> items = parser.parse("реестр.xlsx",
+                new ByteArrayInputStream(wideWorkbook()));
+
+        WideRegistryParser.WideItem module = items.stream()
+                .filter(i -> i.name().contains("Модуль пожаротушения")).findFirst().orElseThrow();
+        assertThat(module.systemName()).isEqualTo("Пожарная сигнализация");
+        assertThat(module.model()).isEqualTo("FR750E");
+        // сам подзаголовок в оборудование не попадает
+        assertThat(items).noneMatch(i -> i.name().equalsIgnoreCase("АГПТ"));
     }
 
     @Test
