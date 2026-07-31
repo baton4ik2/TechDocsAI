@@ -36,7 +36,8 @@ public class EstimateXlsxExporter {
             "Всего ЗП:", "Всего: ЭМ", "в том числе ЗПМ", "Всего МР:", "НР", "НП",
             "Итого в год (без НДС)", "НДС", "Итого в год (с НДС)",
             "Справочно: затраты труда человеко-часов (на ед. измерения)",
-            "Справочно: затраты труда человеко-часов (Общее за год)"
+            "Справочно: затраты труда человеко-часов (Общее за год)",
+            "разметка отклонений", "обоснование расценки"
     };
 
     /**
@@ -47,8 +48,12 @@ public class EstimateXlsxExporter {
     private static final int[] WIDTHS = {
             5, 26, 13, 12, 22, 15, 28, 11, 16, 8, 8, 8, 8, 9,
             10, 10, 10, 10, 8, 11, 10, 10, 10, 11, 10, 12, 10, 12,
-            10, 10, 10, 10, 11, 10, 10, 10, 11, 10, 12, 10, 12, 9, 10
+            10, 10, 10, 10, 11, 10, 10, 10, 11, 10, 12, 10, 12, 9, 10,
+            13, 30
     };
+
+    /** Последняя колонка расчёта (AS «обоснование расценки»). */
+    private static final int LAST_COL = HEADERS.length - 1;
 
     /** Сколько колонок держать на виду при прокрутке: до шифра расценки включительно. */
     private static final int FROZEN_COLUMNS = 6;
@@ -59,6 +64,10 @@ public class EstimateXlsxExporter {
     private static final String MONEY = "_-* #,##0.00_-;\\-* #,##0.00_-;_-* \\-??_-;_-@_-";
     /** Лист параметров: НР/НП/НДС/коэффициент РТ/площадь — на него ссылаются все формулы. */
     private static final String DATA_SHEET = "Данные для расчета";
+    /** Лист-справочник расценок: цены и трудозатраты, которые тянет ВПР со листа расчёта. */
+    private static final String RATES_SHEET = "Справочник СН-2012";
+    /** Сводная: оборудование ↔ расценка осмотра ↔ расценка ТО ↔ периодичность. */
+    private static final String SUMMARY_SHEET = "Сводная таблица";
 
     /** Янтарные колонки (как в эталоне): поправочный коэффициент и «Всего ЗП». */
     private static boolean amber(int col) {
@@ -78,6 +87,15 @@ public class EstimateXlsxExporter {
         CellStyle text, textWrap, center, money, intNum;
         CellStyle section;
         CellStyle totalLabel, totalMoney;
+        CellStyle markChanged, markAdded;
+    }
+
+    /** Запись «Истории версий»: номер выгрузки и когда она сделана. */
+    public record Version(int number, java.time.Instant exportedAt) {
+        /** Подпись версии: 1 → v1, 2 → v1_1, 3 → v1_2 (как в эталоне). */
+        public String label() {
+            return number <= 1 ? "v1" : "v1_" + (number - 1);
+        }
     }
 
     public byte[] export(Estimate estimate, java.util.List<EstimateRow> rows) throws Exception {
@@ -86,11 +104,25 @@ public class EstimateXlsxExporter {
 
     /** areaSqm — площадь объекта, м² (для расценок с измерителем в м²); может быть null. */
     public byte[] export(Estimate estimate, java.util.List<EstimateRow> rows, BigDecimal areaSqm) throws Exception {
+        return export(estimate, rows, areaSqm, java.util.List.of());
+    }
+
+    /**
+     * Полная выгрузка: расчёт (формулами), сводная таблица, справочник расценок для ВПР,
+     * лист параметров с историей версий.
+     */
+    public byte[] export(Estimate estimate, java.util.List<EstimateRow> rows, BigDecimal areaSqm,
+                         java.util.List<Version> history) throws Exception {
         try (XSSFWorkbook wb = new XSSFWorkbook()) {
             Styles st = buildStyles(wb);
-            writeDataSheet(wb, st, estimate, areaSqm);   // параметры — на них ссылаются формулы
-            writeCalcSheet(wb, st, estimate, rows);
+            writeDataSheet(wb, st, estimate, areaSqm, history);   // параметры — на них ссылаются формулы
+            java.util.Map<String, RateRef> rates = collectRates(rows);
+            writeRatesSheet(wb, st, rates);                        // база для ВПР
+            writeSummarySheet(wb, st, rows);
+            writeCalcSheet(wb, st, estimate, rows, rates);
             wb.setSheetOrder("Расчёт СН-2012", 0);       // расчёт показываем первым
+            wb.setSheetOrder(SUMMARY_SHEET, 1);
+            wb.setSheetOrder(RATES_SHEET, 2);
             // считаем формулы, чтобы в файле были и формулы, и готовые значения
             XSSFFormulaEvaluator.evaluateAllFormulaCells(wb);
             ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -145,6 +177,10 @@ public class EstimateXlsxExporter {
         s.totalMoney = bordered(wb);
         s.totalMoney.setFont(totalFont);
         s.totalMoney.setDataFormat(fmt);
+
+        // разметка отклонений от эталона: жёлтый — изменено, зелёный — добавлено
+        s.markChanged = fill(wb, "FFF2CC");
+        s.markAdded = fill(wb, "E2EFDA");
         return s;
     }
 
@@ -157,6 +193,15 @@ public class EstimateXlsxExporter {
         st.setVerticalAlignment(VerticalAlignment.CENTER);
         st.setWrapText(true);
         border(st);
+        return st;
+    }
+
+    /** Ячейка с заливкой (для разметки отклонений). */
+    private CellStyle fill(XSSFWorkbook wb, String hex) {
+        XSSFCellStyle st = (XSSFCellStyle) bordered(wb);
+        st.setFillForegroundColor(new XSSFColor(rgb(hex), null));
+        st.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        st.setAlignment(HorizontalAlignment.CENTER);
         return st;
     }
 
@@ -180,10 +225,12 @@ public class EstimateXlsxExporter {
                 (byte) Integer.parseInt(hex.substring(4, 6), 16)};
     }
 
-    private void writeDataSheet(Workbook wb, Styles st, Estimate e, BigDecimal areaSqm) {
+    private void writeDataSheet(Workbook wb, Styles st, Estimate e, BigDecimal areaSqm,
+                                java.util.List<Version> history) {
         Sheet sheet = wb.createSheet(DATA_SHEET);
         sheet.setColumnWidth(0, 52 * 256);
-        sheet.setColumnWidth(1, 12 * 256);
+        sheet.setColumnWidth(1, 20 * 256);
+        sheet.setColumnWidth(2, 40 * 256);
         Row head = sheet.createRow(0);
         Cell h = head.createCell(0);
         h.setCellValue("Вспомогательные данные для расчета сметы");
@@ -196,7 +243,31 @@ public class EstimateXlsxExporter {
         putKv(sheet, 6, "Коэффициент перехода в уровень РТ", e.getRtCoefficient());
         // площадь нужна расценкам с измерителем в м² (напр. проверка работоспособности СПЗ)
         putKv(sheet, 7, "Площадь объекта, м²", areaSqm);
+
+        // История версий: каждая выгрузка — отдельная строка (v1 → v1_1 → v1_2)
+        Row title = sheet.createRow(9);
+        Cell t = title.createCell(0);
+        t.setCellValue("История версий");
+        t.setCellStyle(st.title);
+        Row header = sheet.createRow(10);
+        String[] cols = {"Версия", "Дата выгрузки", "Смета"};
+        for (int c = 0; c < cols.length; c++) {
+            Cell hc = header.createCell(c);
+            hc.setCellValue(cols[c]);
+            hc.setCellStyle(st.headBlue);
+        }
+        int r = 11;
+        for (Version v : history) {
+            Row row = sheet.createRow(r++);
+            row.createCell(0).setCellValue(v.label());
+            row.createCell(1).setCellValue(v.exportedAt() == null ? "" : DATE_TIME.format(v.exportedAt()));
+            row.createCell(2).setCellValue(e.getName() == null ? "" : e.getName());
+        }
     }
+
+    private static final java.time.format.DateTimeFormatter DATE_TIME =
+            java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
+                    .withZone(java.time.ZoneId.systemDefault());
 
     private void putKv(Sheet sheet, int rowIdx, String label, BigDecimal value) {
         Row row = sheet.createRow(rowIdx);
@@ -204,7 +275,112 @@ public class EstimateXlsxExporter {
         if (value != null) row.createCell(1).setCellValue(value.doubleValue());
     }
 
-    private void writeCalcSheet(Workbook wb, Styles st, Estimate estimate, java.util.List<EstimateRow> rows) {
+    /** Расценка справочника: цены и трудозатраты, одинаковые для всех строк с этим шифром. */
+    private record RateRef(String code, String name, BigDecimal basis, BigDecimal zp, BigDecimal em,
+                           BigDecimal zpm, BigDecimal mr, BigDecimal laborHours, int row) {}
+
+    /**
+     * Справочник расценок сметы: по одной записи на шифр (первое вхождение).
+     * Строки, у которых цены отличаются от справочника (инженер правил вручную),
+     * ВПР не используют — у них останутся собственные значения.
+     */
+    private java.util.Map<String, RateRef> collectRates(java.util.List<EstimateRow> rows) {
+        java.util.Map<String, RateRef> rates = new java.util.LinkedHashMap<>();
+        int excelRow = 2;   // строка 1 — шапка справочника
+        for (EstimateRow r : rows) {
+            String code = r.getRateCode();
+            if (code == null || code.isBlank() || rates.containsKey(code)) continue;
+            rates.put(code, new RateRef(code, r.getRateName(), r.getUnitBasis(), r.getPriceZp(),
+                    r.getPriceEm(), r.getPriceZpm(), r.getPriceMr(), r.getLaborHours(), excelRow++));
+        }
+        return rates;
+    }
+
+    private void writeRatesSheet(Workbook wb, Styles st, java.util.Map<String, RateRef> rates) {
+        Sheet sheet = wb.createSheet(RATES_SHEET);
+        String[] cols = {"Шифр расценки", "Наименование расценки", "Измеритель (ед. оборудования)",
+                "ЗП", "ЭМ", "в т.ч. ЗПМ", "МР", "Затраты труда, чел.-ч"};
+        int[] widths = {17, 60, 14, 11, 11, 11, 11, 13};
+        Row header = sheet.createRow(0);
+        header.setHeightInPoints(30);
+        for (int c = 0; c < cols.length; c++) {
+            Cell hc = header.createCell(c);
+            hc.setCellValue(cols[c]);
+            hc.setCellStyle(st.headBlue);
+            sheet.setColumnWidth(c, widths[c] * 256);
+        }
+        int r = 1;
+        for (RateRef ref : rates.values()) {
+            Row row = sheet.createRow(r++);
+            cell(row, 0, ref.code(), st.center);
+            cell(row, 1, ref.name(), st.textWrap);
+            num(row, 2, ref.basis(), st.intNum);
+            num(row, 3, ref.zp(), st.money);
+            num(row, 4, ref.em(), st.money);
+            num(row, 5, ref.zpm(), st.money);
+            num(row, 6, ref.mr(), st.money);
+            num(row, 7, ref.laborHours(), st.money);
+        }
+        sheet.createFreezePane(1, 1);
+    }
+
+    /**
+     * Сводная таблица: по оборудованию — расценка осмотра, расценка ТО и периодичности.
+     * Это первое, что смотрит проверяющий: видно, что у каждого изделия закрыты обе работы.
+     */
+    private void writeSummarySheet(Workbook wb, Styles st, java.util.List<EstimateRow> rows) {
+        Sheet sheet = wb.createSheet(SUMMARY_SHEET);
+        String[] cols = {"Система", "Оборудование", "Тип / модель", "Кол-во",
+                "Осмотр: шифр", "Осмотр: периодичность", "ТО: шифр", "ТО: периодичность",
+                "Прочие работы"};
+        int[] widths = {18, 34, 20, 8, 17, 20, 17, 20, 30};
+        Row header = sheet.createRow(0);
+        header.setHeightInPoints(30);
+        for (int c = 0; c < cols.length; c++) {
+            Cell hc = header.createCell(c);
+            hc.setCellValue(cols[c]);
+            hc.setCellStyle(st.headBlue);
+            sheet.setColumnWidth(c, widths[c] * 256);
+        }
+
+        // группируем по (раздел, оборудование, модель) — порядок строк сметы сохраняем
+        record Key(String section, String name, String type) {}
+        java.util.Map<Key, java.util.List<EstimateRow>> groups = new java.util.LinkedHashMap<>();
+        for (EstimateRow r : rows) {
+            groups.computeIfAbsent(new Key(r.getSection(), r.getEquipmentName(), r.getEquipmentType()),
+                    k -> new java.util.ArrayList<>()).add(r);
+        }
+
+        int n = 1;
+        for (var e : groups.entrySet()) {
+            Row row = sheet.createRow(n++);
+            cell(row, 0, e.getKey().section(), st.text);
+            cell(row, 1, e.getKey().name(), st.textWrap);
+            cell(row, 2, e.getKey().type(), st.text);
+            num(row, 3, e.getValue().get(0).getQty(), st.intNum);
+            java.util.List<String> other = new java.util.ArrayList<>();
+            for (EstimateRow r : e.getValue()) {
+                String category = EstimateDecisionService.operationKey(r.getOperationName());
+                int col = category.startsWith("осмотр") ? 4 : category.matches("то\\d?") ? 6 : -1;
+                if (col < 0 || row.getCell(col) != null) {
+                    // третья и далее работа той же категории — в «прочие», чтобы ничего не потерять
+                    other.add(r.getRateCode() + " (" + nz(r.getPeriodicity()) + ")");
+                    continue;
+                }
+                cell(row, col, r.getRateCode(), st.center);
+                cell(row, col + 1, r.getPeriodicity(), st.textWrap);
+            }
+            cell(row, 8, other.isEmpty() ? null : String.join("; ", other), st.textWrap);
+        }
+        sheet.createFreezePane(2, 1);
+    }
+
+    private static String nz(String s) {
+        return s == null ? "" : s;
+    }
+
+    private void writeCalcSheet(Workbook wb, Styles st, Estimate estimate, java.util.List<EstimateRow> rows,
+                                java.util.Map<String, RateRef> rates) {
         Sheet sheet = wb.createSheet("Расчёт СН-2012");
 
         // строка-заголовок: название сметы и подписи блоков (как в эталоне)
@@ -237,14 +413,14 @@ public class EstimateXlsxExporter {
             if (row.getSection() != null && !row.getSection().equals(lastSection)) {
                 Row sec = sheet.createRow(r);
                 sec.setHeightInPoints(18);
-                for (int c = 0; c <= 42; c++) sec.createCell(c).setCellStyle(st.section);
+                for (int c = 0; c <= LAST_COL; c++) sec.createCell(c).setCellStyle(st.section);
                 sec.getCell(1).setCellValue(row.getSection());
                 sheet.addMergedRegion(new CellRangeAddress(r, r, 1, 8));
                 lastSection = row.getSection();
                 r++;
             }
             EstimateCalculator.RowResult calc = calculator.compute(row, coeffs);
-            writeRow(sheet.createRow(r++), st, row, calc);
+            writeRow(sheet.createRow(r++), st, row, rates);
 
             sumNoVat = sumNoVat.add(calc.totalNoVat());
             sumVat = sumVat.add(calc.vat());
@@ -257,7 +433,7 @@ public class EstimateXlsxExporter {
 
         Row total = sheet.createRow(r);
         total.setHeightInPoints(18);
-        for (int c = 0; c <= 42; c++) total.createCell(c).setCellStyle(st.totalLabel);
+        for (int c = 0; c <= LAST_COL; c++) total.createCell(c).setCellStyle(st.totalLabel);
         total.getCell(1).setCellValue("ИТОГО в год");
         sheet.addMergedRegion(new CellRangeAddress(r, r, 1, 8));
         // итоги — СУММ() по строкам расчёта, а не числом: пересчитываются вместе со строками
@@ -276,7 +452,7 @@ public class EstimateXlsxExporter {
      * со ссылками на параметры листа «Данные для расчета» ($B$2…$B$7). Файл остаётся
      * живым: меняются количество, коэффициент или НДС — Excel пересчитывает сам.
      */
-    private void writeRow(Row row, Styles st, EstimateRow src, EstimateCalculator.RowResult calc) {
+    private void writeRow(Row row, Styles st, EstimateRow src, java.util.Map<String, RateRef> rates) {
         int n = row.getRowNum() + 1;   // номер строки в адресах Excel (1-based)
         cell(row, 0, src.getPosition() == null ? null : String.valueOf(src.getPosition()), st.center);
         cell(row, 1, src.getEquipmentName(), st.textWrap);
@@ -284,19 +460,31 @@ public class EstimateXlsxExporter {
         cell(row, 3, src.getManufacturer(), st.text);
         cell(row, 4, src.getOperationName(), st.textWrap);
         cell(row, 5, src.getRateCode(), st.center);
-        cell(row, 6, src.getRateName(), st.textWrap);
+        // цены и трудозатраты — ВПР по шифру из «Справочника СН-2012»; если инженер
+        // правил цены руками и они разошлись со справочником, оставляем его значения
+        boolean lookup = matchesReference(src, rates.get(src.getRateCode()));
+        if (lookup) formula(row, 6, vlookup(n, 2, true), st.textWrap);
+        else cell(row, 6, src.getRateName(), st.textWrap);
         cell(row, 7, src.getPeriodicity(), st.center);
         cell(row, 8, src.getJustification(), st.textWrap);
         // входные величины
         num(row, 9, src.getOpsPerYear(), st.intNum);
         num(row, 10, src.getQty(), st.intNum);
         formula(row, 11, "K" + n + "*J" + n, st.intNum);                       // выполнений в год
-        num(row, 12, src.getUnitBasis(), st.intNum);
+        if (lookup) formula(row, 12, vlookup(n, 3, false), st.intNum);
+        else num(row, 12, src.getUnitBasis(), st.intNum);
         formula(row, 13, "IFERROR(L" + n + "/M" + n + ",0)", st.money);        // всего ед. измер.
-        num(row, 14, src.getPriceZp(), st.money);
-        num(row, 15, src.getPriceEm(), st.money);
-        num(row, 16, src.getPriceZpm(), st.money);
-        num(row, 17, src.getPriceMr(), st.money);
+        if (lookup) {
+            formula(row, 14, vlookup(n, 4, false), st.money);
+            formula(row, 15, vlookup(n, 5, false), st.money);
+            formula(row, 16, vlookup(n, 6, false), st.money);
+            formula(row, 17, vlookup(n, 7, false), st.money);
+        } else {
+            num(row, 14, src.getPriceZp(), st.money);
+            num(row, 15, src.getPriceEm(), st.money);
+            num(row, 16, src.getPriceZpm(), st.money);
+            num(row, 17, src.getPriceMr(), st.money);
+        }
         num(row, 18, src.getCorrection(), st.intNum);
         // блок СН-2012
         formula(row, 19, "O" + n + "*N" + n + "*S" + n, st.money);             // всего ЗП
@@ -322,8 +510,61 @@ public class EstimateXlsxExporter {
         formula(row, 38, "AG" + n + "+AH" + n + "+AJ" + n + "+AK" + n + "+AL" + n, st.money);
         formula(row, 39, "ROUND(AM" + n + "*" + p("B", 6) + ",2)", st.money);
         formula(row, 40, "AM" + n + "+AN" + n, st.money);
-        num(row, 41, src.getLaborHours(), st.money);
+        if (lookup) formula(row, 41, vlookup(n, 8, false), st.money);
+        else num(row, 41, src.getLaborHours(), st.money);
         formula(row, 42, "N" + n + "*AP" + n, st.money);                       // трудозатраты за год
+        // AR — разметка отклонений от эталона, AS — служебное обоснование расценки
+        cell(row, 43, deviation(src.getMatchSource()), deviationStyle(st, src.getMatchSource()));
+        cell(row, 44, src.getMatchNote(), st.textWrap);
+    }
+
+    /**
+     * Разметка отклонений от эталона (колонка AR). Строки, взятые из памяти эталонных
+     * решений, отклонением не являются; подобранное приложением — «добавлено»,
+     * поправленное инженером — «изменено».
+     */
+    private static String deviation(String matchSource) {
+        if (matchSource == null) return null;
+        return switch (matchSource) {
+            case "LEARNED", "ETALON_TYPE", "ETALON_XSYS", "AI_TYPE" -> null;   // как в эталоне
+            case "MANUAL", "CHOICE" -> "изменено";
+            default -> "добавлено";                                            // AI / CATALOG / SYSTEM
+        };
+    }
+
+    private CellStyle deviationStyle(Styles st, String matchSource) {
+        String mark = deviation(matchSource);
+        if (mark == null) return st.text;
+        return "изменено".equals(mark) ? st.markChanged : st.markAdded;
+    }
+
+    /**
+     * ВПР по шифру расценки (колонка F) в «Справочник СН-2012».
+     * {@code column} — номер колонки справочника, {@code text} — вернуть «» вместо 0.
+     */
+    private static String vlookup(int n, int column, boolean text) {
+        return "IFERROR(VLOOKUP($F" + n + ",'" + RATES_SHEET + "'!$A:$H," + column + ",0),"
+                + (text ? "\"\"" : "0") + ")";
+    }
+
+    /**
+     * Цены строки совпадают со справочником — значит ВПР вернёт ровно те же числа
+     * и формулу подставлять безопасно. Расхождение (ручная правка цен) оставляем
+     * значениями, чтобы выгрузка не переписала работу инженера.
+     */
+    private static boolean matchesReference(EstimateRow src, RateRef ref) {
+        return ref != null
+                && java.util.Objects.equals(src.getRateName(), ref.name())
+                && same(src.getUnitBasis(), ref.basis())
+                && same(src.getPriceZp(), ref.zp())
+                && same(src.getPriceEm(), ref.em())
+                && same(src.getPriceZpm(), ref.zpm())
+                && same(src.getPriceMr(), ref.mr())
+                && same(src.getLaborHours(), ref.laborHours());
+    }
+
+    private static boolean same(BigDecimal a, BigDecimal b) {
+        return a == null ? b == null : b != null && a.compareTo(b) == 0;
     }
 
     /** Абсолютная ссылка на параметр листа «Данные для расчета». */
@@ -349,10 +590,4 @@ public class EstimateXlsxExporter {
         c.setCellStyle(style);
     }
 
-    private void totalNum(Row row, int col, BigDecimal value, Styles st) {
-        Cell c = row.getCell(col);
-        if (c == null) c = row.createCell(col);
-        c.setCellValue(value.doubleValue());
-        c.setCellStyle(st.totalMoney);
-    }
 }

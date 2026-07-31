@@ -181,6 +181,7 @@ export interface EstimateRowEntity {
   rateName?: string
   periodicity?: string
   justification?: string
+  matchNote?: string
   opsPerYear?: number
   qty?: number
   unitBasis: number

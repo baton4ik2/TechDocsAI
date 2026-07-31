@@ -61,6 +61,8 @@ public class ReferenceEstimateImportService {
                 else if (t.contains("тип оборуд")) cols.put("type", c);
                 else if (t.contains("производител")) cols.put("manufacturer", c);
                 else if (t.contains("наименование меропр")) cols.put("operation", c);
+                // обоснование периодичности («ПКМ», «Паспорт», ГОСТ) — переносится в новые сметы как есть
+                else if (t.contains("обоснован") && t.contains("периодичност")) cols.put("justification", c);
                 // «периодичность операции», а не «обоснование периодичности» (там длинный текст)
                 else if (t.contains("периодичность") && !t.contains("обоснован")) cols.put("periodicity", c);
                 // фактическое число операций в год (осмотр «раз в месяц» может быть 10, а не 12,
@@ -117,7 +119,8 @@ public class ReferenceEstimateImportService {
             data.add(new EstimateDecisionService.DecisionData(
                     name, cell(row, cols.get("type")), cell(row, cols.get("manufacturer")), system,
                     operation, code, null,
-                    blank(periodicity), perYear, null));
+                    normalizePeriodicity(periodicity, perYear), perYear, null,
+                    text(cell(row, cols.get("justification")))));
         }
         int imported = decisionService.saveAll(data, EstimateRateDecision.SOURCE_REFERENCE).size();
         return new ImportResult(imported, data.size());
@@ -155,9 +158,22 @@ public class ReferenceEstimateImportService {
         }
     }
 
+    /**
+     * Периодичность к единому словарю («Ежемесячно» → «раз в 1 мес.») с пояснением,
+     * если операций меньше, чем следует из периодичности (поглощение осмотров ТО).
+     */
+    private String normalizePeriodicity(String raw, BigDecimal perYear) {
+        return blank(Periodicity.label(raw, perYear));
+    }
+
     private String blank(String s) {
         if (s == null || s.isBlank()) return null;
         String v = s.strip();
         return v.length() > 200 ? v.substring(0, 200) : v;   // periodicity — varchar(200)
+    }
+
+    /** Текстовое поле без ограничения длины varchar (обоснование — TEXT). */
+    private String text(String s) {
+        return s == null || s.isBlank() ? null : s.strip();
     }
 }

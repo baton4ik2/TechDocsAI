@@ -421,10 +421,20 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
 
         {input('correction', 'Поправочный коэффициент (S)', '1')}
         <div>
-          <label className="label">Обоснование</label>
+          <label className="label">Обоснование периодичности</label>
           <textarea className="input" rows={2} value={f.justification}
-                    onChange={(e) => set('justification', e.target.value)} />
+                    onChange={(e) => set('justification', e.target.value)}
+                    placeholder="ПКМ / паспорт / ГОСТ — чем установлена периодичность" />
+          <p className="text-xs text-slate-400 mt-1">
+            Идёт заказчику в колонку «обоснование периодичности».
+          </p>
         </div>
+        {row?.matchNote && (
+          <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
+            <div className="text-xs font-medium text-slate-500 mb-1">Как подобрана расценка (служебное)</div>
+            <div className="text-sm text-slate-600">{row.matchNote}</div>
+          </div>
+        )}
         {error && <div className="text-sm text-red-600">{error}</div>}
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" className="btn-secondary" onClick={onClose}>Отмена</button>

@@ -138,6 +138,76 @@ class EstimateExportStyleTest {
         }
     }
 
+    /** Цены тянутся ВПР из «Справочника СН-2012» — файл пересчитывается при смене расценки. */
+    @Test
+    void pricesComeFromRateReference() throws Exception {
+        byte[] bytes = exporter.export(estimate(), List.of(row("АПС", "Извещатель")));
+        try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet ref = wb.getSheet("Справочник СН-2012");
+            assertThat(ref).isNotNull();
+            assertThat(ref.getRow(1).getCell(0).getStringCellValue()).isEqualTo("22-2203-91-1/1");
+            assertThat(ref.getRow(1).getCell(3).getNumericCellValue()).isEqualTo(139.33);
+
+            Row data = wb.getSheet("Расчёт СН-2012").getRow(3);
+            assertThat(data.getCell(14).getCellFormula()).contains("VLOOKUP($F4,'Справочник СН-2012'!$A:$H,4,0)");
+            assertThat(data.getCell(14).getNumericCellValue()).isEqualTo(139.33);
+        }
+    }
+
+    /** Сводная таблица: по оборудованию видно расценку осмотра и расценку ТО. */
+    @Test
+    void summarySheetPairsInspectionAndService() throws Exception {
+        EstimateRow inspection = row("АПС", "Блок питания");
+        inspection.setOperationName("Технический осмотр");
+        inspection.setRateCode("22-2201-78-1/1");
+        EstimateRow service = row("АПС", "Блок питания");
+        service.setOperationName("Техническое обслуживание");
+
+        byte[] bytes = exporter.export(estimate(), List.of(inspection, service));
+        try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet summary = wb.getSheet("Сводная таблица");
+            assertThat(summary).isNotNull();
+            Row r = summary.getRow(1);
+            assertThat(r.getCell(1).getStringCellValue()).isEqualTo("Блок питания");
+            assertThat(r.getCell(4).getStringCellValue()).isEqualTo("22-2201-78-1/1");   // осмотр
+            assertThat(r.getCell(6).getStringCellValue()).isEqualTo("22-2203-91-1/1");   // ТО
+        }
+    }
+
+    /** Служебное обоснование расценки — в AS, разметка отклонений — в AR. */
+    @Test
+    void serviceColumnsCarryMatchInfo() throws Exception {
+        EstimateRow r = row("АПС", "Извещатель");
+        r.setMatchSource("AI");
+        r.setMatchNote("Расценка (ИИ): подходит по описанию.");
+        r.setJustification("ПКМ");
+
+        byte[] bytes = exporter.export(estimate(), List.of(r));
+        try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet sheet = wb.getSheet("Расчёт СН-2012");
+            assertThat(sheet.getRow(1).getCell(44).getStringCellValue()).isEqualTo("обоснование расценки");
+            Row data = sheet.getRow(3);
+            assertThat(data.getCell(8).getStringCellValue()).isEqualTo("ПКМ");           // I — заказчику
+            assertThat(data.getCell(43).getStringCellValue()).isEqualTo("добавлено");    // AR
+            assertThat(data.getCell(44).getStringCellValue()).contains("ИИ");            // AS
+        }
+    }
+
+    /** История версий: каждая выгрузка — строкой на листе параметров. */
+    @Test
+    void versionHistoryGoesToDataSheet() throws Exception {
+        var history = List.of(
+                new EstimateXlsxExporter.Version(1, java.time.Instant.parse("2026-07-01T09:00:00Z")),
+                new EstimateXlsxExporter.Version(2, java.time.Instant.parse("2026-07-15T09:00:00Z")));
+        byte[] bytes = exporter.export(estimate(), List.of(row("АПС", "Извещатель")), null, history);
+        try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet data = wb.getSheet("Данные для расчета");
+            assertThat(data.getRow(9).getCell(0).getStringCellValue()).isEqualTo("История версий");
+            assertThat(data.getRow(11).getCell(0).getStringCellValue()).isEqualTo("v1");
+            assertThat(data.getRow(12).getCell(0).getStringCellValue()).isEqualTo("v1_1");
+        }
+    }
+
     /** Площадь объекта попадает на лист коэффициентов — её берут расценки с измерителем в м². */
     @Test
     void areaGoesToDataSheet() throws Exception {

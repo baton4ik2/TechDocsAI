@@ -160,8 +160,9 @@ class UniqueEquipmentIntegrationTest extends IntegrationTestBase {
                 .isEqualTo("CATALOG");
         org.assertj.core.api.Assertions.assertThat(view.get("rows").get(0).get("row").get("needsReview").asBoolean())
                 .isTrue();
+        // периодичность из паспорта («Ежемесячно») приводится к единому словарю сметы
         org.assertj.core.api.Assertions.assertThat(view.get("rows").get(0).get("row").get("periodicity").asText())
-                .isEqualTo("Ежемесячно");
+                .isEqualTo("раз в 1 мес.");
         org.assertj.core.api.Assertions.assertThat(view.get("rows").get(1).get("row").get("opsPerYear").asDouble())
                 .isEqualTo(2.0);
     }

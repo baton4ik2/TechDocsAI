@@ -32,6 +32,35 @@ class PeriodicityTest {
         assertThat(Periodicity.perYear("Дважды в год")).isEqualByComparingTo("2");
     }
 
+    /** Единый словарь: в одном документе не должно быть «Ежемесячно» рядом с «раз в 1 мес.». */
+    @Test
+    void normalisesToSingleDictionary() {
+        assertThat(Periodicity.canonicalLabel("Ежемесячно")).isEqualTo("раз в 1 мес.");
+        assertThat(Periodicity.canonicalLabel("раз в месяц")).isEqualTo("раз в 1 мес.");
+        assertThat(Periodicity.canonicalLabel("Ежеквартально")).isEqualTo("раз в 3 мес.");
+        assertThat(Periodicity.canonicalLabel("Два раза в год")).isEqualTo("раз в 6 мес.");
+        assertThat(Periodicity.canonicalLabel("Раз в год")).isEqualTo("раз в год");
+        // нераспознанное не теряем
+        assertThat(Periodicity.canonicalLabel("по мере необходимости")).isEqualTo("по мере необходимости");
+        assertThat(Periodicity.canonicalLabel(null)).isNull();
+    }
+
+    /**
+     * Поглощение осмотров: периодичность «раз в 6 мес.», а операций 1 — это не ошибка,
+     * вторая совмещена с годовым ТО. В документе это должно быть написано.
+     */
+    @Test
+    void explainsAbsorbedOperations() {
+        assertThat(Periodicity.label("раз в 6 мес.", new java.math.BigDecimal("1")))
+                .isEqualTo("раз в 6 мес. (1 операция совмещена с более редким ТО)");
+        assertThat(Periodicity.label("Ежемесячно", new java.math.BigDecimal("10")))
+                .isEqualTo("раз в 1 мес. (2 операции совмещены с более редким ТО)");
+        // совпадает с периодичностью — пояснение не нужно
+        assertThat(Periodicity.label("раз в 6 мес.", new java.math.BigDecimal("2")))
+                .isEqualTo("раз в 6 мес.");
+        assertThat(Periodicity.label("раз в год", null)).isEqualTo("раз в год");
+    }
+
     @Test
     void returnsNullForUnknownOrBlank() {
         assertThat(Periodicity.perYear(null)).isNull();

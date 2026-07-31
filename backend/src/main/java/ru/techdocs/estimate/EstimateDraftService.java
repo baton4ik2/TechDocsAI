@@ -225,12 +225,14 @@ public class EstimateDraftService {
                 system, null, "Системы противопожарной защиты объекта", null, null,
                 "Комплексные испытания систем пожарной сигнализации, оповещения и управления эвакуацией",
                 FIRE_TEST_RATE, null, "раз в год",
-                noArea ? "⚠ НА ПРОВЕРКУ: укажите площадь объекта — количество для расценки с измерителем в м² берётся из неё."
-                       : "Комплексные испытания СПЗ, количество — площадь объекта (измеритель расценки в м²).",
+                "Технический регламент эксплуатации здания",
                 BigDecimal.ONE, noArea ? null : area,
                 null, null, null, null, null,
                 null, null,
-                noArea, "SYSTEM", null);
+                noArea, "SYSTEM",
+                null,
+                noArea ? "⚠ НА ПРОВЕРКУ: укажите площадь объекта — количество для расценки с измерителем в м² берётся из неё."
+                       : "Общесистемная работа: комплексные испытания СПЗ, количество — площадь объекта (измеритель расценки в м²).");
         estimateService.addRow(estimateId, input);
         return 1;
     }
@@ -254,7 +256,8 @@ public class EstimateDraftService {
             String periodicityText = cached.periodicityText() != null ? cached.periodicityText()
                     : maintenanceResolver.label(perYear);
             addRow(estimateId, eq, systemType, operationName, cached.rateCode(), periodicityText, perYear,
-                    "Расценка согласована с оборудованием того же типа в этой смете. Периодичность: " + note,
+                    note,
+                    "Расценка согласована с оборудованием того же типа в этой смете.",
                     cached.needsReview(), cached.source(), cached.suggestions());
             return;
         }
@@ -289,7 +292,8 @@ public class EstimateDraftService {
             String defPeriodicity = defPer.text();
             consistency.put(tkey, new RatePick(defCode, defSource, true, defPeriodicity, defPerYear, suggestionsJson));
             addRow(estimateId, eq, systemType, operationName, defCode, defPeriodicity, defPerYear,
-                    "Похожее оборудование есть в эталоне — выберите расценку из вариантов. Периодичность: " + note,
+                    note,
+                    "Похожее оборудование есть в эталоне — выберите расценку из вариантов.",
                     true, defSource, suggestionsJson);
             return;
         }
@@ -334,7 +338,7 @@ public class EstimateDraftService {
 
         consistency.put(tkey, new RatePick(rateCode, source, needsReview, periodicityText, perYear, null));
         addRow(estimateId, eq, systemType, operationName, rateCode, periodicityText, perYear,
-                justification(match, note, source), needsReview, source, null);
+                note, matchNote(match, source), needsReview, source, null);
     }
 
     /** Ленивое построение эталона по всем системам (один раз на сборку). */
@@ -430,30 +434,34 @@ public class EstimateDraftService {
     }
 
     /**
-     * Общая сборка строки черновика. Перед записью — валидация: строка без расценки,
-     * без периодичности или с нулевым числом операций/выполнений считается нерешённой
+     * Общая сборка строки черновика. Два обоснования разделены: {@code justification}
+     * (колонка I) — чем установлена периодичность (ПКМ, паспорт, ГОСТ, регламент), это
+     * идёт заказчику; {@code matchNote} (колонка AS) — служебное, как приложение
+     * подобрало расценку. Перед записью — валидация: строка без расценки, без
+     * периодичности или с нулевым числом операций/выполнений считается нерешённой
      * и помечается «на проверку», а не попадает в смету молча нулевой.
      */
     private void addRow(Long estimateId, Equipment eq, String systemType, String operationName,
                         String rateCode, String periodicityText, BigDecimal perYear,
-                        String justification, boolean needsReview, String source, String suggestions) {
+                        String justification, String matchNote,
+                        boolean needsReview, String source, String suggestions) {
         String problem = rowProblem(rateCode, periodicityText, perYear, eq.getQuantity());
         if (problem != null) {
             needsReview = true;
-            justification = "⚠ НА ПРОВЕРКУ: " + problem + (justification == null ? "" : " " + justification);
+            matchNote = "⚠ НА ПРОВЕРКУ: " + problem + (matchNote == null ? "" : " " + matchNote);
         }
         EstimateService.RowInput input = new EstimateService.RowInput(
                 systemType, eq.getId(), eq.getName(), eq.getModel(), eq.getManufacturer(),
                 operationName,
                 rateCode,
                 null,
-                periodicityText,
+                ru.techdocs.common.Periodicity.label(periodicityText, perYear),
                 justification,
                 perYear,
                 eq.getQuantity(),
                 null, null, null, null, null,
                 null, null,
-                needsReview, source, suggestions);
+                needsReview, source, suggestions, matchNote);
         estimateService.addRow(estimateId, input);
     }
 
@@ -611,14 +619,17 @@ public class EstimateDraftService {
         String periodicityText = eop.rate().periodicity() != null ? eop.rate().periodicity()
                 : maintenanceResolver.label(perYear);
         String operationName = eop.operationName() != null ? eop.operationName() : operationName(eq);
-        String note = switch (source) {
+        String matchNote = switch (source) {
             case "AI_TYPE" -> "Расценка и периодичность из эталона (тип определён ИИ как то же оборудование).";
             case "ETALON_XSYS" -> "Расценка и периодичность из эталона другой системы "
                     + "(то же оборудование уже считали там).";
             default -> "Расценка и периодичность из эталона (то же наименование в этой системе).";
         };
+        // обоснование периодичности переносится из эталона как есть (ПКМ / паспорт / ГОСТ)
+        String justification = eop.rate().justification() != null ? eop.rate().justification()
+                : "периодичность по эталонной смете";
         addRow(estimateId, eq, systemType, operationName, eop.rate().rateCode(), periodicityText, perYear,
-                note, false, source, null);
+                justification, matchNote, false, source, null);
     }
 
     /** Периодичность строки в единый год выполнений/текст. */
@@ -659,13 +670,15 @@ public class EstimateDraftService {
                 d.getOperationName() != null ? d.getOperationName() : operationName(eq),
                 d.getRateCode(),
                 null,
-                d.getPeriodicity(),
-                "Расценка и периодичность " + note + " (эталон).",
+                ru.techdocs.common.Periodicity.label(d.getPeriodicity(), d.getPerYear()),
+                // обоснование периодичности — из эталона как есть (ПКМ / паспорт / ГОСТ)
+                d.getJustification() != null ? d.getJustification() : "периодичность по эталонной смете",
                 d.getPerYear(),
                 eq.getQuantity(),
                 null, null, null, null, null,
                 d.getCorrection(), null,
-                false, "LEARNED", null);
+                false, "LEARNED", null,
+                "Расценка и периодичность " + note + " (память эталонных решений).");
         estimateService.addRow(estimateId, input);
     }
 
@@ -682,20 +695,18 @@ public class EstimateDraftService {
         return "Техническое обслуживание — " + name;
     }
 
-    private String justification(NormativeAiMatchService.MatchResult match, String periodicityNote, String source) {
-        StringBuilder sb = new StringBuilder();
-        switch (source) {
+    /** Служебное обоснование расценки (колонка AS) — как именно она подобрана. */
+    private String matchNote(NormativeAiMatchService.MatchResult match, String source) {
+        return switch (source) {
             case "AI", "AI_ETALON" -> {
                 String reason = match.matches().isEmpty() ? null : match.matches().get(0).reason();
                 String prefix = "AI_ETALON".equals(source) ? "Расценка (ИИ, по эталону)" : "Расценка (ИИ)";
-                sb.append(reason != null ? prefix + ": " + reason + ". " : prefix + ". ");
+                yield reason != null ? prefix + ": " + reason + "." : prefix + ".";
             }
-            case "AI_FAILED" -> sb.append("⚠ НА ПРОВЕРКУ: ИИ не подобрал расценку — выберите вручную. ");
-            case "CATALOG" -> sb.append("⚠ НА ПРОВЕРКУ: ИИ выключен, расценка — верхний результат поиска по каталогу. ");
-            default -> { /* нет источника — только периодичность */ }
-        }
-        sb.append("Периодичность: ").append(periodicityNote);
-        return sb.toString().strip();
+            case "AI_FAILED" -> "⚠ НА ПРОВЕРКУ: ИИ не подобрал расценку — выберите вручную.";
+            case "CATALOG" -> "⚠ НА ПРОВЕРКУ: ИИ выключен, расценка — верхний результат поиска по каталогу.";
+            default -> null;
+        };
     }
 
     private String systemName(Long systemId) {

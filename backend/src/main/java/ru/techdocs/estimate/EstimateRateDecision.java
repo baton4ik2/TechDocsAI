@@ -44,6 +44,10 @@ public class EstimateRateDecision {
 
     private String periodicity;
 
+    /** Обоснование периодичности из эталона: ПКМ / паспорт / ГОСТ / регламент. */
+    @Column(columnDefinition = "text")
+    private String justification;
+
     @Column(name = "per_year")
     private BigDecimal perYear;
 

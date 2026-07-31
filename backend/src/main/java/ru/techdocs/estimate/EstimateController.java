@@ -23,6 +23,7 @@ public class EstimateController {
     private final EstimateService estimateService;
     private final EstimateRowRepository rowRepository;
     private final EstimateXlsxExporter exporter;
+    private final EstimateExportHistoryService exportHistory;
     private final EstimateDraftService draftService;
     private final EstimateDecisionService decisionService;
     private final ReferenceEstimateImportService referenceImportService;
@@ -97,8 +98,12 @@ public class EstimateController {
         List<EstimateRow> rows = rowRepository.findByEstimateIdOrderByPosition(id);
         java.math.BigDecimal area = facilityRepository.findById(estimate.getFacilityId())
                 .map(ru.techdocs.object.Facility::getAreaSqm).orElse(null);
-        byte[] xlsx = exporter.export(estimate, rows, area);
-        String filename = "Смета_" + estimate.getName().replaceAll("[^\\p{L}\\p{N}._-]", "_") + ".xlsx";
+        // каждая выгрузка — новая версия: суффикс в имени файла + запись в «Историю версий»
+        List<EstimateXlsxExporter.Version> history = exportHistory.register(id);
+        byte[] xlsx = exporter.export(estimate, rows, area, history);
+        String version = history.isEmpty() ? "v1" : history.get(history.size() - 1).label();
+        String filename = "Смета_" + estimate.getName().replaceAll("[^\\p{L}\\p{N}._-]", "_")
+                + "_" + version + ".xlsx";
         String encoded = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)

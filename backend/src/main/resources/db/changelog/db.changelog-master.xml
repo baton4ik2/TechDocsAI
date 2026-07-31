@@ -19,5 +19,7 @@
     <include file="db/changelog/changes/012-estimate-row-suggestions.xml" relativeToChangelogFile="false"/>
     <include file="db/changelog/changes/013-decision-rate-in-key.xml" relativeToChangelogFile="false"/>
     <include file="db/changelog/changes/014-facility-area.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/015-estimate-row-match-note.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/016-estimate-exports.xml" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

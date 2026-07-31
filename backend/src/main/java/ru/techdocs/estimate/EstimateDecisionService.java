@@ -30,7 +30,8 @@ public class EstimateDecisionService {
     /** Данные строки для сохранения решения (system — инженерная система строки/раздела). */
     public record DecisionData(String equipmentName, String model, String manufacturer, String system,
                                String operationName, String rateCode, String rateName,
-                               String periodicity, BigDecimal perYear, BigDecimal correction) {}
+                               String periodicity, BigDecimal perYear, BigDecimal correction,
+                               String justification) {}
 
     /**
      * Категория операции для ключа: осмотр / ТО / замена / контроль / проверка / …
@@ -75,8 +76,11 @@ public class EstimateDecisionService {
                 : repository.findByUniqueEquipmentIdOrderByOperationKey(uniqueEquipmentId);
     }
 
-    /** Решение эталона: расценка + периодичность (для переиспользования по шифру или наименованию). */
-    public record EtalonRate(String rateCode, String periodicity, BigDecimal perYear) {}
+    /**
+     * Решение эталона: расценка + периодичность + обоснование периодичности
+     * (ПКМ/паспорт/ГОСТ) — оно переносится в новую смету как есть.
+     */
+    public record EtalonRate(String rateCode, String periodicity, BigDecimal perYear, String justification) {}
 
     /** Запись эталона системы: наименование/операция оборудования → решение (для нечёткого матча). */
     public record EtalonEntry(String name, String operationKey, EtalonRate rate) {}
@@ -134,7 +138,8 @@ public class EstimateDecisionService {
             List<EtalonOp> ueOps = new ArrayList<>();
             for (EstimateRateDecision d : repository.findByUniqueEquipmentIdOrderByOperationKey(ue.getId())) {
                 if (d.getRateCode() == null || d.getRateCode().isBlank()) continue;
-                EtalonRate er = new EtalonRate(d.getRateCode().strip(), d.getPeriodicity(), d.getPerYear());
+                EtalonRate er = new EtalonRate(d.getRateCode().strip(), d.getPeriodicity(),
+                        d.getPerYear(), d.getJustification());
                 byRateCode.putIfAbsent(er.rateCode(), er);
                 entries.add(new EtalonEntry(name, d.getOperationKey(), er));
                 // одна расценка = одна работа: дедуп и по категории операции, и по шифру
@@ -220,6 +225,7 @@ public class EstimateDecisionService {
             decision.setRateCode(d.rateCode().strip());
             decision.setRateName(d.rateName());
             decision.setPeriodicity(d.periodicity());
+            decision.setJustification(d.justification());
             decision.setPerYear(d.perYear());
             decision.setCorrection(d.correction());
             decision.setSource(source);
@@ -246,7 +252,8 @@ public class EstimateDecisionService {
             if (row.getRateCode() == null || row.getRateCode().isBlank()) continue;
             data.add(new DecisionData(row.getEquipmentName(), row.getEquipmentType(),
                     row.getManufacturer(), row.getSection(), row.getOperationName(), row.getRateCode(),
-                    row.getRateName(), row.getPeriodicity(), row.getOpsPerYear(), row.getCorrection()));
+                    row.getRateName(), row.getPeriodicity(), row.getOpsPerYear(), row.getCorrection(),
+                    row.getJustification()));
         }
         return saveAll(data, EstimateRateDecision.SOURCE_APPROVED).size();
     }

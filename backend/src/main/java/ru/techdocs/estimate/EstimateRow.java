@@ -52,8 +52,13 @@ public class EstimateRow {
 
     private String periodicity;         // H
 
+    /** I — обоснование периодичности: ПКМ / паспорт / ГОСТ / регламент. Идёт заказчику. */
     @Column(columnDefinition = "text")
     private String justification;       // I
+
+    /** AS — служебное: как приложение подобрало расценку (эталон, ИИ-аналог, вручную). */
+    @Column(name = "match_note", columnDefinition = "text")
+    private String matchNote;           // AS
 
     @Column(name = "ops_per_year")
     private BigDecimal opsPerYear;      // J

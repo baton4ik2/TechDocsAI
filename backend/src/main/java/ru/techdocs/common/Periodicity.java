@@ -52,6 +52,61 @@ public final class Periodicity {
         return null;
     }
 
+    /**
+     * Единый словарь периодичности для сметы: «раз в 1 мес.» / «раз в 3 мес.» /
+     * «раз в 6 мес.» / «раз в год». Формулировки эталонов и паспортов («Ежемесячно»,
+     * «Раз в полгода», «Два раза в год») приводятся к нему, чтобы в одном документе
+     * не соседствовали разные написания одного и того же. Нераспознанное возвращается
+     * как есть — терять текст нельзя.
+     */
+    public static String canonicalLabel(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        BigDecimal py = perYear(raw);
+        String canonical = py == null ? null : byPerYear(py);
+        return canonical != null ? canonical : raw.strip();
+    }
+
+    /** Подпись периодичности по числу выполнений в год (null — если не типовое). */
+    public static String byPerYear(BigDecimal perYear) {
+        if (perYear == null || perYear.signum() <= 0) return null;
+        if (perYear.compareTo(bd(365)) == 0) return "ежедневно";
+        if (perYear.compareTo(bd(52)) == 0) return "еженедельно";
+        if (perYear.compareTo(BigDecimal.ONE) == 0) return "раз в год";
+        // 12 / N месяцев — только когда делится нацело: 12→1, 6→2, 4→3, 3→4, 2→6
+        for (int months : new int[]{1, 2, 3, 4, 6}) {
+            if (perYear.compareTo(bd(12 / months)) == 0) return "раз в " + months + " мес.";
+        }
+        return null;
+    }
+
+    /**
+     * Подпись периодичности для строки сметы: словарь + пояснение, если фактических
+     * операций меньше, чем следует из периодичности. Так снимается противоречие
+     * «раз в 6 мес., а операций 1»: часть осмотров поглощена более редким ТО
+     * (Сборник 25, п. 7.3) — это норма, но в документе это должно быть написано.
+     */
+    public static String label(String raw, BigDecimal actualPerYear) {
+        String base = canonicalLabel(raw);
+        if (base == null || actualPerYear == null || actualPerYear.signum() <= 0) return base;
+        BigDecimal implied = perYear(base);
+        if (implied == null || implied.compareTo(actualPerYear) <= 0) return base;
+        BigDecimal absorbed = implied.subtract(actualPerYear).stripTrailingZeros();
+        return base + (absorbed.compareTo(BigDecimal.ONE) == 0
+                ? " (1 операция совмещена с более редким ТО)"
+                : " (" + absorbed.toPlainString() + " " + operations(absorbed) + " совмещены с более редким ТО)");
+    }
+
+    /** Согласование слова «операция» с числом: 2–4 операции, 5+ операций. */
+    private static String operations(BigDecimal count) {
+        if (count.stripTrailingZeros().scale() > 0) return "операции";   // дробное — «1.5 операции»
+        long n = count.longValue() % 100;
+        if (n >= 11 && n <= 14) return "операций";
+        return switch ((int) (n % 10)) {
+            case 2, 3, 4 -> "операции";
+            default -> "операций";
+        };
+    }
+
     /** Числительные словами → цифры (только целые слова, чтобы не портить другие). */
     private static String numeralsToDigits(String s) {
         String[][] numerals = {
