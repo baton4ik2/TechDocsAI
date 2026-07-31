@@ -754,6 +754,48 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
         assertThat(row.get("rateCode").asText()).isEqualTo("22-2203-104-11/1");
     }
 
+    /**
+     * Парность «осмотр + ТО»: у оповещателей в аудите остался только осмотр, а ТО на
+     * 11 тыс. ₽ потерялось. Дописать расценку за инженера нельзя, но строка обязана
+     * прийти с пометкой «на проверку» и пояснением.
+     */
+    @Test
+    void inspectionWithoutServiceIsFlagged() throws Exception {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник оповещателей");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        NormativeRate rate = new NormativeRate();
+        rate.setSourcebookId(book.getId());
+        rate.setCode("22-2201-93-1/1");
+        rate.setName("Осмотр светозвукового настенного оповещателя");
+        rate.setUnit("10 шт.");
+        rate.setLaborCost(new BigDecimal("117.06"));
+        rateRepository.saveAndFlush(rate);
+
+        // эталон знает про оповещатель только осмотр — ТО в нём нет
+        UniqueEquipment ue = new UniqueEquipment();
+        ue.setNormKey("оповещатель звуковой|sws-103w||скуд");
+        ue.setEquipKey("оповещатель звуковой|sws-103w|");
+        ue.setSystemType("скуд");
+        ue.setName("Оповещатель звуковой");
+        ue.setModel("SWS-103W");
+        ue = uniqueRepository.saveAndFlush(ue);
+        addDecision(ue.getId(), "осмотр", "Технический осмотр", "22-2201-93-1/1", "раз в 1 мес.", "12");
+
+        long sys = facilitySystem("Объект-оповещатели");
+        equip(sys, "Оповещатель звуковой", "SWS-103W");
+        long estId = estimateFor(estFacility(sys));
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(1));
+
+        JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        JsonNode row = view.get("rows").get(0).get("row");
+        assertThat(row.get("needsReview").asBoolean()).isTrue();
+        assertThat(row.get("matchNote").asText()).contains("нет технического обслуживания");
+    }
+
     private void addDecision(long ueId, String opKey, String opName, String code, String periodicity, String perYear) {
         EstimateRateDecision d = new EstimateRateDecision();
         d.setUniqueEquipmentId(ueId);

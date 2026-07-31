@@ -190,12 +190,42 @@ public class EstimateDraftService {
             }
         }
         created += addSystemWideRows(estimateId, estimate, systemsInEstimate);
+        flagMissingService(estimateId);
 
         log.info("Черновик сметы {}: создано {} строк, пропущено {} (ИИ: {})",
                 estimateId, created, skipped, aiAvailable);
         return new DraftResult(created, skipped, aiAvailable);
     }
 
+
+    /**
+     * Парность «осмотр + ТО»: если у оборудования есть только осмотр, а технического
+     * обслуживания нет, расценка ТО скорее всего пропущена (так в аудите потерялось ТО
+     * оповещателей на 11 тыс. ₽). Молча дописать её нельзя — это выбор инженера,
+     * поэтому строку помечаем «на проверку» с явным пояснением.
+     */
+    private void flagMissingService(Long estimateId) {
+        Map<String, List<EstimateRow>> byEquipment = new java.util.LinkedHashMap<>();
+        for (EstimateRow row : rowRepository.findByEstimateIdOrderByPosition(estimateId)) {
+            if (row.getEquipmentId() == null) continue;          // общесистемные работы не парные
+            byEquipment.computeIfAbsent(String.valueOf(row.getEquipmentId()), k -> new ArrayList<>()).add(row);
+        }
+        for (List<EstimateRow> rows : byEquipment.values()) {
+            // помечаем только тот случай, что описан в аудите: у оборудования вообще нет
+            // работ, кроме осмотра. Если есть проверка, наладка или ремонт — набор работ
+            // осмысленный, и лишний флаг только зашумит смету.
+            boolean inspectionOnly = rows.stream().allMatch(
+                    r -> EstimateDecisionService.operationKey(r.getOperationName()).startsWith("осмотр"));
+            if (!inspectionOnly) continue;
+            for (EstimateRow row : rows) {
+                row.setNeedsReview(true);
+                row.setMatchNote("⚠ НА ПРОВЕРКУ: у оборудования есть осмотр, но нет технического "
+                        + "обслуживания — проверьте, не пропущена ли расценка ТО."
+                        + (row.getMatchNote() == null ? "" : " " + row.getMatchNote()));
+                rowRepository.save(row);
+            }
+        }
+    }
 
     /**
      * Общесистемные работы, не привязанные к оборудованию. Для АПС это комплексные

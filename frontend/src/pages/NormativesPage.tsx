@@ -70,6 +70,7 @@ export default function NormativesPage() {
       {error && <div className="text-red-600 text-sm">{error}</div>}
 
       <AiMatchPanel available={aiAvailable} />
+      <CatalogCheck />
       <RateSearch />
 
       <div className="card divide-y divide-slate-100">
@@ -273,6 +274,80 @@ function reasonsOf(matches: NormativeMatch[]): Record<number, string> {
 }
 
 /** Полнотекстовый поиск расценок по каталогу. */
+type Discrepancy = { code: string; field: string; expected: string; actual: string }
+type VerifyReport = { checked: number; missing: number; discrepancies: Discrepancy[] }
+
+/**
+ * Самопроверка каталога: расценки, сверенные вручную по PDF сборника, сравниваются с
+ * распознанными. Расхождение здесь — это неверные деньги в каждой смете с этой расценкой.
+ */
+function CatalogCheck() {
+  const [report, setReport] = useState<VerifyReport | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const run = async () => {
+    setLoading(true)
+    try {
+      setReport(await api.get<VerifyReport>('/api/normatives/rates/verify'))
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Ошибка проверки', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="card p-5 space-y-3">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <div className="font-medium text-slate-900">Проверка каталога</div>
+          <p className="text-sm text-slate-500 mt-0.5">
+            Сравнение распознанных цен со списком расценок, сверенным вручную по PDF сборника.
+          </p>
+        </div>
+        <button className="btn-secondary" onClick={run} disabled={loading}>
+          {loading ? 'Проверяем…' : 'Проверить'}
+        </button>
+      </div>
+
+      {report && (
+        <div className="text-sm space-y-2">
+          <div className="text-slate-600">
+            Проверено расценок: {report.checked}
+            {report.missing > 0 && <span className="text-slate-400"> · нет в каталоге: {report.missing}</span>}
+          </div>
+          {report.discrepancies.length === 0 ? (
+            <div className="text-emerald-700">Расхождений нет — цены совпадают со сборником.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left text-slate-500">
+                  <tr>
+                    <th className="py-1 pr-4 font-medium">Шифр</th>
+                    <th className="py-1 pr-4 font-medium">Показатель</th>
+                    <th className="py-1 pr-4 font-medium">В сборнике</th>
+                    <th className="py-1 font-medium">В каталоге</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.discrepancies.map((d, i) => (
+                    <tr key={i} className="border-t border-slate-100">
+                      <td className="py-1 pr-4 font-mono text-xs">{d.code}</td>
+                      <td className="py-1 pr-4">{d.field}</td>
+                      <td className="py-1 pr-4 text-slate-600">{d.expected}</td>
+                      <td className="py-1 text-red-600">{d.actual}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function RateSearch() {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<NormativeRate[] | null>(null)

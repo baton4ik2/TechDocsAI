@@ -20,6 +20,7 @@ public class NormativeController {
 
     private final NormativeService normativeService;
     private final NormativeAiMatchService aiMatchService;
+    private final NormativeVerificationService verificationService;
 
     @PostMapping("/upload")
     public NormativeSourcebook upload(@RequestParam(required = false) String name,
@@ -66,6 +67,15 @@ public class NormativeController {
     @PostMapping("/rates/ai-match")
     public NormativeAiMatchService.MatchResult aiMatch(@RequestBody MatchRequest request) {
         return aiMatchService.match(request == null ? null : request.query());
+    }
+
+    /**
+     * Самопроверка каталога: сравнение с вручную сверенными по PDF расценками.
+     * Расхождение здесь означает ошибку распознавания сборника — и неверные деньги в смете.
+     */
+    @GetMapping("/rates/verify")
+    public NormativeVerificationService.Report verifyRates() {
+        return verificationService.verify();
     }
 
     @GetMapping("/ai-status")

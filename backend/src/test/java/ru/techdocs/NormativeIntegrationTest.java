@@ -25,6 +25,8 @@ class NormativeIntegrationTest extends IntegrationTestBase {
     NormativeRateRepository rateRepository;
     @Autowired
     ru.techdocs.normative.NormativeService normativeService;
+    @Autowired
+    ru.techdocs.normative.NormativeVerificationService verificationService;
 
     private NormativeSourcebook sourcebook() {
         NormativeSourcebook book = new NormativeSourcebook();
@@ -122,6 +124,32 @@ class NormativeIntegrationTest extends IntegrationTestBase {
                         .header("Authorization", bearer()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(org.hamcrest.Matchers.greaterThan(0)));
+    }
+
+    /**
+     * Самопроверка каталога: ошибка распознавания цены из PDF (306,52 → 311,86)
+     * должна всплывать явно, а не расходиться по сметам.
+     */
+    @Test
+    void verifyReportsPriceMismatchAgainstCheckedRates() throws Exception {
+        Long bookId = sourcebook().getId();
+        NormativeRate wrong = rate(bookId, "22-2203-106-3/1",
+                "ИП 212-34А «ДИП-34А», удаление пыли с дымовой камеры", new BigDecimal("311.86"));
+        wrong.setMaterialCost(new BigDecimal("5.34"));
+        wrong.setLaborHours(new BigDecimal("0.44"));
+        rateRepository.saveAndFlush(wrong);
+
+        var report = verificationService.verify();
+        assertThat(report.checked()).isEqualTo(1);
+        assertThat(report.discrepancies())
+                .anySatisfy(d -> {
+                    assertThat(d.code()).isEqualTo("22-2203-106-3/1");
+                    assertThat(d.field()).isEqualTo("ЗП");
+                    assertThat(d.expected()).isEqualTo("306.52");
+                    assertThat(d.actual()).isEqualTo("311.86");
+                });
+        // остальные сверенные расценки в каталог не загружены — это отдельный счётчик
+        assertThat(report.missing()).isGreaterThan(0);
     }
 
     @Test
