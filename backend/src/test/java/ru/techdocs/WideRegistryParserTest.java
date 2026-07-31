@@ -60,6 +60,14 @@ class WideRegistryParserTest {
             r7.createCell(5).setCellValue("Модуль пожаротушения");
             r7.createCell(6).setCellValue("FR750E");
             r7.createCell(7).setCellValue("1");
+            // строка 8: пометка о виде документа — не подраздел и не оборудование
+            Row r8 = sheet.createRow(8);
+            r8.createCell(5).setCellValue("По РД");
+            // строка 9: позиция после пометки — остаётся в системе блока
+            Row r9 = sheet.createRow(9);
+            r9.createCell(5).setCellValue("Ороситель");
+            r9.createCell(6).setCellValue("СВН-15");
+            r9.createCell(7).setCellValue("4");
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             wb.write(out);
@@ -109,11 +117,21 @@ class WideRegistryParserTest {
         assertThat(items).noneMatch(i -> i.name().equalsIgnoreCase("АГПТ"));
     }
 
+    /**
+     * «По ИТД» / «По РД» — вид документа, из которого взято оборудование и количество,
+     * а не раздел реестра: такая строка не должна ни попадать в оборудование, ни
+     * становиться инженерной системой для всего, что идёт под ней.
+     */
     @Test
-    void ignoresNoteRows() throws Exception {
+    void ignoresDocumentNoteRows() throws Exception {
         List<WideRegistryParser.WideItem> items = parser.parse("реестр.xlsx",
                 new ByteArrayInputStream(wideWorkbook()));
         assertThat(items).noneMatch(i -> i.name().equalsIgnoreCase("По ИТД"));
+        assertThat(items).noneMatch(i -> i.name().equalsIgnoreCase("По РД"));
+
+        WideRegistryParser.WideItem after = items.stream()
+                .filter(i -> i.name().contains("Ороситель")).findFirst().orElseThrow();
+        assertThat(after.systemName()).isEqualTo("Пожарная сигнализация");
     }
 
     @Test

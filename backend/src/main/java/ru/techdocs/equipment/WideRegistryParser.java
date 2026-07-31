@@ -21,9 +21,22 @@ public class WideRegistryParser {
     public record WideItem(String systemName, String manufacturer, String name,
                            String model, BigDecimal quantity, String unit) {}
 
-    /** Строки-пометки, которые не являются ни оборудованием, ни подразделом. */
-    private static final Set<String> NOTE_ROWS = Set.of(
-            "по итд", "нет итд", "по пд и итд", "по пд", "итд", "-", "—");
+    /** Прочерки и пустые пометки — не оборудование и не подраздел. */
+    private static final Set<String> NOTE_ROWS = Set.of("-", "—", "–");
+
+    /**
+     * Пометка о виде документа, из которого взято оборудование и его количество
+     * («По ИТД», «по РД», «по ПД и ИТД», «нет ИТД»). Это не подраздел реестра:
+     * без этой проверки такая строка становилась бы «инженерной системой»,
+     * и всё оборудование под ней уезжало в несуществующую систему.
+     */
+    private static final java.util.regex.Pattern DOCUMENT_NOTE = java.util.regex.Pattern.compile(
+            "^(?:по|нет|согласно)?\\s*(?:итд|рд|пд|ид|пир|проект\\p{L}*)"
+                    + "(?:\\s*(?:и|,|/)\\s*(?:итд|рд|пд|ид|пир|проект\\p{L}*))*$");
+
+    private static boolean isDocumentNote(String lower) {
+        return NOTE_ROWS.contains(lower) || DOCUMENT_NOTE.matcher(lower).matches();
+    }
 
     /**
      * Подзаголовки, которые НЕ выделяются в отдельную инженерную систему: оборудование
@@ -93,7 +106,7 @@ public class WideRegistryParser {
 
                 if (name.isBlank()) continue;
                 String lower = name.toLowerCase(Locale.ROOT).strip();
-                if (NOTE_ROWS.contains(lower)) continue;
+                if (isDocumentNote(lower)) continue;
 
                 boolean onlyName = manufacturer.isBlank() && model.isBlank() && qtyRaw.isBlank();
                 if (onlyName && name.length() <= 60) {

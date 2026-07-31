@@ -141,7 +141,15 @@ export default function EstimatePage() {
                 <td className="py-2 px-3 max-w-[220px] truncate" title={row.operationName}>{row.operationName || '—'}</td>
                 <td className="py-2 px-3 font-mono text-xs">{row.rateCode || '—'}</td>
                 <td className="py-2 px-3"><SourceBadge source={row.matchSource} /></td>
-                <td className="py-2 px-3 text-xs">{row.periodicity || '—'}</td>
+                <td className="py-2 px-3 text-xs">
+                  {row.periodicity || '—'}
+                  {row.correction != null && Number(row.correction) !== 1 && (
+                    <span className="ml-1 rounded bg-slate-100 text-slate-600 text-[10px] px-1 py-0.5"
+                          title="Поправочный коэффициент (S) — задан вручную">
+                      ×{row.correction}
+                    </span>
+                  )}
+                </td>
                 <td className="py-2 px-3 text-right">{row.opsPerYear ?? '—'}</td>
                 <td className="py-2 px-3 text-right">{row.qty ?? '—'}</td>
                 <td className="py-2 px-3 text-right">{money(calc.zp)}</td>
