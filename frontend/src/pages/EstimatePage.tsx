@@ -282,7 +282,7 @@ function Coefficients({ view, onSaved }: { view: EstimateView; onSaved: () => vo
 }
 
 type DuplicateGroup = {
-  equipmentName?: string; rateCode: string; periodicity?: string
+  equipmentName?: string; equipmentNames: string[]; rateCode: string; periodicity?: string
   totalQty?: number; rowIds: number[]
 }
 
@@ -332,8 +332,8 @@ function MergeModal({ estimateId, onClose, onMerged }: {
         <div className="text-slate-400 py-6 text-center">Ищем одинаковые строки…</div>
       ) : groups.length === 0 ? (
         <div className="text-slate-500 py-6 text-center">
-          Одинаковых строк нет. Объединяются позиции с одним оборудованием, одной расценкой,
-          одной периодичностью и одним числом операций в год.
+          Одинаковых строк нет. Объединяются позиции с одной расценкой, одной периодичностью,
+          одним числом операций в год и одинаковыми ценами.
         </div>
       ) : (
         <div className="space-y-3">
@@ -352,6 +352,14 @@ function MergeModal({ estimateId, onClose, onMerged }: {
                     <span className="font-mono">{g.rateCode}</span>
                     {g.periodicity && <span> · {g.periodicity}</span>}
                   </div>
+                  {g.equipmentNames?.length > 1 && (
+                    <div className="text-xs text-amber-700 mt-1">
+                      Разные модели по одной расценке:
+                      <ul className="list-disc list-inside text-slate-500 mt-0.5">
+                        {g.equipmentNames.map((n, k) => <li key={k}>{n}</li>)}
+                      </ul>
+                    </div>
+                  )}
                   <div className="text-xs text-slate-400 mt-0.5">
                     {g.rowIds.length} строк(и) → 1, количество {g.totalQty ?? '—'}
                   </div>

@@ -145,26 +145,35 @@ class EstimateIntegrationTest extends IntegrationTestBase {
     void mergesDuplicateRowsSummingQuantity() throws Exception {
         seedRate();
         long est = createEstimate(facility());
+        // одна расценка, но РАЗНЫЕ модели извещателей — в смете это одна позиция
         String body = "{\"section\":\"АПС\",\"equipmentName\":\"Извещатель пожарный дымовой\","
-                + "\"rateCode\":\"22-2203-113-1/1\",\"periodicity\":\"раз в год\",\"qty\":%d}";
-        for (int qty : new int[]{40, 60, 16}) {
+                + "\"equipmentType\":\"%s\",\"rateCode\":\"22-2203-113-1/1\","
+                + "\"periodicity\":\"раз в год\",\"qty\":%d}";
+        String[] models = {"ИП 212-64", "ИП 212-45", "ИП 212-64"};
+        int[] quantities = {40, 60, 16};
+        for (int i = 0; i < models.length; i++) {
             mockMvc.perform(post("/api/estimates/" + est + "/rows").header("Authorization", bearer())
-                            .contentType("application/json").content(String.format(body, qty)))
+                            .contentType("application/json")
+                            .content(String.format(body, models[i], quantities[i])))
                     .andExpect(status().isOk());
         }
 
         String groupsResp = mockMvc.perform(get("/api/estimates/" + est + "/duplicate-groups")
                         .header("Authorization", bearer()))
                 .andExpect(status().isOk())
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].totalQty").value(116))
+                // видно, что сливаются разные модели по одной расценке
+                .andExpect(jsonPath("$[0].equipmentNames.length()").value(2))
                 .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
         JsonNode ids = json.readTree(groupsResp).get(0).get("rowIds");
 
         mockMvc.perform(post("/api/estimates/" + est + "/merge-rows").header("Authorization", bearer())
                         .contentType("application/json").content("{\"rowIds\":" + ids + "}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.qty").value(116));
+                .andExpect(jsonPath("$.qty").value(116))
+                .andExpect(jsonPath("$.matchNote").value(org.hamcrest.Matchers.containsString("ИП 212-45")));
 
         mockMvc.perform(get("/api/estimates/" + est).header("Authorization", bearer()))
                 .andExpect(jsonPath("$.rows.length()").value(1))

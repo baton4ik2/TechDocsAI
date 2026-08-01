@@ -146,14 +146,20 @@ public class EstimateService {
         rowRepository.deleteById(rowId);
     }
 
-    /** Группа одинаковых строк сметы — кандидат на объединение. */
-    public record DuplicateGroup(String equipmentName, String rateCode, String periodicity,
+    /**
+     * Группа строк-кандидатов на объединение. equipmentNames — что именно сольётся:
+     * расценка может быть общей у нескольких моделей (дымовые извещатели ИП 212-64 и
+     * ИП 212-45 обслуживаются по одной), и инженер должен это видеть до объединения.
+     */
+    public record DuplicateGroup(String equipmentName, List<String> equipmentNames,
+                                 String rateCode, String periodicity,
                                  BigDecimal totalQty, List<Long> rowIds) {}
 
     /**
-     * Одинаковые строки: одно оборудование, одна расценка, одна периодичность и одно
-     * число операций в год. Такие позиции в реестре часто разнесены по этажам или
-     * шлейфам, а в смете это одна строка с суммарным количеством.
+     * Строки, которые считаются в смете одной позицией: одна расценка, одна
+     * периодичность, одно число операций в год и одни и те же цены. Наименование
+     * оборудования при этом может отличаться — расценка часто общая для нескольких
+     * моделей, и в смете это одна строка с суммарным количеством.
      */
     public List<DuplicateGroup> duplicateGroups(Long estimateId) {
         get(estimateId);
@@ -167,24 +173,42 @@ public class EstimateService {
             if (rows.size() < 2) continue;
             BigDecimal total = BigDecimal.ZERO;
             List<Long> ids = new ArrayList<>();
+            java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
             for (EstimateRow row : rows) {
                 total = total.add(row.getQty() == null ? BigDecimal.ZERO : row.getQty());
                 ids.add(row.getId());
+                names.add(describeEquipment(row));
             }
             EstimateRow first = rows.get(0);
-            result.add(new DuplicateGroup(first.getEquipmentName(), first.getRateCode(),
-                    first.getPeriodicity(), total, ids));
+            result.add(new DuplicateGroup(first.getEquipmentName(), new ArrayList<>(names),
+                    first.getRateCode(), first.getPeriodicity(), total, ids));
         }
         return result;
     }
 
-    /** Строки считаются одинаковыми по разделу, оборудованию, расценке и режиму работ. */
+    /** «Извещатель пожарный дымовой (ИП 212-64)» — для списка объединяемых позиций. */
+    private String describeEquipment(EstimateRow row) {
+        String name = nz(row.getEquipmentName());
+        String type = nz(row.getEquipmentType());
+        if (name.isEmpty()) return type.isEmpty() ? "—" : type;
+        return type.isEmpty() ? name : name + " (" + type + ")";
+    }
+
+    /**
+     * Ключ объединения: раздел, расценка, режим работ и цены. Наименование
+     * оборудования в ключ НЕ входит — иначе не сливались бы разные модели, которые
+     * обслуживаются по одной расценке. Цены входят: если инженер правил их вручную,
+     * количество нельзя складывать — сумма пошла бы по чужой цене.
+     */
     private String mergeKey(EstimateRow row) {
         return String.join("|",
-                nz(row.getSection()), nz(row.getEquipmentName()).toLowerCase(),
-                nz(row.getRateCode()), nz(row.getPeriodicity()),
-                row.getOpsPerYear() == null ? "" : row.getOpsPerYear().stripTrailingZeros().toPlainString(),
-                row.getCorrection() == null ? "" : row.getCorrection().stripTrailingZeros().toPlainString());
+                nz(row.getSection()), nz(row.getRateCode()), nz(row.getPeriodicity()),
+                num(row.getOpsPerYear()), num(row.getCorrection()), num(row.getUnitBasis()),
+                num(row.getPriceZp()), num(row.getPriceEm()), num(row.getPriceZpm()), num(row.getPriceMr()));
+    }
+
+    private String num(BigDecimal v) {
+        return v == null ? "" : v.stripTrailingZeros().toPlainString();
     }
 
     private String nz(String s) {
@@ -216,14 +240,23 @@ public class EstimateService {
         for (EstimateRow row : rows) {
             if (!key.equals(mergeKey(row))) {
                 throw new BadRequestException(
-                        "Объединять можно только строки с одинаковой расценкой, периодичностью и числом операций.");
+                        "Объединять можно только строки с одинаковой расценкой, периодичностью, "
+                                + "числом операций и ценами.");
             }
         }
         BigDecimal total = BigDecimal.ZERO;
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
         for (EstimateRow row : rows) {
             total = total.add(row.getQty() == null ? BigDecimal.ZERO : row.getQty());
+            names.add(describeEquipment(row));
         }
         target.setQty(total);
+        // расценка бывает общей у нескольких моделей — что именно слито, должно
+        // остаться видно, иначе из строки уже не понять, откуда взялось количество
+        if (names.size() > 1) {
+            target.setMatchNote("Объединено позиций: " + rows.size() + " — " + String.join("; ", names)
+                    + (target.getMatchNote() == null ? "" : ". " + target.getMatchNote()));
+        }
         rowRepository.save(target);
         for (int i = 1; i < rows.size(); i++) rowRepository.delete(rows.get(i));
         renumber(estimateId);
