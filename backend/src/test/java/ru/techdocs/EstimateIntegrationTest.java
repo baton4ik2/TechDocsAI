@@ -200,6 +200,30 @@ class EstimateIntegrationTest extends IntegrationTestBase {
                 .andExpect(status().isBadRequest());
     }
 
+    /**
+     * Шифр, которого нет в каталоге, не должен унаследовать цены прежней расценки:
+     * иначе деньги одной работы молча приписываются другому шифру.
+     */
+    @Test
+    void unknownRateCodeClearsPricesAndFlagsRow() throws Exception {
+        seedRate();
+        long est = createEstimate(facility());
+        String resp = mockMvc.perform(post("/api/estimates/" + est + "/rows").header("Authorization", bearer())
+                        .contentType("application/json")
+                        .content("{\"rateCode\":\"22-2203-113-1/1\",\"qty\":1,\"periodicity\":\"раз в 1 мес.\"}"))
+                .andExpect(jsonPath("$.priceZp").value(362.26))
+                .andReturn().getResponse().getContentAsString();
+        long rowId = json.readTree(resp).get("id").asLong();
+
+        mockMvc.perform(patch("/api/estimates/rows/" + rowId).header("Authorization", bearer())
+                        .contentType("application/json").content("{\"rateCode\":\"22-2203-104-11/1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.priceZp").doesNotExist())
+                .andExpect(jsonPath("$.rateName").doesNotExist())
+                .andExpect(jsonPath("$.needsReview").value(true))
+                .andExpect(jsonPath("$.matchNote").value(org.hamcrest.Matchers.containsString("нет в каталоге")));
+    }
+
     @Test
     void requiresAuth() throws Exception {
         mockMvc.perform(get("/api/estimates")).andExpect(status().isUnauthorized());

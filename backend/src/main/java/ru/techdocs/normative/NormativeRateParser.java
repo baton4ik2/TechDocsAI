@@ -26,7 +26,11 @@ import java.util.regex.Pattern;
 public class NormativeRateParser {
 
     // шифр расценки: 22-2203-95-1/1, 1-2203-51-1/1, 24-2903-7-3/1
-    private static final Pattern CODE = Pattern.compile("(\\d{1,2}-\\d{3,4}-\\d{1,3}-\\d{1,2}/\\d{1,2})");
+    // Шифр расценки. В узкой колонке сборника длинные шифры переносятся на две строки
+    // («22-2203-104-» / «11/1»), поэтому после дефисов допускаем перенос — иначе такие
+    // расценки в каталог не попадают вовсе, а в смете остаются без цен и состава работ.
+    private static final Pattern CODE = Pattern.compile(
+            "(\\d{1,2}-\\s*\\d{3,4}-\\s*\\d{1,3}-\\s*\\d{1,2}/\\d{1,2})");
     // стоимостной токен: число с десятичной запятой или прочерк (ноль).
     // Пробел допускается ТОЛЬКО как разделитель тысяч (группы ровно по 3 цифры),
     // иначе «типа 6424 502,15» слилось бы в одно число. Прочерк — отдельный символ,
@@ -109,7 +113,8 @@ public class NormativeRateParser {
         }
         for (int i = 0; i < codeSpans.size(); i++) {
             int[] span = codeSpans.get(i);
-            String code = text.substring(span[0], span[1]);
+            // перенос внутри шифра убираем: в каталоге он должен быть одной строкой
+            String code = text.substring(span[0], span[1]).replaceAll("\\s+", "");
             int blockEnd = (i + 1 < codeSpans.size()) ? codeSpans.get(i + 1)[0] : text.length();
             String block = text.substring(span[1], blockEnd);
 

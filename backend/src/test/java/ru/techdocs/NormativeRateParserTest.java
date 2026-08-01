@@ -150,6 +150,33 @@ class NormativeRateParserTest {
         assertThat(rates).isEmpty();
     }
 
+    /**
+     * В узкой колонке сборника длинные шифры переносятся на две строки
+     * («22-2203-104-» / «11/1»). Такая расценка обязана попасть в каталог: иначе в
+     * смете она остаётся без цен и состава работ (случай С2000-СП4).
+     */
+    @Test
+    void readsRateCodeWrappedAcrossLines() {
+        String page = """
+                Состав работ:
+                1. Внешний осмотр корпуса прибора. 2. Проверка работоспособности.
+                Измеритель: 1 шт.
+
+                22-2203-104-
+                11/1 Техническое обслуживание приборов системы охранно-пожарной сигнализации на базе
+                оборудования С2000, блок сигнально-пусковой С2000-СП4 - годовое 248,09 181,13 - - 66,96 0,26
+                """;
+        List<NormativeRate> rates = parser.parse(List.of(new PageText(46, page)));
+
+        assertThat(rates).hasSize(1);
+        NormativeRate r = rates.get(0);
+        assertThat(r.getCode()).isEqualTo("22-2203-104-11/1");   // перенос убран
+        assertThat(r.getLaborCost()).isEqualByComparingTo("181.13");
+        assertThat(r.getMaterialCost()).isEqualByComparingTo("66.96");
+        assertThat(r.getLaborHours()).isEqualByComparingTo("0.26");
+        assertThat(r.getWorkComposition()).contains("Внешний осмотр корпуса прибора");
+    }
+
     @Test
     void returnsEmptyForBlankPages() {
         assertThat(parser.parse(List.of(new PageText(1, "   ")))).isEmpty();

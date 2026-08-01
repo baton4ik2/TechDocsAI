@@ -294,8 +294,9 @@ public class EstimateService {
         if (in.rateCode() != null) row.setRateCode(blank(in.rateCode()));
 
         // автозаполнение из каталога по шифру (при создании или смене шифра)
+        boolean unknownRate = false;
         if (row.getRateCode() != null && (creating || rateChanged)) {
-            fillFromCatalog(row);
+            unknownRate = !fillFromCatalog(row);
         }
 
         // явные ручные значения перекрывают автозаполнение
@@ -311,12 +312,15 @@ public class EstimateService {
         if (in.suggestions() != null) row.setSuggestions(blank(in.suggestions()));
         if (in.matchNote() != null) row.setMatchNote(blank(in.matchNote()));
 
-        // ручная правка шифра расценки снимает пометку «на проверку» и варианты выбора
+        // Ручная правка шифра снимает пометку «на проверку» и варианты выбора —
+        // но не тогда, когда шифра нет в каталоге: такая строка не посчитается.
         if (rateChanged && !creating) {
-            row.setNeedsReview(false);
             row.setMatchSource("MANUAL");
             row.setSuggestions(null);
-            if (in.matchNote() == null) row.setMatchNote("Расценка выбрана инженером вручную.");
+            if (!unknownRate) {
+                row.setNeedsReview(false);
+                if (in.matchNote() == null) row.setMatchNote("Расценка выбрана инженером вручную.");
+            }
         }
 
         // периодичность → операций в год (если явно не задано)
@@ -328,9 +332,27 @@ public class EstimateService {
         }
     }
 
-    private void fillFromCatalog(EstimateRow row) {
+    /**
+     * Подставляет в строку данные расценки из каталога. Если шифра в каталоге нет,
+     * цены прежней расценки НЕ остаются: иначе деньги одной расценки молча
+     * приписывались бы другому шифру. Строка обнуляется и помечается на проверку.
+     *
+     * @return true, если расценка найдена в каталоге
+     */
+    private boolean fillFromCatalog(EstimateRow row) {
         NormativeRate rate = rateRepository.findFirstByCodeOrderById(row.getRateCode()).orElse(null);
-        if (rate == null) return;
+        if (rate == null) {
+            row.setRateName(null);
+            row.setPriceZp(null);
+            row.setPriceEm(null);
+            row.setPriceZpm(null);
+            row.setPriceMr(null);
+            row.setLaborHours(null);
+            row.setNeedsReview(true);
+            row.setMatchNote("⚠ НА ПРОВЕРКУ: шифра " + row.getRateCode() + " нет в каталоге СН-2012 — "
+                    + "цены не подставлены. Проверьте шифр или загрузите нужный сборник.");
+            return false;
+        }
         row.setRateName(rate.getName());
         row.setPriceZp(rate.getLaborCost());
         row.setPriceEm(rate.getMachineCost());
@@ -338,6 +360,7 @@ public class EstimateService {
         row.setPriceMr(rate.getMaterialCost());
         row.setLaborHours(rate.getLaborHours());
         row.setUnitBasis(RateUnits.basis(rate.getUnit()));
+        return true;
     }
 
     private String blank(String s) {
