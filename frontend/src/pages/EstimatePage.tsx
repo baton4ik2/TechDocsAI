@@ -6,7 +6,11 @@ import Modal from '../components/Modal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { toast } from '../components/Toast'
 
-type Alternative = { rateCode: string; rateName?: string; reason?: string }
+type Alternative = {
+  rateCode: string; rateName?: string; reason?: string; unit?: string
+  laborCost?: number; machineCost?: number; machineLabor?: number
+  materialCost?: number; laborHours?: number; workComposition?: string
+}
 type Alternatives = { options: Alternative[]; aiConfigured: boolean }
 
 /**
@@ -391,6 +395,92 @@ function MergeModal({ estimateId, onClose, onMerged }: {
   )
 }
 
+/** Значение поля формы в число; пусто и мусор — undefined, а не 0. */
+const numOrUndef = (v: string) => {
+  const n = Number(String(v).replace(',', '.'))
+  return v.trim() === '' || Number.isNaN(n) ? undefined : n
+}
+
+/**
+ * Карточка аналога: шифр, наименование и довод ИИ. Раскрывается на месте —
+ * показывает цены с отклонением от текущей расценки и состав работ, чтобы
+ * сравнить вариант, не подставляя его в смету.
+ */
+function AlternativeCard({ alt, selected, current, onPick }: {
+  alt: Alternative
+  selected: boolean
+  current: { zp?: number; em?: number; zpm?: number; mr?: number; hours?: number }
+  onPick: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const steps = splitComposition(alt.workComposition)
+
+  return (
+    <div className={`rounded-md border text-sm transition-colors ${
+      selected ? 'border-primary-400 bg-primary-50' : 'border-slate-200 bg-white'}`}>
+      <div className="px-3 py-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="rounded bg-sky-100 text-sky-800 px-1.5 py-0.5 text-[10px] font-semibold">ИИ</span>
+          <span className="font-mono text-xs text-slate-700">{alt.rateCode}</span>
+          {alt.unit && <span className="text-[11px] text-slate-400">· {alt.unit}</span>}
+        </div>
+        {alt.rateName && <div className="text-xs text-slate-600 mt-0.5">{alt.rateName}</div>}
+        {alt.reason && <div className="text-[11px] text-slate-400 mt-0.5">{alt.reason}</div>}
+        <div className="flex gap-2 mt-2">
+          <button type="button" className="btn-ghost text-xs py-1" onClick={() => setOpen(!open)}>
+            {open ? 'Свернуть' : 'Состав работ и цены'}
+          </button>
+          <button type="button" className="btn-secondary text-xs py-1" onClick={onPick}>
+            Взять эту
+          </button>
+        </div>
+      </div>
+
+      {open && (
+        <div className="border-t border-slate-100 px-3 py-2 space-y-3 bg-slate-50/60">
+          <div className="grid grid-cols-5 gap-2">
+            <Delta label="ЗП" value={alt.laborCost} current={current.zp} />
+            <Delta label="ЭМ" value={alt.machineCost} current={current.em} />
+            <Delta label="ЗПМ" value={alt.machineLabor} current={current.zpm} />
+            <Delta label="МР" value={alt.materialCost} current={current.mr} />
+            <Delta label="чел.-ч" value={alt.laborHours} current={current.hours} />
+          </div>
+          {steps.length > 0 ? (
+            <div>
+              <div className="text-xs font-medium text-slate-500 mb-1">Состав работ по расценке</div>
+              <ol className="space-y-1 list-decimal list-inside">
+                {steps.map((s, i) => <li key={i} className="text-sm text-slate-700">{s}</li>)}
+              </ol>
+            </div>
+          ) : (
+            <div className="text-xs text-slate-400">Состав работ для этой расценки в каталоге не распознан.</div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Показатель аналога рядом с текущей расценкой: значение и отклонение от неё.
+ * Дороже — зелёным, дешевле — красным: инженер сразу видит, во что обойдётся замена.
+ */
+function Delta({ label, value, current }: { label: string; value?: number; current?: number }) {
+  const diff = value != null && current != null ? value - current : null
+  const sign = diff == null || Math.abs(diff) < 0.005 ? null : diff > 0 ? 'up' : 'down'
+  return (
+    <div>
+      <div className="text-[10px] text-slate-400">{label}</div>
+      <div className="text-sm text-slate-700">{value == null ? '—' : money(value)}</div>
+      {sign && (
+        <div className={`text-[11px] ${sign === 'up' ? 'text-emerald-600' : 'text-red-600'}`}>
+          {diff! > 0 ? '+' : '−'}{money(Math.abs(diff!))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /**
  * Состав работ расценки СН-2012 приходит одним текстом. Разбираем на пункты:
  * сначала по нумерации («1. … 2. …»), иначе по переводам строк, точкам с запятой
@@ -716,21 +806,15 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
             ) : (
               <>
                 {alternatives.options.map((a, i) => (
-                  <button type="button" key={i} onClick={() => setRateCode(a.rateCode)}
-                          className={`w-full text-left rounded-md border px-3 py-2 text-sm transition-colors ${
-                            f.rateCode === a.rateCode
-                              ? 'border-primary-400 bg-primary-50'
-                              : 'border-slate-200 bg-white hover:border-primary-300'}`}>
-                    <div className="flex items-center gap-2">
-                      <span className="rounded bg-sky-100 text-sky-800 px-1.5 py-0.5 text-[10px] font-semibold">ИИ</span>
-                      <span className="font-mono text-xs text-slate-700">{a.rateCode}</span>
-                    </div>
-                    {a.rateName && <div className="text-xs text-slate-600 mt-0.5">{a.rateName}</div>}
-                    {a.reason && <div className="text-[11px] text-slate-400 mt-0.5">{a.reason}</div>}
-                  </button>
+                  <AlternativeCard key={i} alt={a} selected={f.rateCode === a.rateCode}
+                                   current={{ zp: numOrUndef(f.priceZp), em: numOrUndef(f.priceEm),
+                                              zpm: numOrUndef(f.priceZpm), mr: numOrUndef(f.priceMr),
+                                              hours: rate?.laborHours }}
+                                   onPick={() => setRateCode(a.rateCode)} />
                 ))}
                 <div className="text-[11px] text-sky-700">
-                  Это подсказка, а не замена: клик подставит шифр, цены подтянутся из каталога.
+                  Отклонения — от текущей расценки строки. Состав работ можно посмотреть,
+                  не выбирая аналог; «Взять эту» подставит шифр и цены.
                 </div>
               </>
             )}

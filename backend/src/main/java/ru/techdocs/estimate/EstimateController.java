@@ -92,8 +92,14 @@ public class EstimateController {
         return java.util.Map.of("saved", decisionService.promote(id));
     }
 
-    /** Аналог расценки, предложенный ИИ для строки. */
-    public record Alternative(String rateCode, String rateName, String reason) {}
+    /**
+     * Аналог расценки, предложенный ИИ для строки. Цены и состав работ приходят
+     * сразу: инженер сравнивает вариант с текущей расценкой, не выбирая его.
+     */
+    public record Alternative(String rateCode, String rateName, String reason, String unit,
+                              java.math.BigDecimal laborCost, java.math.BigDecimal machineCost,
+                              java.math.BigDecimal machineLabor, java.math.BigDecimal materialCost,
+                              java.math.BigDecimal laborHours, String workComposition) {}
 
     public record Alternatives(List<Alternative> options, boolean aiConfigured) {}
 

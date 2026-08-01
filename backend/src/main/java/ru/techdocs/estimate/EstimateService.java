@@ -170,8 +170,11 @@ public class EstimateService {
         List<EstimateController.Alternative> options = new ArrayList<>();
         for (var m : match.matches()) {
             if (m.rate() == null || m.rate().getCode().equals(row.getRateCode())) continue;
+            NormativeRate r = m.rate();
             options.add(new EstimateController.Alternative(
-                    m.rate().getCode(), m.rate().getName(), m.reason()));
+                    r.getCode(), r.getName(), m.reason(), r.getUnit(),
+                    r.getLaborCost(), r.getMachineCost(), r.getMachineLabor(),
+                    r.getMaterialCost(), r.getLaborHours(), r.getWorkComposition()));
             if (options.size() >= ALTERNATIVES_LIMIT) break;
         }
         return new EstimateController.Alternatives(options, match.aiConfigured());
