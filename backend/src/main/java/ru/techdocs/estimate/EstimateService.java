@@ -146,6 +146,99 @@ public class EstimateService {
         rowRepository.deleteById(rowId);
     }
 
+    /** Группа одинаковых строк сметы — кандидат на объединение. */
+    public record DuplicateGroup(String equipmentName, String rateCode, String periodicity,
+                                 BigDecimal totalQty, List<Long> rowIds) {}
+
+    /**
+     * Одинаковые строки: одно оборудование, одна расценка, одна периодичность и одно
+     * число операций в год. Такие позиции в реестре часто разнесены по этажам или
+     * шлейфам, а в смете это одна строка с суммарным количеством.
+     */
+    public List<DuplicateGroup> duplicateGroups(Long estimateId) {
+        get(estimateId);
+        java.util.Map<String, List<EstimateRow>> groups = new java.util.LinkedHashMap<>();
+        for (EstimateRow row : rowRepository.findByEstimateIdOrderByPosition(estimateId)) {
+            if (row.getRateCode() == null || row.getRateCode().isBlank()) continue;
+            groups.computeIfAbsent(mergeKey(row), k -> new ArrayList<>()).add(row);
+        }
+        List<DuplicateGroup> result = new ArrayList<>();
+        for (List<EstimateRow> rows : groups.values()) {
+            if (rows.size() < 2) continue;
+            BigDecimal total = BigDecimal.ZERO;
+            List<Long> ids = new ArrayList<>();
+            for (EstimateRow row : rows) {
+                total = total.add(row.getQty() == null ? BigDecimal.ZERO : row.getQty());
+                ids.add(row.getId());
+            }
+            EstimateRow first = rows.get(0);
+            result.add(new DuplicateGroup(first.getEquipmentName(), first.getRateCode(),
+                    first.getPeriodicity(), total, ids));
+        }
+        return result;
+    }
+
+    /** Строки считаются одинаковыми по разделу, оборудованию, расценке и режиму работ. */
+    private String mergeKey(EstimateRow row) {
+        return String.join("|",
+                nz(row.getSection()), nz(row.getEquipmentName()).toLowerCase(),
+                nz(row.getRateCode()), nz(row.getPeriodicity()),
+                row.getOpsPerYear() == null ? "" : row.getOpsPerYear().stripTrailingZeros().toPlainString(),
+                row.getCorrection() == null ? "" : row.getCorrection().stripTrailingZeros().toPlainString());
+    }
+
+    private String nz(String s) {
+        return s == null ? "" : s.strip();
+    }
+
+    /**
+     * Объединяет строки в одну: количество суммируется, остальные удаляются.
+     * Расценка и режим работ у всех строк должны совпадать — иначе сумма количеств
+     * посчиталась бы по чужой расценке.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public EstimateRow mergeRows(Long estimateId, List<Long> rowIds) {
+        get(estimateId);
+        if (rowIds == null || rowIds.size() < 2) {
+            throw new BadRequestException("Для объединения нужно выбрать хотя бы две строки.");
+        }
+        List<EstimateRow> rows = rowRepository.findAllById(rowIds);
+        if (rows.size() != rowIds.size()) throw new NotFoundException("Строка сметы не найдена");
+        for (EstimateRow row : rows) {
+            if (!estimateId.equals(row.getEstimateId())) {
+                throw new BadRequestException("Строки принадлежат разным сметам.");
+            }
+        }
+        rows.sort(java.util.Comparator.comparing(EstimateRow::getPosition,
+                java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())));
+        EstimateRow target = rows.get(0);
+        String key = mergeKey(target);
+        for (EstimateRow row : rows) {
+            if (!key.equals(mergeKey(row))) {
+                throw new BadRequestException(
+                        "Объединять можно только строки с одинаковой расценкой, периодичностью и числом операций.");
+            }
+        }
+        BigDecimal total = BigDecimal.ZERO;
+        for (EstimateRow row : rows) {
+            total = total.add(row.getQty() == null ? BigDecimal.ZERO : row.getQty());
+        }
+        target.setQty(total);
+        rowRepository.save(target);
+        for (int i = 1; i < rows.size(); i++) rowRepository.delete(rows.get(i));
+        renumber(estimateId);
+        return target;
+    }
+
+    /** Сквозная нумерация строк после удаления. */
+    private void renumber(Long estimateId) {
+        int position = 1;
+        for (EstimateRow row : rowRepository.findByEstimateIdOrderByPosition(estimateId)) {
+            row.setPosition(position++);
+            rowRepository.save(row);
+        }
+    }
+
     /**
      * Применяет входные поля к строке. Если задан шифр расценки — подтягивает из
      * каталога наименование, цены (ЗП/ЭМ/ЗПМ/МР), измеритель и трудозатраты

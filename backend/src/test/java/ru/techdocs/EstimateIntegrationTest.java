@@ -137,6 +137,60 @@ class EstimateIntegrationTest extends IntegrationTestBase {
                 .andExpect(status().isNoContent());
     }
 
+    /**
+     * Одно и то же оборудование с одной расценкой встречается в реестре несколько раз
+     * (разные этажи, шлейфы). В смете это одна позиция — количества складываются.
+     */
+    @Test
+    void mergesDuplicateRowsSummingQuantity() throws Exception {
+        seedRate();
+        long est = createEstimate(facility());
+        String body = "{\"section\":\"АПС\",\"equipmentName\":\"Извещатель пожарный дымовой\","
+                + "\"rateCode\":\"22-2203-113-1/1\",\"periodicity\":\"раз в год\",\"qty\":%d}";
+        for (int qty : new int[]{40, 60, 16}) {
+            mockMvc.perform(post("/api/estimates/" + est + "/rows").header("Authorization", bearer())
+                            .contentType("application/json").content(String.format(body, qty)))
+                    .andExpect(status().isOk());
+        }
+
+        String groupsResp = mockMvc.perform(get("/api/estimates/" + est + "/duplicate-groups")
+                        .header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].totalQty").value(116))
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        JsonNode ids = json.readTree(groupsResp).get(0).get("rowIds");
+
+        mockMvc.perform(post("/api/estimates/" + est + "/merge-rows").header("Authorization", bearer())
+                        .contentType("application/json").content("{\"rowIds\":" + ids + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.qty").value(116));
+
+        mockMvc.perform(get("/api/estimates/" + est).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.rows.length()").value(1))
+                .andExpect(jsonPath("$.rows[0].row.position").value(1));
+    }
+
+    /** Строки с разными расценками объединять нельзя — количество ушло бы на чужую расценку. */
+    @Test
+    void refusesToMergeRowsWithDifferentRates() throws Exception {
+        seedRate();
+        long est = createEstimate(facility());
+        java.util.List<Long> ids = new java.util.ArrayList<>();
+        for (String code : new String[]{"22-2203-113-1/1", "22-2203-999-1/1"}) {
+            String resp = mockMvc.perform(post("/api/estimates/" + est + "/rows").header("Authorization", bearer())
+                            .contentType("application/json")
+                            .content("{\"equipmentName\":\"Извещатель\",\"rateCode\":\"" + code + "\",\"qty\":5}"))
+                    .andReturn().getResponse().getContentAsString();
+            ids.add(json.readTree(resp).get("id").asLong());
+        }
+
+        mockMvc.perform(post("/api/estimates/" + est + "/merge-rows").header("Authorization", bearer())
+                        .contentType("application/json")
+                        .content("{\"rowIds\":[" + ids.get(0) + "," + ids.get(1) + "]}"))
+                .andExpect(status().isBadRequest());
+    }
+
     @Test
     void requiresAuth() throws Exception {
         mockMvc.perform(get("/api/estimates")).andExpect(status().isUnauthorized());

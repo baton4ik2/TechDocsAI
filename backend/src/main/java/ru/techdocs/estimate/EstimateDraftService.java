@@ -112,13 +112,23 @@ public class EstimateDraftService {
             List<EstimateRateDecision> decisions = decisionService.lookup(uniqueId);
             if (!decisions.isEmpty()) {
                 Set<String> seenRates = new HashSet<>();
+                List<EstimateRateDecision> unique = new ArrayList<>();
                 for (EstimateRateDecision d : decisions) {
                     // одна расценка = одна строка (категории могли разойтись: «ТО» и «ТО, проверка АКБ»)
                     if (d.getRateCode() != null && !seenRates.add(d.getRateCode())) continue;
-                    addRowFromDecision(estimateId, eq, systemType, d);
-                    // из памяти пополняем кэш «по типу»: новые модели того же типа возьмут ту же расценку
-                    consistency.putIfAbsent(typeKey(systemType, eq.getName(), d.getOperationName()),
-                            new RatePick(d.getRateCode(), "LEARNED", false, d.getPeriodicity(), d.getPerYear(), null));
+                    unique.add(d);
+                }
+                for (List<EstimateRateDecision> group : groupDecisions(unique)) {
+                    if (group.size() > 1) {
+                        // одна работа, одна периодичность, разные расценки — взаимоисключающие
+                        addAmbiguousEtalonRow(estimateId, eq, systemType, asEtalonOps(group));
+                    } else {
+                        EstimateRateDecision d = group.get(0);
+                        addRowFromDecision(estimateId, eq, systemType, d);
+                        // из памяти пополняем кэш «по типу»: новые модели того же типа возьмут ту же расценку
+                        consistency.putIfAbsent(typeKey(systemType, eq.getName(), d.getOperationName()),
+                                new RatePick(d.getRateCode(), "LEARNED", false, d.getPeriodicity(), d.getPerYear(), null));
+                    }
                     created++;
                 }
                 continue;
@@ -169,8 +179,8 @@ public class EstimateDraftService {
                 }
             }
             if (!etalonOps.isEmpty()) {
-                for (EstimateDecisionService.EtalonOp eop : etalonOps) {
-                    addRowFromEtalonOp(estimateId, eq, systemType, eop, etalonSource);
+                for (List<EstimateDecisionService.EtalonOp> group : groupOps(etalonOps)) {
+                    addRowFromEtalonOp(estimateId, eq, systemType, group, etalonSource);
                     created++;
                 }
                 continue;
@@ -180,11 +190,11 @@ public class EstimateDraftService {
             List<EquipmentMaintenanceResolver.Planned> operations =
                     maintenanceResolver.resolveOperations(eq, systemType);
             if (operations.isEmpty()) {
-                addRowForOperation(estimateId, eq, systemType, null, etalon, consistency);
+                addRowForOperation(estimateId, eq, systemType, null, etalon, globalEtalonHolder, consistency);
                 created++;
             } else {
                 for (EquipmentMaintenanceResolver.Planned op : operations) {
-                    addRowForOperation(estimateId, eq, systemType, op, etalon, consistency);
+                    addRowForOperation(estimateId, eq, systemType, op, etalon, globalEtalonHolder, consistency);
                     created++;
                 }
             }
@@ -270,6 +280,7 @@ public class EstimateDraftService {
     private void addRowForOperation(Long estimateId, Equipment eq, String systemType,
                                     EquipmentMaintenanceResolver.Planned op,
                                     EstimateDecisionService.SystemEtalon etalon,
+                                    EstimateDecisionService.SystemEtalon[] globalHolder,
                                     Map<String, RatePick> consistency) {
         String operationName = op != null ? op.operationName() : operationName(eq);
         String tkey = typeKey(systemType, eq.getName(), operationName);
@@ -301,7 +312,12 @@ public class EstimateDraftService {
         // Похожее (не точное) наименование в эталоне → НЕ решаем за инженера: строим
         // список вариантов (эталон + топ ИИ) и даём выбрать. Первый вариант ИИ — его
         // собственный выбор, дальше аналоги.
-        List<EstimateDecisionService.EtalonEntry> fuzzy = fuzzyEtalon(etalon.entries(), eq.getName(),
+        // Ищем и в эталоне своей системы, и во всех остальных: релейный модуль в СОУЭ
+        // должен видеть расценку такого же модуля из эталона АПС, иначе инженеру
+        // предлагаются только оповещатели — то, что рядом лежало.
+        List<EstimateDecisionService.EtalonEntry> allEntries = new ArrayList<>(etalon.entries());
+        allEntries.addAll(globalEtalon(globalHolder).entries());
+        List<EstimateDecisionService.EtalonEntry> fuzzy = fuzzyEtalon(allEntries, eq.getName(),
                 EstimateDecisionService.operationKey(operationName));
         if (!fuzzy.isEmpty()) {
             String suggestionsJson = buildSuggestions(fuzzy, match);
@@ -398,7 +414,7 @@ public class EstimateDraftService {
         for (Scored s : scored) {
             if (s.e().rate().rateCode() == null || !seenCodes.add(s.e().rate().rateCode())) continue;
             result.add(s.e());
-            if (result.size() >= 2) break;
+            if (result.size() >= 3) break;
         }
         return result;
     }
@@ -640,9 +656,60 @@ public class EstimateDraftService {
         return prev[b.length()];
     }
 
-    /** Строка из операции эталона — расценка/периодичность из эталона (ИИ в цифрах не участвует). */
+    /**
+     * Группирует операции эталона по (категория работы, периодичность). Разные расценки
+     * одной категории с РАЗНОЙ периодичностью — это настоящая пара («ежемесячное» +
+     * «полугодовое» ТО), обе идут в смету отдельными строками. А вот разные расценки
+     * одной категории с ОДИНАКОВОЙ периодичностью — это признак того, что в эталоне под
+     * одним наименованием слиплись два разных изделия (напр. С2000-СП2 и С2000-СП4).
+     * Обе в смету ставить нельзя — это двойной счёт; выбирает инженер.
+     */
+    /** То же правило для решений из памяти: группировка по (категория работы, периодичность). */
+    private List<List<EstimateRateDecision>> groupDecisions(List<EstimateRateDecision> decisions) {
+        Map<String, List<EstimateRateDecision>> groups = new java.util.LinkedHashMap<>();
+        for (EstimateRateDecision d : decisions) {
+            String category = EstimateDecisionService.operationKey(d.getOperationName());
+            BigDecimal perYear = d.getPerYear();
+            groups.computeIfAbsent(category + "|" + (perYear == null ? "" : perYear.stripTrailingZeros()),
+                    k -> new ArrayList<>()).add(d);
+        }
+        return new ArrayList<>(groups.values());
+    }
+
+    private List<EstimateDecisionService.EtalonOp> asEtalonOps(List<EstimateRateDecision> decisions) {
+        List<EstimateDecisionService.EtalonOp> ops = new ArrayList<>();
+        for (EstimateRateDecision d : decisions) {
+            ops.add(new EstimateDecisionService.EtalonOp(d.getOperationName(), d.getOperationKey(),
+                    new EstimateDecisionService.EtalonRate(d.getRateCode(), d.getPeriodicity(),
+                            d.getPerYear(), d.getJustification())));
+        }
+        return ops;
+    }
+
+    private List<List<EstimateDecisionService.EtalonOp>> groupOps(
+            List<EstimateDecisionService.EtalonOp> ops) {
+        Map<String, List<EstimateDecisionService.EtalonOp>> groups = new java.util.LinkedHashMap<>();
+        for (EstimateDecisionService.EtalonOp op : ops) {
+            String category = EstimateDecisionService.operationKey(op.operationName());
+            BigDecimal perYear = op.rate().perYear();
+            groups.computeIfAbsent(category + "|" + (perYear == null ? "" : perYear.stripTrailingZeros()),
+                    k -> new ArrayList<>()).add(op);
+        }
+        return new ArrayList<>(groups.values());
+    }
+
+    /**
+     * Строка из операции эталона — расценка/периодичность из эталона (ИИ в цифрах не
+     * участвует). Если в группе несколько расценок, они взаимоисключающие: подставляем
+     * первую и отдаём остальные на выбор инженеру.
+     */
     private void addRowFromEtalonOp(Long estimateId, Equipment eq, String systemType,
-                                    EstimateDecisionService.EtalonOp eop, String source) {
+                                    List<EstimateDecisionService.EtalonOp> group, String source) {
+        EstimateDecisionService.EtalonOp eop = group.get(0);
+        if (group.size() > 1) {
+            addAmbiguousEtalonRow(estimateId, eq, systemType, group);
+            return;
+        }
         NormativeRate rate = catalogRate(eop.rate().rateCode());
         BigDecimal perYear = eop.rate().perYear() != null ? eop.rate().perYear()
                 : maintenanceResolver.perYearFromRate(rate == null ? null : rate.getName());
@@ -660,6 +727,47 @@ public class EstimateDraftService {
                 : "периодичность по эталонной смете";
         addRow(estimateId, eq, systemType, operationName, eop.rate().rateCode(), periodicityText, perYear,
                 justification, matchNote, false, source, null);
+    }
+
+    /**
+     * Взаимоисключающие расценки эталона: одна работа, одна периодичность, но разные
+     * шифры. В смету идёт ОДНА строка (иначе оборудование посчиталось бы дважды) —
+     * с первым вариантом по умолчанию, остальными в списке выбора и пометкой
+     * «на проверку», чтобы инженер решил, какое изделие обслуживается.
+     */
+    private void addAmbiguousEtalonRow(Long estimateId, Equipment eq, String systemType,
+                                       List<EstimateDecisionService.EtalonOp> group) {
+        EstimateDecisionService.EtalonOp first = group.get(0);
+        NormativeRate rate = catalogRate(first.rate().rateCode());
+        BigDecimal perYear = first.rate().perYear() != null ? first.rate().perYear()
+                : maintenanceResolver.perYearFromRate(rate == null ? null : rate.getName());
+        String periodicityText = first.rate().periodicity() != null ? first.rate().periodicity()
+                : maintenanceResolver.label(perYear);
+
+        List<Map<String, Object>> options = new ArrayList<>();
+        Set<String> codes = new HashSet<>();
+        for (EstimateDecisionService.EtalonOp op : group) {
+            String code = op.rate().rateCode();
+            if (code == null || !codes.add(code)) continue;
+            NormativeRate r = catalogRate(code);
+            options.add(option("ETALON", code, r == null ? null : r.getName(),
+                    op.rate().periodicity(), "из эталона: " + safe(op.operationName())));
+        }
+        String suggestions = null;
+        try {
+            suggestions = objectMapper.writeValueAsString(options);
+        } catch (Exception ex) {
+            log.warn("Не удалось сериализовать варианты расценки эталона: {}", ex.getMessage());
+        }
+        addRow(estimateId, eq, systemType,
+                first.operationName() != null ? first.operationName() : operationName(eq),
+                first.rate().rateCode(), periodicityText, perYear,
+                first.rate().justification() != null ? first.rate().justification()
+                        : "периодичность по эталонной смете",
+                "⚠ НА ПРОВЕРКУ: в эталоне под этим наименованием несколько разных расценок "
+                        + "одной и той же работы (" + String.join(", ", codes) + ") — "
+                        + "похоже, это разные изделия. Выберите нужную, обе в смету ставить нельзя.",
+                true, "CHOICE", suggestions);
     }
 
     /** Периодичность строки в единый год выполнений/текст. */

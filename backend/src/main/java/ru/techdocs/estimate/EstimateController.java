@@ -92,6 +92,20 @@ public class EstimateController {
         return java.util.Map.of("saved", decisionService.promote(id));
     }
 
+    /** Одинаковые строки (оборудование + расценка + режим работ) — кандидаты на объединение. */
+    @GetMapping("/{id}/duplicate-groups")
+    public List<EstimateService.DuplicateGroup> duplicateGroups(@PathVariable Long id) {
+        return estimateService.duplicateGroups(id);
+    }
+
+    public record MergeRequest(List<Long> rowIds) {}
+
+    /** Объединяет выбранные строки в одну с суммарным количеством. */
+    @PostMapping("/{id}/merge-rows")
+    public EstimateRow mergeRows(@PathVariable Long id, @RequestBody MergeRequest request) {
+        return estimateService.mergeRows(id, request == null ? null : request.rowIds());
+    }
+
     @GetMapping("/{id}/export")
     public ResponseEntity<ByteArrayResource> export(@PathVariable Long id) throws Exception {
         Estimate estimate = estimateService.get(id);

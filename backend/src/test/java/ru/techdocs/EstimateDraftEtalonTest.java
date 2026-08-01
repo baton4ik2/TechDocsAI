@@ -796,6 +796,116 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
         assertThat(row.get("matchNote").asText()).contains("нет технического обслуживания");
     }
 
+    /**
+     * В эталоне под одним наименованием слиплись два разных изделия (С2000-СП2 и
+     * С2000-СП4): одна работа, одна периодичность, разные расценки. Обе строки в смету
+     * — это двойной счёт, поэтому идёт одна строка с выбором.
+     */
+    @Test
+    void twoRatesForSameWorkGiveOneRowWithChoice() throws Exception {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник сп");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        for (String[] r : new String[][]{
+                {"22-2203-104-4/1", "ТО блока сигнально-пускового С2000-СП2"},
+                {"22-2203-104-11/1", "ТО блока сигнально-пускового С2000-СП4"}}) {
+            NormativeRate rate = new NormativeRate();
+            rate.setSourcebookId(book.getId());
+            rate.setCode(r[0]);
+            rate.setName(r[1]);
+            rate.setUnit("1 шт.");
+            rate.setLaborCost(new BigDecimal("170.00"));
+            rateRepository.saveAndFlush(rate);
+        }
+
+        UniqueEquipment ue = new UniqueEquipment();
+        ue.setNormKey("адресный релейный модуль|рм-4||скуд");
+        ue.setEquipKey("адресный релейный модуль|рм-4|");
+        ue.setSystemType("скуд");
+        ue.setName("Адресный релейный модуль");
+        ue.setModel("РМ-4");
+        ue = uniqueRepository.saveAndFlush(ue);
+        // обе расценки — одна работа, одна периодичность: это разные изделия, а не пара
+        addDecision(ue.getId(), "то", "ТО адресного релейного модуля", "22-2203-104-4/1", "раз в 6 мес.", "2");
+        addDecision(ue.getId(), "то", "ТО адресного релейного модуля", "22-2203-104-11/1", "раз в 6 мес.", "2");
+
+        long sys = facilitySystem("Объект-рм");
+        equip(sys, "Адресный релейный модуль", "РМ-4");
+        long estId = estimateFor(estFacility(sys));
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(1));   // одна строка, а не две
+
+        JsonNode row = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .get("rows").get(0).get("row");
+        assertThat(row.get("matchSource").asText()).isEqualTo("CHOICE");
+        assertThat(row.get("needsReview").asBoolean()).isTrue();
+        assertThat(row.get("suggestions").asText())
+                .contains("22-2203-104-4/1").contains("22-2203-104-11/1");
+    }
+
+    /**
+     * Похожее оборудование лежит в эталоне ДРУГОЙ системы: релейный модуль в СОУЭ
+     * должен получить в вариантах расценку релейного модуля из эталона АПС, а не
+     * только оповещатели, которые просто рядом лежали.
+     */
+    @Test
+    void choiceOffersEtalonRatesFromOtherSystems() throws Exception {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник кросс-выбор");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        for (String[] r : new String[][]{
+                {"22-2203-104-4/1", "ТО адресного релейного модуля"},
+                {"22-2203-74-1/1", "ТО оповещателя пожарного звукового «Гамма-3»"}}) {
+            NormativeRate rate = new NormativeRate();
+            rate.setSourcebookId(book.getId());
+            rate.setCode(r[0]);
+            rate.setName(r[1]);
+            rate.setUnit("1 шт.");
+            rate.setLaborCost(new BigDecimal("150.00"));
+            rateRepository.saveAndFlush(rate);
+        }
+
+        // эталон АПС: два релейных модуля с одним наименованием и РАЗНЫМИ расценками —
+        // ни одна модель не совпадает с РМ-4К на объекте, поэтому автоматически
+        // расценку взять нельзя и строка уходит на выбор инженеру
+        UniqueEquipment rm1 = new UniqueEquipment();
+        rm1.setNormKey("адресный релейный модуль|рм-1||апс");
+        rm1.setEquipKey("адресный релейный модуль|рм-1|");
+        rm1.setSystemType("апс");
+        rm1.setName("Адресный релейный модуль");
+        rm1.setModel("РМ-1");
+        rm1 = uniqueRepository.saveAndFlush(rm1);
+        addDecision(rm1.getId(), "то", "ТО адресного релейного модуля", "22-2203-104-4/1", "раз в 6 мес.", "2");
+
+        UniqueEquipment rm2 = new UniqueEquipment();
+        rm2.setNormKey("адресный релейный модуль|рм-2||апс");
+        rm2.setEquipKey("адресный релейный модуль|рм-2|");
+        rm2.setSystemType("апс");
+        rm2.setName("Адресный релейный модуль");
+        rm2.setModel("РМ-2");
+        rm2 = uniqueRepository.saveAndFlush(rm2);
+        addDecision(rm2.getId(), "то", "ТО адресного релейного модуля", "22-2203-74-1/1", "раз в 6 мес.", "2");
+
+        long sys = facilitySystem("Объект-кросс-выбор");
+        equip(sys, "Адресный релейный модуль с контролем целостности цепи", "РМ-4К");
+        Mockito.when(aiClient.hasMatchModel()).thenReturn(true);
+        long estId = estimateFor(estFacility(sys));
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(1));
+
+        JsonNode row = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .get("rows").get(0).get("row");
+        assertThat(row.get("matchSource").asText()).isEqualTo("CHOICE");
+        // обе расценки релейного модуля из эталона АПС предлагаются на выбор,
+        // хотя оборудование объекта числится в другой системе
+        String suggestions = row.get("suggestions").asText();
+        assertThat(suggestions).contains("22-2203-104-4/1").contains("22-2203-74-1/1");
+    }
+
     private void addDecision(long ueId, String opKey, String opName, String code, String periodicity, String perYear) {
         EstimateRateDecision d = new EstimateRateDecision();
         d.setUniqueEquipmentId(ueId);

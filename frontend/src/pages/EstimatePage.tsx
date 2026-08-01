@@ -36,6 +36,7 @@ export default function EstimatePage() {
   const [error, setError] = useState('')
   const [editing, setEditing] = useState<EstimateRowEntity | null | 'new'>(null)
   const [deletingRow, setDeletingRow] = useState<EstimateRowEntity | null>(null)
+  const [merging, setMerging] = useState(false)
 
   const load = () => {
     api.get<EstimateView>(`/api/estimates/${estimateId}`).then(setView).catch((e) => setError(e.message))
@@ -75,6 +76,7 @@ export default function EstimatePage() {
                     .catch((e) => toast(e.message, 'error'))}>
             ★ В эталон
           </button>
+          <button className="btn-secondary" onClick={() => setMerging(true)}>⇢⇠ Объединить одинаковые</button>
           <button className="btn-secondary" onClick={() => setEditing('new')}>+ Строка</button>
           <button className="btn-primary"
                   onClick={() => exportEstimate(estimate.id, `Смета_${estimate.name}.xlsx`).catch((e) => toast(e.message, 'error'))}>
@@ -200,6 +202,10 @@ export default function EstimatePage() {
         <ConfirmDialog title="Удалить строку?" message="Строка сметы будет удалена."
                        confirmLabel="Удалить" danger onConfirm={removeRow} onClose={() => setDeletingRow(null)} />
       )}
+      {merging && (
+        <MergeModal estimateId={estimateId} onClose={() => setMerging(false)}
+                    onMerged={() => { setMerging(false); load() }} />
+      )}
     </div>
   )
 }
@@ -272,6 +278,96 @@ function Coefficients({ view, onSaved }: { view: EstimateView; onSaved: () => vo
         </div>
       )}
     </div>
+  )
+}
+
+type DuplicateGroup = {
+  equipmentName?: string; rateCode: string; periodicity?: string
+  totalQty?: number; rowIds: number[]
+}
+
+/**
+ * Объединение одинаковых строк: одно оборудование с одной расценкой часто разнесено
+ * по этажам или шлейфам, а в смете это одна позиция с суммарным количеством.
+ * Приложение показывает найденные группы, объединяет только отмеченные.
+ */
+function MergeModal({ estimateId, onClose, onMerged }: {
+  estimateId: number; onClose: () => void; onMerged: () => void
+}) {
+  const [groups, setGroups] = useState<DuplicateGroup[] | null>(null)
+  const [picked, setPicked] = useState<Record<number, boolean>>({})
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    api.get<DuplicateGroup[]>(`/api/estimates/${estimateId}/duplicate-groups`)
+      .then((g) => {
+        setGroups(g)
+        setPicked(Object.fromEntries(g.map((_, i) => [i, true])))
+      })
+      .catch((e) => { toast(e.message, 'error'); onClose() })
+  }, [estimateId])
+
+  const merge = async () => {
+    if (!groups) return
+    const selected = groups.filter((_, i) => picked[i])
+    if (selected.length === 0) return
+    setBusy(true)
+    try {
+      for (const g of selected) {
+        await api.post(`/api/estimates/${estimateId}/merge-rows`, { rowIds: g.rowIds })
+      }
+      toast(`Объединено групп: ${selected.length}`, 'success')
+      onMerged()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Ошибка объединения', 'error')
+      setBusy(false)
+    }
+  }
+
+  const count = groups?.filter((_, i) => picked[i]).length ?? 0
+
+  return (
+    <Modal title="Объединить одинаковые строки" onClose={onClose}>
+      {!groups ? (
+        <div className="text-slate-400 py-6 text-center">Ищем одинаковые строки…</div>
+      ) : groups.length === 0 ? (
+        <div className="text-slate-500 py-6 text-center">
+          Одинаковых строк нет. Объединяются позиции с одним оборудованием, одной расценкой,
+          одной периодичностью и одним числом операций в год.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="text-sm text-slate-500">
+            Количество суммируется, лишние строки удаляются. Снимите отметку с групп, которые
+            нужно оставить как есть.
+          </div>
+          <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
+            {groups.map((g, i) => (
+              <label key={i} className="flex items-start gap-2 rounded-lg border border-slate-200 px-3 py-2 cursor-pointer hover:border-primary-300">
+                <input type="checkbox" className="mt-1 shrink-0" checked={!!picked[i]}
+                       onChange={(e) => setPicked({ ...picked, [i]: e.target.checked })} />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-slate-800">{g.equipmentName || '—'}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">
+                    <span className="font-mono">{g.rateCode}</span>
+                    {g.periodicity && <span> · {g.periodicity}</span>}
+                  </div>
+                  <div className="text-xs text-slate-400 mt-0.5">
+                    {g.rowIds.length} строк(и) → 1, количество {g.totalQty ?? '—'}
+                  </div>
+                </div>
+              </label>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <button className="btn-secondary" onClick={onClose}>Отмена</button>
+            <button className="btn-primary" onClick={merge} disabled={busy || count === 0}>
+              {busy ? 'Объединяем…' : `Объединить (${count})`}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
   )
 }
 
