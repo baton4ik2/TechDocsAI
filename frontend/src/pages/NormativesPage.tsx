@@ -48,7 +48,7 @@ export default function NormativesPage() {
   const reprocess = async (b: NormativeSourcebook) => {
     try {
       await api.post(`/api/normatives/${b.id}/reprocess`)
-      toast('Повторная обработка запущена', 'info')
+      toast('Разбор запущен — расценки сборника будут перечитаны', 'info')
       load()
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Ошибка', 'error')
@@ -93,9 +93,13 @@ export default function NormativesPage() {
             </div>
             <div className="flex items-center gap-1 shrink-0">
               <button className="btn-ghost text-sm" onClick={() => openNormative(b.id)}>Открыть PDF</button>
-              {b.status === 'ERROR' && (
-                <button className="btn-ghost text-sm" onClick={() => reprocess(b)}>Повторить</button>
-              )}
+              {/* разбор перечитывает загруженный PDF и заменяет расценки сборника —
+                  нужен и после ошибки, и когда распознавание стало точнее */}
+              <button className="btn-ghost text-sm" onClick={() => reprocess(b)}
+                      disabled={b.status === 'PROCESSING' || b.status === 'UPLOADED'}
+                      title="Перечитать PDF и заменить расценки этого сборника">
+                {b.status === 'ERROR' ? 'Повторить' : 'Разобрать заново'}
+              </button>
               <button className="btn-ghost text-sm text-red-600" onClick={() => setDeleting(b)}>Удалить</button>
             </div>
           </div>
