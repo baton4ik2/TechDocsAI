@@ -412,11 +412,9 @@ function OperationCard({ name, rateCode, onChange }: {
 }) {
   const [open, setOpen] = useState(false)
   const [rate, setRate] = useState<NormativeRate | null>(null)
-  const [done, setDone] = useState<Record<number, boolean>>({})
 
   useEffect(() => {
     setRate(null)
-    setDone({})
     if (!rateCode) return
     api.get<NormativeRate>(`/api/normatives/rates/by-code?code=${encodeURIComponent(rateCode)}`)
       .then(setRate)
@@ -463,20 +461,11 @@ function OperationCard({ name, rateCode, onChange }: {
             {steps.length > 0 ? (
               <div>
                 <div className="text-xs font-medium text-slate-500 mb-1.5">Состав работ по расценке (СН-2012)</div>
-                <ul className="space-y-1">
+                <ol className="space-y-1 list-decimal list-inside">
                   {steps.map((s, i) => (
-                    <li key={i}>
-                      <label className="flex items-start gap-2 text-sm text-slate-700 cursor-pointer">
-                        <input type="checkbox" className="mt-1 shrink-0" checked={!!done[i]}
-                               onChange={(e) => setDone({ ...done, [i]: e.target.checked })} />
-                        <span className={done[i] ? 'line-through text-slate-400' : ''}>{s}</span>
-                      </label>
-                    </li>
+                    <li key={i} className="text-sm text-slate-700">{s}</li>
                   ))}
-                </ul>
-                <div className="text-[11px] text-slate-400 mt-1.5">
-                  Отметки — для себя при проверке строки, в смету не попадают.
-                </div>
+                </ol>
               </div>
             ) : (
               <div className="text-xs text-slate-400">

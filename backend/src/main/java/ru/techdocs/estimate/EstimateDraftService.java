@@ -549,18 +549,8 @@ public class EstimateDraftService {
         // РМ-4 с разными расценками): различаем по модели. Если модель не совпала ни с
         // одним — не берём молча первое, отдаём решение инженеру (строка «выбрать»).
         if (byName.size() > 1 && differentRates(byName)) {
-            EstimateDecisionService.EtalonType best = null;
-            double bestScore = 0;
-            String objKey = modelKey(objModel);
-            if (objKey.length() >= 2) {
-                for (EstimateDecisionService.EtalonType t : byName) {
-                    String etKey = modelKey(t.model());
-                    if (etKey.length() < 2) continue;
-                    double score = similarity(objKey, etKey);
-                    if (score > bestScore) { bestScore = score; best = t; }
-                }
-            }
-            return best != null && bestScore >= MODEL_MATCH_THRESHOLD ? best.ops() : List.of();
+            EstimateDecisionService.EtalonType best = bestByModel(byName, objModel, 2);
+            return best != null ? best.ops() : List.of();
         }
 
         List<EstimateDecisionService.EtalonOp> result = new ArrayList<>();
@@ -573,6 +563,56 @@ public class EstimateDraftService {
             }
         }
         return result;
+    }
+
+    /**
+     * Лучший по модели тип эталона или null, если выбрать однозначно нельзя.
+     * <p>
+     * Одной похожести строк мало: «РМ-4К» одинаково близок и к «РМ-1К», и к «РМ-4»
+     * (обе — одна правка символа), и побеждал бы тот, кто раньше в списке. Изделие
+     * различает НОМЕР в модели: РМ-1 и РМ-4 — разные приборы с разными расценками,
+     * а РМ-4К — тот же РМ-4 с контролем цепи. Поэтому при равной похожести
+     * предпочитаем совпадение по числам, и только если и это не разводит варианты
+     * с разными расценками — отдаём решение инженеру.
+     */
+    private EstimateDecisionService.EtalonType bestByModel(
+            List<EstimateDecisionService.EtalonType> types, String objModel, int minLength) {
+        String objKey = modelKey(objModel);
+        if (objKey.length() < minLength) return null;
+
+        List<EstimateDecisionService.EtalonType> best = new ArrayList<>();
+        double bestScore = 0;
+        for (EstimateDecisionService.EtalonType t : types) {
+            String etKey = modelKey(t.model());
+            if (etKey.length() < minLength) continue;
+            double score = similarity(objKey, etKey);
+            if (score > bestScore + 1e-9) {
+                bestScore = score;
+                best.clear();
+                best.add(t);
+            } else if (Math.abs(score - bestScore) < 1e-9) {
+                best.add(t);
+            }
+        }
+        if (best.isEmpty() || bestScore < MODEL_MATCH_THRESHOLD) return null;
+        if (best.size() == 1) return best.get(0);
+
+        // одинаковая похожесть — разводим по номеру изделия
+        List<String> objDigits = digits(objKey);
+        List<EstimateDecisionService.EtalonType> sameNumber = best.stream()
+                .filter(t -> digits(modelKey(t.model())).equals(objDigits)).toList();
+        if (sameNumber.size() == 1) return sameNumber.get(0);
+        List<EstimateDecisionService.EtalonType> candidates = sameNumber.isEmpty() ? best : sameNumber;
+        // варианты с одинаковыми расценками равнозначны — берём любой; с разными — не гадаем
+        return differentRates(candidates) ? null : candidates.get(0);
+    }
+
+    /** Числовые группы модели: «рм4к» → [4], «ивэпр122x7» → [122, 7]. */
+    private List<String> digits(String modelKey) {
+        List<String> out = new ArrayList<>();
+        var m = java.util.regex.Pattern.compile("\\d+").matcher(modelKey);
+        while (m.find()) out.add(m.group());
+        return out;
     }
 
     /** У подходящих по имени типов эталона разные наборы расценок — значит это разные изделия. */
@@ -597,17 +637,8 @@ public class EstimateDraftService {
      */
     private List<EstimateDecisionService.EtalonOp> etalonOpsByModel(
             EstimateDecisionService.SystemEtalon etalon, String model) {
-        String objKey = modelKey(model);
-        if (objKey.length() < 4) return List.of();
-        EstimateDecisionService.EtalonType best = null;
-        double bestScore = 0;
-        for (EstimateDecisionService.EtalonType t : etalon.types()) {
-            String etKey = modelKey(t.model());
-            if (etKey.length() < 4) continue;
-            double score = similarity(objKey, etKey);
-            if (score > bestScore) { bestScore = score; best = t; }
-        }
-        return bestScore >= MODEL_MATCH_THRESHOLD && best != null ? best.ops() : List.of();
+        EstimateDecisionService.EtalonType best = bestByModel(etalon.types(), model, 4);
+        return best != null ? best.ops() : List.of();
     }
 
     /** Служебные части модели, не различающие изделия: маркер протокола Рубеж. */

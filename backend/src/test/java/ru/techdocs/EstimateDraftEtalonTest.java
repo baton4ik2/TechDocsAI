@@ -906,6 +906,61 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
         assertThat(suggestions).contains("22-2203-104-4/1").contains("22-2203-74-1/1");
     }
 
+    /**
+     * Модель различает изделие номером: в эталоне РМ-1 → 104-4, РМ-4 → 104-11.
+     * «РМ-4К прот. R3» на объекте одинаково похож на «РМ-1К» и на «РМ-4» (обе — одна
+     * правка символа), и раньше побеждал тот, кто раньше в списке. Должен побеждать
+     * РМ-4: у него совпадает номер изделия.
+     */
+    @Test
+    void modelNumberDecidesBetweenEquallySimilarEtalonModels() throws Exception {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник рм");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        for (String[] r : new String[][]{
+                {"22-2203-104-4/1", "ТО блока сигнально-пускового С2000-СП2"},
+                {"22-2203-104-11/1", "ТО блока сигнально-пускового С2000-СП4"}}) {
+            NormativeRate rate = new NormativeRate();
+            rate.setSourcebookId(book.getId());
+            rate.setCode(r[0]);
+            rate.setName(r[1]);
+            rate.setUnit("1 шт.");
+            rate.setLaborCost(new BigDecimal("170.00"));
+            rateRepository.saveAndFlush(rate);
+        }
+
+        // эталон: РМ-1 и РМ-1К → 104-4, РМ-4 → 104-11 (порядок специально «неудобный»)
+        for (String[] m : new String[][]{
+                {"РМ-1 прот. R3", "22-2203-104-4/1"},
+                {"РМ-1К-R3", "22-2203-104-4/1"},
+                {"РМ-4 прот. R3", "22-2203-104-11/1"}}) {
+            UniqueEquipment ue = new UniqueEquipment();
+            ue.setNormKey("адресный релейный модуль|" + m[0].toLowerCase() + "||скуд");
+            ue.setEquipKey("адресный релейный модуль|" + m[0].toLowerCase() + "|");
+            ue.setSystemType("скуд");
+            ue.setName("Адресный релейный модуль");
+            ue.setModel(m[0]);
+            ue = uniqueRepository.saveAndFlush(ue);
+            addDecision(ue.getId(), "то", "ТО адресного релейного модуля", m[1], "раз в 6 мес.", "2");
+        }
+
+        long sys = facilitySystem("Объект-рм-номера");
+        equip(sys, "Адресный релейный модуль", "РМ-4К прот. R3");
+        equip(sys, "Адресный релейный модуль", "РМ-1 прот. R3");
+        long estId = estimateFor(estFacility(sys));
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(2));
+
+        JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        java.util.Map<String, String> byModel = new java.util.HashMap<>();
+        view.get("rows").forEach(r -> byModel.put(r.get("row").get("equipmentType").asText(),
+                r.get("row").get("rateCode").asText()));
+        assertThat(byModel.get("РМ-4К прот. R3")).isEqualTo("22-2203-104-11/1");
+        assertThat(byModel.get("РМ-1 прот. R3")).isEqualTo("22-2203-104-4/1");
+    }
+
     private void addDecision(long ueId, String opKey, String opName, String code, String periodicity, String perYear) {
         EstimateRateDecision d = new EstimateRateDecision();
         d.setUniqueEquipmentId(ueId);
