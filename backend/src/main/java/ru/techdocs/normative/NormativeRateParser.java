@@ -61,15 +61,23 @@ public class NormativeRateParser {
         List<Marker> compositions = markers(document, COMPOSITION, 2000, true);
         List<Marker> units = markers(document, UNIT, 60, false);
 
+        // Разбираем сквозной текст, а не страницу за страницей: высокая строка таблицы
+        // переносится через разрыв страницы, и тогда шифр остаётся на одной странице,
+        // а колонки со стоимостями — на следующей. При постраничном разборе такая
+        // расценка теряла цены целиком.
         List<NormativeRate> rates = new ArrayList<>();
-        for (int p = 0; p < pageStarts.size(); p++) {
-            String text = pages.get(p).text();
-            if (text == null || text.isBlank()) continue;
-            int pageOffset = pageStarts.get(p)[0];
-            int pageNumber = pageStarts.get(p)[1];
-            parsePage(text, pageOffset, pageNumber, compositions, units, rates);
-        }
+        parseDocument(document, pageStarts, compositions, units, rates);
         return rates;
+    }
+
+    /** Номер страницы, на которой находится позиция в сквозном тексте. */
+    private int pageOf(List<int[]> pageStarts, int offset) {
+        int number = pageStarts.isEmpty() ? 1 : pageStarts.get(0)[1];
+        for (int[] start : pageStarts) {
+            if (start[0] > offset) break;
+            number = start[1];
+        }
+        return number;
     }
 
     private List<Marker> markers(String document, Pattern pattern, int maxLen, boolean asComposition) {
@@ -102,14 +110,20 @@ public class NormativeRateParser {
         return v.isBlank() ? null : v;
     }
 
-    private void parsePage(String text, int pageOffset, int pageNumber,
-                           List<Marker> compositions, List<Marker> units,
-                           List<NormativeRate> rates) {
+    private void parseDocument(String text, List<int[]> pageStarts,
+                               List<Marker> compositions, List<Marker> units,
+                               List<NormativeRate> rates) {
         Matcher codeMatcher = CODE.matcher(text);
         // позиции шифров, чтобы ограничивать блок каждой расценки
         List<int[]> codeSpans = new ArrayList<>();
         while (codeMatcher.find()) {
-            codeSpans.add(new int[]{codeMatcher.start(), codeMatcher.end()});
+            // Шифр расценки — крайняя левая колонка таблицы, он всегда начинает строку.
+            // Шифры внутри наименования («добавлять к нормам 1.22-2203-118-1/1 и …»)
+            // новой расценкой не считаем: иначе они обрывают блок настоящей расценки
+            // до её колонок со стоимостями и плодят несуществующие записи каталога.
+            if (startsLine(text, codeMatcher.start())) {
+                codeSpans.add(new int[]{codeMatcher.start(), codeMatcher.end()});
+            }
         }
         for (int i = 0; i < codeSpans.size(); i++) {
             int[] span = codeSpans.get(i);
@@ -139,11 +153,11 @@ public class NormativeRateParser {
                     .replaceAll("\\s{2,}", " ");
             if (name.isBlank() || !looksLikeRateName(name)) continue;
 
-            int absCodePos = pageOffset + span[0];
+            int absCodePos = span[0];
             NormativeRate rate = new NormativeRate();
             rate.setCode(code);
             rate.setName(name);
-            rate.setPageNumber(pageNumber);
+            rate.setPageNumber(pageOf(pageStarts, absCodePos));
             rate.setUnit(lastBefore(units, absCodePos));
             rate.setWorkComposition(lastBefore(compositions, absCodePos));
             assignCosts(rate, costs);
@@ -156,6 +170,16 @@ public class NormativeRateParser {
      * обслуживание…», «Замена…»). Строки из ведомостей расхода материалов начинаются
      * с кода материала («21.1-20-1 Бязь», «21.1-4-7 Газ…») — их отсекаем.
      */
+    /** Позиция начинает строку (левее только пробелы). */
+    private boolean startsLine(String text, int position) {
+        for (int i = position - 1; i >= 0; i--) {
+            char c = text.charAt(i);
+            if (c == '\n' || c == '\r') return true;
+            if (!Character.isWhitespace(c)) return false;
+        }
+        return true;
+    }
+
     private boolean looksLikeRateName(String name) {
         String s = name.replaceFirst("^[\\s«»\"'`\\-–—]+", "");
         return !s.isEmpty() && Character.isLetter(s.charAt(0));

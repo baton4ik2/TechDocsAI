@@ -220,6 +220,61 @@ class NormativeRateParserTest {
         assertThat(r.getMachineLabor()).isNull();
     }
 
+    /**
+     * В наименовании расценки встречаются ссылки на другие расценки («добавлять к
+     * нормам 1.22-2203-118-1/1 и 1.22-2203-118-1/2»). Новой расценкой они не являются:
+     * иначе обрывают блок настоящей до её колонок, и та пропадает из каталога.
+     */
+    @Test
+    void ignoresRateCodesMentionedInsideName() {
+        String page = """
+                Измеритель: 1 шт.
+
+                22-2203-118-3/1 Техническое обслуживание системы оповещения
+                и управления эвакуацией (СОУЭ) на базе оборудования типа "Сонар",
+                добавлять к нормам 1.22-2203-118-1/1 и 1.22-2203-118-1/2 на каждую
+                последующую магистральную линию
+                69,99 69,66 0,09 - 0,24 0,1
+                """;
+        List<NormativeRate> rates = parser.parse(List.of(new PageText(50, page)));
+
+        assertThat(rates).hasSize(1);            // ссылки в тексте расценками не стали
+        NormativeRate r = rates.get(0);
+        assertThat(r.getCode()).isEqualTo("22-2203-118-3/1");
+        assertThat(r.getLaborCost()).isEqualByComparingTo("69.66");
+        assertThat(r.getMachineCost()).isEqualByComparingTo("0.09");
+        assertThat(r.getMaterialCost()).isEqualByComparingTo("0.24");
+        assertThat(r.getLaborHours()).isEqualByComparingTo("0.1");
+    }
+
+    /**
+     * Высокая строка таблицы переносится через разрыв страницы: шифр и начало
+     * наименования на одной странице, колонки со стоимостями — на следующей.
+     * Постранично такая расценка теряла цены целиком (случай 22-2203-117-1/1).
+     */
+    @Test
+    void readsRateSplitAcrossPageBreak() {
+        String first = """
+                Состав работ:
+                1. Проверка работоспособности систем противопожарной защиты.
+                Измеритель: 1000 м2
+
+                22-2203-117-1/1 Проверка работоспособности систем
+                """;
+        String second = "противопожарной защиты - ежеквартальная 464,28 463,84 0,44 0,01 - 0,48";
+
+        List<NormativeRate> rates = parser.parse(List.of(new PageText(60, first), new PageText(61, second)));
+
+        assertThat(rates).hasSize(1);
+        NormativeRate r = rates.get(0);
+        assertThat(r.getCode()).isEqualTo("22-2203-117-1/1");
+        assertThat(r.getLaborCost()).isEqualByComparingTo("463.84");
+        assertThat(r.getMachineCost()).isEqualByComparingTo("0.44");
+        assertThat(r.getMachineLabor()).isEqualByComparingTo("0.01");
+        assertThat(r.getLaborHours()).isEqualByComparingTo("0.48");
+        assertThat(r.getPageNumber()).isEqualTo(60);   // расценка числится там, где шифр
+    }
+
     @Test
     void returnsEmptyForBlankPages() {
         assertThat(parser.parse(List.of(new PageText(1, "   ")))).isEmpty();
