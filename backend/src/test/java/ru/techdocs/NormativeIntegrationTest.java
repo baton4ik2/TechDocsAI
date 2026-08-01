@@ -152,6 +152,25 @@ class NormativeIntegrationTest extends IntegrationTestBase {
         assertThat(report.missing()).isGreaterThan(0);
     }
 
+    /** Расценка по шифру отдаёт состав работ — из него строится чек-лист в строке сметы. */
+    @Test
+    void rateByCodeReturnsWorkComposition() throws Exception {
+        Long bookId = sourcebook().getId();
+        NormativeRate r = rate(bookId, "22-2203-72-1/1",
+                "Техническое обслуживание извещателя магнитоконтактного типа СМК", new BigDecimal("250.10"));
+        r.setWorkComposition("1. Внешний осмотр. 2. Проверка крепления. 3. Проверка работоспособности.");
+        rateRepository.saveAndFlush(r);
+
+        mockMvc.perform(get("/api/normatives/rates/by-code")
+                        .param("code", "22-2203-72-1/1").header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.workComposition").value(org.hamcrest.Matchers.containsString("Внешний осмотр")));
+
+        mockMvc.perform(get("/api/normatives/rates/by-code")
+                        .param("code", "нет-такого").header("Authorization", bearer()))
+                .andExpect(status().isNotFound());
+    }
+
     @Test
     void searchEndpointRequiresAuth() throws Exception {
         mockMvc.perform(get("/api/normatives/rates/search").param("query", "x"))

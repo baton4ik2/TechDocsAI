@@ -65,6 +65,12 @@ public class NormativeService {
         return fileStorage.load(get(id).getStoragePath());
     }
 
+    /** Расценка по точному шифру — вместе с составом работ. */
+    public java.util.Optional<NormativeRate> byCode(String code) {
+        return isBlank(code) ? java.util.Optional.empty()
+                : rateRepository.findFirstByCodeOrderById(code.strip());
+    }
+
     public List<NormativeRate> search(String query, int limit) {
         if (isBlank(query)) return List.of();
         int capped = Math.max(1, Math.min(limit, 50));

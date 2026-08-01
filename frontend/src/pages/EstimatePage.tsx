@@ -1,7 +1,7 @@
 import { Fragment, FormEvent, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api, exportEstimate } from '../api'
-import { EstimateRowEntity, EstimateView } from '../types'
+import { EstimateRowEntity, EstimateView, NormativeRate } from '../types'
 import Modal from '../components/Modal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { toast } from '../components/Toast'
@@ -275,6 +275,119 @@ function Coefficients({ view, onSaved }: { view: EstimateView; onSaved: () => vo
   )
 }
 
+/**
+ * Состав работ расценки СН-2012 приходит одним текстом. Разбираем на пункты:
+ * сначала по нумерации («1. … 2. …»), иначе по переводам строк, точкам с запятой
+ * или предложениям — чтобы получился читаемый чек-лист, а не абзац.
+ */
+function splitComposition(text?: string): string[] {
+  if (!text) return []
+  const cleaned = text.replace(/^\s*состав\s+работ\s*:?\s*/i, '').trim()
+  if (!cleaned) return []
+
+  const numbered = cleaned.split(/(?=(?:^|\s)\d{1,2}[.)]\s)/).map((s) => s.trim()).filter(Boolean)
+  const items = numbered.length > 1
+    ? numbered
+    : cleaned.split(/\n+|;\s*/).map((s) => s.trim()).filter(Boolean)
+  const parts = items.length > 1
+    ? items
+    : cleaned.split(/(?<=[а-яa-z0-9)])\.\s+(?=[А-ЯA-Z])/).map((s) => s.trim()).filter(Boolean)
+
+  return parts
+    .map((s) => s.replace(/^\d{1,2}[.)]\s*/, '').replace(/[.;]\s*$/, '').trim())
+    .filter((s) => s.length > 1)
+}
+
+/**
+ * Мероприятие строки сметы: карточка с шифром и наименованием расценки; по клику
+ * раскрывается состав работ из СН-2012 чек-листом (отметки — для себя, при проверке
+ * строки; они не сохраняются) и поле для правки названия мероприятия.
+ */
+function OperationCard({ name, rateCode, onChange }: {
+  name: string; rateCode: string; onChange: (v: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [rate, setRate] = useState<NormativeRate | null>(null)
+  const [done, setDone] = useState<Record<number, boolean>>({})
+
+  useEffect(() => {
+    setRate(null)
+    setDone({})
+    if (!rateCode) return
+    api.get<NormativeRate>(`/api/normatives/rates/by-code?code=${encodeURIComponent(rateCode)}`)
+      .then(setRate)
+      .catch(() => setRate(null))
+  }, [rateCode])
+
+  const steps = splitComposition(rate?.workComposition)
+
+  return (
+    <div>
+      <label className="label">Мероприятие</label>
+      <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+        <button type="button" onClick={() => setOpen(!open)}
+                className="w-full text-left px-3 py-2.5 hover:bg-slate-50 transition-colors">
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-slate-800">{name || 'Мероприятие не указано'}</div>
+              {rateCode && (
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  <span className="font-mono text-xs text-slate-500">{rateCode}</span>
+                  {rate?.unit && <span className="text-xs text-slate-400">· {rate.unit}</span>}
+                </div>
+              )}
+              {rate?.name && <div className="text-xs text-slate-500 mt-0.5">{rate.name}</div>}
+              {steps.length > 0 && !open && (
+                <div className="text-[11px] text-slate-400 mt-1">
+                  Состав работ: {steps.length} {steps.length === 1 ? 'пункт' : steps.length < 5 ? 'пункта' : 'пунктов'} — нажмите, чтобы раскрыть
+                </div>
+              )}
+            </div>
+            <span className={`text-slate-400 text-xs mt-1 transition-transform ${open ? 'rotate-180' : ''}`}>▼</span>
+          </div>
+        </button>
+
+        {open && (
+          <div className="border-t border-slate-100 px-3 py-3 space-y-3 bg-slate-50/60">
+            <div>
+              <label className="text-xs text-slate-500">Название мероприятия</label>
+              <input className="input py-1.5 text-sm mt-1" value={name}
+                     onChange={(e) => onChange(e.target.value)}
+                     placeholder="Техническое обслуживание…" />
+            </div>
+
+            {steps.length > 0 ? (
+              <div>
+                <div className="text-xs font-medium text-slate-500 mb-1.5">Состав работ по расценке (СН-2012)</div>
+                <ul className="space-y-1">
+                  {steps.map((s, i) => (
+                    <li key={i}>
+                      <label className="flex items-start gap-2 text-sm text-slate-700 cursor-pointer">
+                        <input type="checkbox" className="mt-1 shrink-0" checked={!!done[i]}
+                               onChange={(e) => setDone({ ...done, [i]: e.target.checked })} />
+                        <span className={done[i] ? 'line-through text-slate-400' : ''}>{s}</span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+                <div className="text-[11px] text-slate-400 mt-1.5">
+                  Отметки — для себя при проверке строки, в смету не попадают.
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-slate-400">
+                {rateCode
+                  ? 'Состав работ для этой расценки в каталоге не распознан.'
+                  : 'Укажите шифр расценки — состав работ подтянется из каталога.'}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function RowModal({ estimateId, row, onClose, onSaved }: {
   estimateId: number; row: EstimateRowEntity | null; onClose: () => void; onSaved: () => void
 }) {
@@ -370,7 +483,8 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
           {input('equipmentType', 'Тип')}
           {input('manufacturer', 'Производитель')}
         </div>
-        {input('operationName', 'Мероприятие', 'Техническое обслуживание…')}
+        <OperationCard name={f.operationName} rateCode={f.rateCode}
+                       onChange={(v) => set('operationName', v)} />
 
         {suggestions.length > 0 && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
@@ -404,8 +518,8 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
           <input className="input" value={f.rateCode} onChange={(e) => setRateCode(e.target.value)}
                  placeholder="22-2203-113-1/1" />
           <p className="text-xs text-slate-400 mt-1">
-            Цены, наименование и измеритель подтянутся из каталога по шифру. При смене шифра — обновятся.
-            {row?.rateName && <span className="block text-slate-500 mt-0.5">Расценка: {row.rateName}</span>}
+            Цены, наименование и измеритель подтянутся из каталога по шифру. При смене шифра — обновятся,
+            а в блоке «Мероприятие» появится состав работ новой расценки.
           </p>
         </div>
         <div className="grid grid-cols-3 gap-3">

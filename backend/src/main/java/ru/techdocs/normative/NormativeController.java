@@ -69,6 +69,14 @@ public class NormativeController {
         return aiMatchService.match(request == null ? null : request.query());
     }
 
+    /** Расценка по шифру — с составом работ (его показывает чек-лист в строке сметы). */
+    @GetMapping("/rates/by-code")
+    public ResponseEntity<NormativeRate> rateByCode(@RequestParam String code) {
+        return normativeService.byCode(code)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
     /**
      * Самопроверка каталога: сравнение с вручную сверенными по PDF расценками.
      * Расхождение здесь означает ошибку распознавания сборника — и неверные деньги в смете.
