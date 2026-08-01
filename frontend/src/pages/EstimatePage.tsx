@@ -406,23 +406,38 @@ const numOrUndef = (v: string) => {
  * показывает цены с отклонением от текущей расценки и состав работ, чтобы
  * сравнить вариант, не подставляя его в смету.
  */
-function AlternativeCard({ alt, selected, current, onPick }: {
+function AlternativeCard({ alt, badge, periodicity, selected, current, onPick }: {
   alt: Alternative
+  badge: 'ИИ' | 'эталон'
+  periodicity?: string
   selected: boolean
   current: { zp?: number; em?: number; zpm?: number; mr?: number; hours?: number }
   onPick: () => void
 }) {
   const [open, setOpen] = useState(false)
-  const steps = splitComposition(alt.workComposition)
+  // у эталонных вариантов цен и состава работ в подсказке нет — подтягиваем их
+  // из каталога, но только когда карточку действительно раскрыли
+  const [details, setDetails] = useState<NormativeRate | null>(null)
+  useEffect(() => {
+    if (!open || alt.laborCost != null || details) return
+    api.get<NormativeRate>(`/api/normatives/rates/by-code?code=${encodeURIComponent(alt.rateCode)}`)
+      .then(setDetails)
+      .catch(() => setDetails(null))
+  }, [open])
+
+  const full = alt.laborCost != null ? alt : { ...alt, ...(details ?? {}) }
+  const steps = splitComposition(full.workComposition)
 
   return (
     <div className={`rounded-md border text-sm transition-colors ${
       selected ? 'border-primary-400 bg-primary-50' : 'border-slate-200 bg-white'}`}>
       <div className="px-3 py-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="rounded bg-sky-100 text-sky-800 px-1.5 py-0.5 text-[10px] font-semibold">ИИ</span>
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+            badge === 'ИИ' ? 'bg-sky-100 text-sky-800' : 'bg-emerald-100 text-emerald-800'}`}>{badge}</span>
           <span className="font-mono text-xs text-slate-700">{alt.rateCode}</span>
-          {alt.unit && <span className="text-[11px] text-slate-400">· {alt.unit}</span>}
+          {periodicity && <span className="text-[11px] text-slate-400">· {periodicity}</span>}
+          {full.unit && <span className="text-[11px] text-slate-400">· {full.unit}</span>}
         </div>
         {alt.rateName && <div className="text-xs text-slate-600 mt-0.5">{alt.rateName}</div>}
         {alt.reason && <div className="text-[11px] text-slate-400 mt-0.5">{alt.reason}</div>}
@@ -439,11 +454,11 @@ function AlternativeCard({ alt, selected, current, onPick }: {
       {open && (
         <div className="border-t border-slate-100 px-3 py-2 space-y-3 bg-slate-50/60">
           <div className="grid grid-cols-5 gap-2">
-            <Delta label="ЗП" value={alt.laborCost} current={current.zp} />
-            <Delta label="ЭМ" value={alt.machineCost} current={current.em} />
-            <Delta label="ЗПМ" value={alt.machineLabor} current={current.zpm} />
-            <Delta label="МР" value={alt.materialCost} current={current.mr} />
-            <Delta label="чел.-ч" value={alt.laborHours} current={current.hours} />
+            <Delta label="ЗП" value={full.laborCost} current={current.zp} />
+            <Delta label="ЭМ" value={full.machineCost} current={current.em} />
+            <Delta label="ЗПМ" value={full.machineLabor} current={current.zpm} />
+            <Delta label="МР" value={full.materialCost} current={current.mr} />
+            <Delta label="чел.-ч" value={full.laborHours} current={current.hours} />
           </div>
           {steps.length > 0 ? (
             <div>
@@ -453,7 +468,11 @@ function AlternativeCard({ alt, selected, current, onPick }: {
               </ol>
             </div>
           ) : (
-            <div className="text-xs text-slate-400">Состав работ для этой расценки в каталоге не распознан.</div>
+            <div className="text-xs text-slate-400">
+              {full.laborCost == null && !details
+                ? 'Загружаем расценку из каталога…'
+                : 'Состав работ для этой расценки в каталоге не распознан.'}
+            </div>
           )}
         </div>
       )}
@@ -725,24 +744,20 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
               Похожее оборудование есть в эталоне, но точного совпадения нет — выберите расценку:
             </div>
             {suggestions.map((s, i) => (
-              <button type="button" key={i} onClick={() => pickSuggestion(s)}
-                      className={`w-full text-left rounded-md border px-3 py-2 text-sm transition-colors ${
-                        f.rateCode === s.rateCode
-                          ? 'border-primary-400 bg-primary-50'
-                          : 'border-slate-200 bg-white hover:border-primary-300'}`}>
-                <div className="flex items-center gap-2">
-                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                    s.source === 'ETALON' ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800'}`}>
-                    {s.source === 'ETALON' ? 'эталон' : 'ИИ'}
-                  </span>
-                  <span className="font-mono text-xs text-slate-700">{s.rateCode}</span>
-                  {s.periodicity && <span className="text-xs text-slate-400">· {s.periodicity}</span>}
-                </div>
-                {s.rateName && <div className="text-xs text-slate-600 mt-0.5">{s.rateName}</div>}
-                {s.note && <div className="text-[11px] text-slate-400 mt-0.5">{s.note}</div>}
-              </button>
+              <AlternativeCard key={i}
+                               alt={{ rateCode: s.rateCode, rateName: s.rateName, reason: s.note }}
+                               badge={s.source === 'ETALON' ? 'эталон' : 'ИИ'}
+                               periodicity={s.periodicity}
+                               selected={f.rateCode === s.rateCode}
+                               current={{ zp: numOrUndef(f.priceZp), em: numOrUndef(f.priceEm),
+                                          zpm: numOrUndef(f.priceZpm), mr: numOrUndef(f.priceMr),
+                                          hours: rate?.laborHours }}
+                               onPick={() => pickSuggestion(s)} />
             ))}
-            <div className="text-[11px] text-amber-700">Клик подставит шифр и периодичность. Сохранение снимет пометку «на проверку».</div>
+            <div className="text-[11px] text-amber-700">
+              «Состав работ и цены» покажет вариант с отклонением от текущей расценки, ничего не меняя.
+              «Взять эту» подставит шифр и периодичность; сохранение снимет пометку «на проверку».
+            </div>
           </div>
         )}
 
@@ -806,7 +821,7 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
             ) : (
               <>
                 {alternatives.options.map((a, i) => (
-                  <AlternativeCard key={i} alt={a} selected={f.rateCode === a.rateCode}
+                  <AlternativeCard key={i} alt={a} badge="ИИ" selected={f.rateCode === a.rateCode}
                                    current={{ zp: numOrUndef(f.priceZp), em: numOrUndef(f.priceEm),
                                               zpm: numOrUndef(f.priceZpm), mr: numOrUndef(f.priceMr),
                                               hours: rate?.laborHours }}
