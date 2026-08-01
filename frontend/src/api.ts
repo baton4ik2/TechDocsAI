@@ -39,8 +39,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     } catch { /* нет тела */ }
     throw new ApiError(response.status, message)
   }
-  if (response.status === 204) return undefined as T
-  return response.json()
+  // Ответ без тела — это успех, а не ошибка разбора: 204 No Content и 202 Accepted
+  // (запущенная фоновая обработка) тела не несут, и response.json() на них падает.
+  if (response.status === 204 || response.status === 202) return undefined as T
+  const text = await response.text()
+  return (text ? JSON.parse(text) : undefined) as T
 }
 
 /**

@@ -171,6 +171,22 @@ class NormativeIntegrationTest extends IntegrationTestBase {
                 .andExpect(status().isNotFound());
     }
 
+    /**
+     * Повторный разбор виден в списке сразу: статус переключается синхронно, а не
+     * внутри фоновой задачи — иначе на экране ничего не меняется до обновления страницы.
+     */
+    @Test
+    void reprocessMarksSourcebookProcessingImmediately() throws Exception {
+        Long bookId = sourcebook().getId();
+
+        mockMvc.perform(post("/api/normatives/" + bookId + "/reprocess").header("Authorization", bearer()))
+                .andExpect(status().isAccepted());
+
+        mockMvc.perform(get("/api/normatives").header("Authorization", bearer()))
+                .andExpect(jsonPath("$[?(@.id == " + bookId + ")].status")
+                        .value(org.hamcrest.Matchers.hasItem("PROCESSING")));
+    }
+
     @Test
     void searchEndpointRequiresAuth() throws Exception {
         mockMvc.perform(get("/api/normatives/rates/search").param("query", "x"))

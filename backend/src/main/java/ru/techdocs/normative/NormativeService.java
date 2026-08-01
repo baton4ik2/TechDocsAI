@@ -87,8 +87,16 @@ public class NormativeService {
         return q.matches("[\\d./\\-\\s]+") && q.chars().anyMatch(Character::isDigit);
     }
 
+    /**
+     * Повторный разбор PDF. Статус переводим в «обрабатывается» СРАЗУ, до постановки
+     * задачи в фон: иначе список, запрошенный сразу после нажатия, ещё показывает
+     * «Готов», и на экране ничего не происходит до обновления страницы.
+     */
     public void reprocess(Long id) {
-        get(id);
+        NormativeSourcebook sourcebook = get(id);
+        sourcebook.setStatus(NormativeSourcebook.STATUS_PROCESSING);
+        sourcebook.setErrorMessage(null);
+        sourcebookRepository.save(sourcebook);
         processingService.processAsync(id);
     }
 
