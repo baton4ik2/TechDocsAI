@@ -20,12 +20,15 @@ public class AiClient {
     private final RestClient restClient;
     private final RestClient visionRestClient;
     private final RestClient matchRestClient;
+    private final RestClient reviewRestClient;
     private final String model;
     private final String visionModel;
     private final String matchModel;
+    private final String reviewModel;
     private final boolean configured;
     private final boolean visionConfigured;
     private final boolean matchConfigured;
+    private final boolean reviewConfigured;
 
     public AiClient(AppProperties props) {
         String baseUrl = props.ai().baseUrl();
@@ -58,6 +61,19 @@ public class AiClient {
         } else {
             this.matchRestClient = this.restClient;
             this.matchConfigured = this.configured;
+        }
+
+        // проверка готовой сметы: рассуждение по длинному контексту, поэтому модель
+        // здесь сильнее, чем для подбора расценок, и меняется независимо от него
+        this.reviewModel = props.ai().reviewModel();
+        String reviewBaseUrl = props.ai().reviewBaseUrl();
+        String reviewApiKey = props.ai().reviewApiKey();
+        if (reviewBaseUrl != null && !reviewBaseUrl.isBlank()) {
+            this.reviewRestClient = buildClient(reviewBaseUrl, reviewApiKey);
+            this.reviewConfigured = isUsable(reviewBaseUrl, reviewApiKey);
+        } else {
+            this.reviewRestClient = this.restClient;
+            this.reviewConfigured = this.configured;
         }
     }
 
@@ -119,6 +135,15 @@ public class AiClient {
     /** Запрос к модели подбора расценок (текстовый, отдельный провайдер для смет). */
     public String completeMatch(String systemPrompt, String userPrompt) {
         return complete(matchRestClient, matchModel, systemPrompt, userPrompt);
+    }
+
+    public boolean hasReviewModel() {
+        return reviewConfigured && reviewModel != null && !reviewModel.isBlank();
+    }
+
+    /** Запрос к модели проверки сметы (отдельный провайдер, сильнее match-модели). */
+    public String completeReview(String systemPrompt, String userPrompt) {
+        return complete(reviewRestClient, reviewModel, systemPrompt, userPrompt);
     }
 
     private String complete(RestClient client, String model, String systemPrompt, String userPrompt) {

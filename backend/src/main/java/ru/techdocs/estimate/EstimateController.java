@@ -28,6 +28,7 @@ public class EstimateController {
     private final EstimateDecisionService decisionService;
     private final ReferenceEstimateImportService referenceImportService;
     private final ru.techdocs.object.FacilityRepository facilityRepository;
+    private final EstimateReviewService reviewService;
 
     @PostMapping
     public Estimate create(@RequestParam Long facilityId,
@@ -102,6 +103,15 @@ public class EstimateController {
                               java.math.BigDecimal laborHours, String workComposition) {}
 
     public record Alternatives(List<Alternative> options, boolean aiConfigured) {}
+
+    /**
+     * Проверка сметы сильной моделью: один проход по всем строкам с эталоном и
+     * методикой. Возвращает только замечания — смету не меняет.
+     */
+    @PostMapping("/{id}/review")
+    public EstimateReviewService.ReviewResult review(@PathVariable Long id) {
+        return reviewService.review(id);
+    }
 
     /**
      * Аналоги расценки для строки: ИИ подбирает по описанию оборудования и работы

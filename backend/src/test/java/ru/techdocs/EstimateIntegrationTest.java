@@ -246,6 +246,34 @@ class EstimateIntegrationTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.options.length()").value(0));
     }
 
+    /**
+     * Проверка сметы без настроенной модели обязана сказать об этом прямо: пустой
+     * список замечаний неотличим от «всё хорошо», а это разные вещи перед сдачей.
+     */
+    @Test
+    void reviewExplainsWhenModelIsNotConfigured() throws Exception {
+        seedRate();
+        long est = createEstimate(facility());
+        mockMvc.perform(post("/api/estimates/" + est + "/rows").header("Authorization", bearer())
+                .contentType("application/json")
+                .content("{\"equipmentName\":\"Извещатель\",\"rateCode\":\"22-2203-113-1/1\",\"qty\":1}"));
+
+        mockMvc.perform(post("/api/estimates/" + est + "/review").header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.aiConfigured").value(false))
+                .andExpect(jsonPath("$.findings.length()").value(0))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("AI_REVIEW_MODEL")));
+    }
+
+    /** Пустую смету на проверку не отправляем — незачем тратить запрос. */
+    @Test
+    void reviewOfEmptyEstimateDoesNotCallModel() throws Exception {
+        long est = createEstimate(facility());
+        mockMvc.perform(post("/api/estimates/" + est + "/review").header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("нет строк")));
+    }
+
     @Test
     void requiresAuth() throws Exception {
         mockMvc.perform(get("/api/estimates")).andExpect(status().isUnauthorized());

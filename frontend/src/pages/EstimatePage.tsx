@@ -6,6 +6,92 @@ import Modal from '../components/Modal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { toast } from '../components/Toast'
 
+type Finding = {
+  position?: number; severity: string; category?: string
+  title: string; detail?: string; impact?: string
+}
+type ReviewResult = { findings: Finding[]; aiConfigured: boolean; error?: string }
+
+/**
+ * Проверка готовой сметы сильной моделью. Запускается вручную перед сдачей:
+ * это не подсказка в процессе, а вычитка целиком — и она ничего не меняет.
+ */
+function ReviewButton({ estimateId, onFindings }: {
+  estimateId: number; onFindings: (r: ReviewResult) => void
+}) {
+  const [loading, setLoading] = useState(false)
+  const run = async () => {
+    setLoading(true)
+    try {
+      const result = await api.post<ReviewResult>(`/api/estimates/${estimateId}/review`)
+      onFindings(result)
+      if (result.error) toast(result.error, 'error')
+      else if (result.findings.length === 0) toast('Замечаний не найдено', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Ошибка проверки', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+  return (
+    <button className="btn-secondary" onClick={run} disabled={loading}
+            title="Проверить смету целиком: пропущенные работы, чужие расценки, противоречия">
+      {loading ? 'Проверяем…' : '🔍 Проверить смету'}
+    </button>
+  )
+}
+
+/** Замечания проверки: список со ссылкой на строку сметы. */
+function ReviewPanel({ result, onClose, onOpenRow }: {
+  result: ReviewResult; onClose: () => void; onOpenRow: (position: number) => void
+}) {
+  const cls: Record<string, string> = {
+    HIGH: 'border-red-200 bg-red-50', MEDIUM: 'border-amber-200 bg-amber-50',
+    LOW: 'border-slate-200 bg-slate-50',
+  }
+  const label: Record<string, string> = { HIGH: 'важно', MEDIUM: 'проверить', LOW: 'оформление' }
+
+  return (
+    <div className="card p-5 space-y-3">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="font-medium text-slate-900">Проверка сметы</div>
+          <p className="text-sm text-slate-500 mt-0.5">
+            Замечания модели. Смета не изменена — решения за вами.
+          </p>
+        </div>
+        <button className="btn-ghost text-sm" onClick={onClose}>Скрыть</button>
+      </div>
+
+      {result.error ? (
+        <div className="text-sm text-red-600">{result.error}</div>
+      ) : result.findings.length === 0 ? (
+        <div className="text-sm text-emerald-700">Замечаний не найдено.</div>
+      ) : (
+        <div className="space-y-2">
+          {result.findings.map((fnd, i) => (
+            <div key={i} className={`rounded-lg border px-3 py-2 ${cls[fnd.severity] ?? cls.MEDIUM}`}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
+                  {label[fnd.severity] ?? 'проверить'}
+                </span>
+                {fnd.position != null && (
+                  <button className="text-xs text-primary-600 hover:underline"
+                          onClick={() => onOpenRow(fnd.position!)}>строка {fnd.position}</button>
+                )}
+                {fnd.category && <span className="text-[11px] text-slate-500">{fnd.category}</span>}
+              </div>
+              <div className="text-sm font-medium text-slate-800 mt-1">{fnd.title}</div>
+              {fnd.detail && <div className="text-sm text-slate-600 mt-0.5">{fnd.detail}</div>}
+              {fnd.impact && <div className="text-xs text-slate-500 mt-0.5">Влияние: {fnd.impact}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 type Alternative = {
   rateCode: string; rateName?: string; reason?: string; unit?: string
   laborCost?: number; machineCost?: number; machineLabor?: number
@@ -53,6 +139,7 @@ export default function EstimatePage() {
   const [editing, setEditing] = useState<EstimateRowEntity | null | 'new'>(null)
   const [deletingRow, setDeletingRow] = useState<EstimateRowEntity | null>(null)
   const [merging, setMerging] = useState(false)
+  const [findings, setFindings] = useState<ReviewResult | null>(null)
 
   const load = () => {
     api.get<EstimateView>(`/api/estimates/${estimateId}`).then(setView).catch((e) => setError(e.message))
@@ -92,6 +179,7 @@ export default function EstimatePage() {
                     .catch((e) => toast(e.message, 'error'))}>
             ★ В эталон
           </button>
+          <ReviewButton estimateId={estimate.id} onFindings={setFindings} />
           <button className="btn-secondary" onClick={() => setMerging(true)}>⇢⇠ Объединить одинаковые</button>
           <button className="btn-secondary" onClick={() => setEditing('new')}>+ Строка</button>
           <button className="btn-primary"
@@ -102,6 +190,14 @@ export default function EstimatePage() {
       </div>
 
       <Coefficients view={view} onSaved={load} />
+
+      {findings && (
+        <ReviewPanel result={findings} onClose={() => setFindings(null)}
+                     onOpenRow={(p) => {
+                       const target = rows.find((r) => r.row.position === p)
+                       if (target) setEditing(target.row)
+                     }} />
+      )}
 
       {reviewCount > 0 && (
         <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">

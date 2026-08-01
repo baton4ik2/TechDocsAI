@@ -55,6 +55,12 @@ techdocs:
     match-base-url: ${AI_MATCH_BASE_URL:}
     match-api-key: ${AI_MATCH_API_KEY:}
     match-model: ${AI_MATCH_MODEL:}
+    # Проверка готовой сметы — задача на рассуждение по длинному контексту, а не
+    # выбор из короткого списка, поэтому модель здесь отдельная и заведомо сильнее
+    # той, что подбирает расценки. Пусто — используется основной провайдер.
+    review-base-url: ${AI_REVIEW_BASE_URL:}
+    review-api-key: ${AI_REVIEW_API_KEY:}
+    review-model: ${AI_REVIEW_MODEL:}
   document:
     max-file-size-mb: 100
     max-pages: 500
