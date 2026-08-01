@@ -177,6 +177,49 @@ class NormativeRateParserTest {
         assertThat(r.getWorkComposition()).contains("Внешний осмотр корпуса прибора");
     }
 
+    /**
+     * Колонки расценки — прогон из 6 значений. Если раньше него в блок попал короткий
+     * набор чисел из соседнего текста, брать нужно настоящий: иначе числа
+     * раскладываются со сдвигом и расценка остаётся без ЗП (случай 22-2203-117-1/1).
+     */
+    @Test
+    void picksFullSixColumnRunEvenWhenShorterRunComesFirst() {
+        String page = """
+                Состав работ:
+                1. Проверка работоспособности систем противопожарной защиты.
+                Измеритель: 1000 м2
+
+                22-2203-117-1/1 Проверка работоспособности систем противопожарной
+                защиты 0,1 1,1 - - зданий и сооружений
+                502,15 463,84 0,44 0,01 - 0,48
+                """;
+        List<NormativeRate> rates = parser.parse(List.of(new PageText(60, page)));
+
+        assertThat(rates).hasSize(1);
+        NormativeRate r = rates.get(0);
+        assertThat(r.getLaborCost()).isEqualByComparingTo("463.84");    // ЗП
+        assertThat(r.getMachineCost()).isEqualByComparingTo("0.44");    // ЭМ
+        assertThat(r.getMachineLabor()).isEqualByComparingTo("0.01");   // ЗПМ
+        assertThat(r.getMaterialCost()).isEqualByComparingTo("0");      // МР (прочерк)
+        assertThat(r.getLaborHours()).isEqualByComparingTo("0.48");
+    }
+
+    /**
+     * Прогон без заработной платы — не колонки расценки. Лучше оставить цены пустыми,
+     * чем разложить чужие числа: пустое видно, а правдоподобный мусор — нет.
+     */
+    @Test
+    void doesNotGuessPricesFromTooShortRun() {
+        String page = "22-2203-118-3/1 Оборудование стойки оповещения, каждая последующая линия 0,09 0,24";
+        List<NormativeRate> rates = parser.parse(List.of(new PageText(61, page)));
+
+        assertThat(rates).hasSize(1);
+        NormativeRate r = rates.get(0);
+        assertThat(r.getCode()).isEqualTo("22-2203-118-3/1");
+        assertThat(r.getLaborCost()).isNull();
+        assertThat(r.getMachineLabor()).isNull();
+    }
+
     @Test
     void returnsEmptyForBlankPages() {
         assertThat(parser.parse(List.of(new PageText(1, "   ")))).isEmpty();

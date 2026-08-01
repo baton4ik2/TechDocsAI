@@ -360,6 +360,14 @@ public class EstimateService {
         row.setPriceMr(rate.getMaterialCost());
         row.setLaborHours(rate.getLaborHours());
         row.setUnitBasis(RateUnits.basis(rate.getUnit()));
+        // расценка есть, но цены из сборника не распознались — строка посчиталась бы
+        // в ноль и выглядела бы при этом заполненной
+        if (rate.getLaborCost() == null) {
+            row.setNeedsReview(true);
+            row.setMatchNote("⚠ НА ПРОВЕРКУ: у расценки " + rate.getCode()
+                    + " в каталоге не распознана заработная плата — проверьте цены по сборнику.");
+            return false;
+        }
         return true;
     }
 
