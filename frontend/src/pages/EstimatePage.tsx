@@ -6,6 +6,9 @@ import Modal from '../components/Modal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { toast } from '../components/Toast'
 
+/** Число из каталога в значение поля формы; пусто, если значения нет. */
+const num = (v?: number) => (v == null ? '' : String(v))
+
 const money = (v?: number) =>
   v == null ? '—' : v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -407,20 +410,10 @@ function splitComposition(text?: string): string[] {
  * раскрывается состав работ из СН-2012 чек-листом (отметки — для себя, при проверке
  * строки; они не сохраняются) и поле для правки названия мероприятия.
  */
-function OperationCard({ name, rateCode, onChange }: {
-  name: string; rateCode: string; onChange: (v: string) => void
+function OperationCard({ name, rateCode, rate, onChange }: {
+  name: string; rateCode: string; rate: NormativeRate | null; onChange: (v: string) => void
 }) {
   const [open, setOpen] = useState(false)
-  const [rate, setRate] = useState<NormativeRate | null>(null)
-
-  useEffect(() => {
-    setRate(null)
-    if (!rateCode) return
-    api.get<NormativeRate>(`/api/normatives/rates/by-code?code=${encodeURIComponent(rateCode)}`)
-      .then(setRate)
-      .catch(() => setRate(null))
-  }, [rateCode])
-
   const steps = splitComposition(rate?.workComposition)
 
   return (
@@ -504,6 +497,35 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [rate, setRate] = useState<NormativeRate | null>(null)
+
+  /**
+   * Расценка по шифру: её состав работ показывает карточка мероприятия, а цены
+   * подставляются в пустые поля сразу — раньше они появлялись только после
+   * сохранения, и выбранный вариант выглядел «пустым».
+   */
+  useEffect(() => {
+    const code = f.rateCode.trim()
+    if (!code) { setRate(null); return }
+    const timer = setTimeout(() => {
+      api.get<NormativeRate>(`/api/normatives/rates/by-code?code=${encodeURIComponent(code)}`)
+        .then((r) => {
+          setRate(r)
+          setF((prev) => prev.rateCode.trim() !== code ? prev : {
+            ...prev,
+            // не затираем то, что инженер уже поправил руками
+            priceZp: prev.priceZp || num(r.laborCost),
+            priceEm: prev.priceEm || num(r.machineCost),
+            priceZpm: prev.priceZpm || num(r.machineLabor),
+            priceMr: prev.priceMr || num(r.materialCost),
+            // измеритель не трогаем: он выводится из единицы расценки на сервере,
+            // и пустое поле означает «взять из каталога», а не «единица»
+          })
+        })
+        .catch(() => setRate(null))
+    }, 300)   // шифр вводят посимвольно — не дёргаем каталог на каждую букву
+    return () => clearTimeout(timer)
+  }, [f.rateCode])
 
   const set = (k: keyof typeof f, v: string) => setF({ ...f, [k]: v })
   // смена шифра → очищаем цены, чтобы они подтянулись из каталога заново
@@ -576,7 +598,7 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
           {input('equipmentType', 'Тип')}
           {input('manufacturer', 'Производитель')}
         </div>
-        <OperationCard name={f.operationName} rateCode={f.rateCode}
+        <OperationCard name={f.operationName} rateCode={f.rateCode} rate={rate}
                        onChange={(v) => set('operationName', v)} />
 
         {suggestions.length > 0 && (
