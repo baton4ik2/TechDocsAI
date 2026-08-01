@@ -55,6 +55,10 @@ public class EstimateDecisionService {
         return m.find() ? base + m.group(1) : base;
     }
 
+    /** «ТО» / «т/о» отдельным словом — сокращение технического обслуживания. */
+    private static final java.util.regex.Pattern ABBREVIATED_SERVICE =
+            java.util.regex.Pattern.compile("(?<![\\p{L}\\d])т\\s*/?\\s*о(?![\\p{L}\\d])");
+
     /** Категория операции или null, если формулировка не типовая. */
     private static String category(String s) {
         if (s.contains("осмотр")) return "осмотр";
@@ -64,6 +68,10 @@ public class EstimateDecisionService {
         // проверка АКБ» — это ТО, а не отдельная проверка (иначе одна и та же расценка
         // попадает в две категории и строка дублируется)
         if (s.contains("обслуж")) return "то";
+        // сокращение из эталонов: «ТО адресного релейного модуля», «Т/О прибора».
+        // Без него такая работа не приравнивалась к «Техническому обслуживанию»,
+        // и расценка из эталона не находилась для того же оборудования.
+        if (ABBREVIATED_SERVICE.matcher(s).find()) return "то";
         if (s.contains("контрол")) return "контроль";
         if (s.contains("проверк")) return "проверка";
         if (s.contains("наладк")) return "наладка";
@@ -82,8 +90,12 @@ public class EstimateDecisionService {
      */
     public record EtalonRate(String rateCode, String periodicity, BigDecimal perYear, String justification) {}
 
-    /** Запись эталона системы: наименование/операция оборудования → решение (для нечёткого матча). */
-    public record EtalonEntry(String name, String operationKey, EtalonRate rate) {}
+    /**
+     * Запись эталона: наименование/операция оборудования → решение (для нечёткого матча).
+     * system — из какой инженерной системы взята запись: при выборе вручную инженеру
+     * важно видеть, что расценка пришла из эталона другой системы.
+     */
+    public record EtalonEntry(String name, String operationKey, String system, EtalonRate rate) {}
 
     /** Операция эталона: имя мероприятия, категория, расценка+периодичность. */
     public record EtalonOp(String operationName, String operationKey, EtalonRate rate) {}
@@ -141,7 +153,11 @@ public class EstimateDecisionService {
                 EtalonRate er = new EtalonRate(d.getRateCode().strip(), d.getPeriodicity(),
                         d.getPerYear(), d.getJustification());
                 byRateCode.putIfAbsent(er.rateCode(), er);
-                entries.add(new EtalonEntry(name, d.getOperationKey(), er));
+                // категорию считаем заново из названия работы, а не берём сохранённую:
+                // старые решения записаны прежними правилами (напр. «ТО …» до того,
+                // как сокращение стали распознавать), и перезагружать эталон не нужно
+                entries.add(new EtalonEntry(name, operationKey(d.getOperationName()),
+                        ue.getSystemType(), er));
                 // одна расценка = одна работа: дедуп и по категории операции, и по шифру
                 // (в эталоне ТО могло попасть в разные категории — «ТО» и «ТО, проверка АКБ»)
                 addOp(ueOps, d, er);
@@ -163,7 +179,7 @@ public class EstimateDecisionService {
      */
     private void addOp(List<EtalonOp> ops, EstimateRateDecision d, EtalonRate er) {
         if (ops.stream().anyMatch(o -> o.rate().rateCode().equals(er.rateCode()))) return;
-        ops.add(new EtalonOp(d.getOperationName(), d.getOperationKey(), er));
+        ops.add(new EtalonOp(d.getOperationName(), operationKey(d.getOperationName()), er));
     }
 
     /**

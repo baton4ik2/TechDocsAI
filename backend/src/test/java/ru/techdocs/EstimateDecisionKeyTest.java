@@ -47,6 +47,22 @@ class EstimateDecisionKeyTest {
                 "Техническое обслуживание приборов контроля и управления (ППКП/ПУ)")).isEqualTo("то");
     }
 
+    /**
+     * В эталонах работу часто пишут сокращённо: «ТО адресного релейного модуля».
+     * Это то же техническое обслуживание — иначе расценка из эталона не находится
+     * для строки сметы с полной формулировкой.
+     */
+    @Test
+    void abbreviatedServiceIsSameAsFullWording() {
+        assertThat(EstimateDecisionService.operationKey("ТО адресного релейного модуля"))
+                .isEqualTo("то")
+                .isEqualTo(EstimateDecisionService.operationKey(
+                        "Техническое обслуживание — Адресный релейный модуль с контролем целостности цепи"));
+        assertThat(EstimateDecisionService.operationKey("Т/О прибора приёмно-контрольного")).isEqualTo("то");
+        // «то» внутри слова категорией не считается
+        assertThat(EstimateDecisionService.operationKey("Точечная настройка датчика")).isNotEqualTo("то");
+    }
+
     /** «Техническое обслуживание …, проверка АКБ» — это ТО, а не отдельная «проверка». */
     @Test
     void maintenanceWinsOverCheckWording() {

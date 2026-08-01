@@ -878,7 +878,10 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
         rm1.setName("Адресный релейный модуль");
         rm1.setModel("РМ-1");
         rm1 = uniqueRepository.saveAndFlush(rm1);
-        addDecision(rm1.getId(), "то", "ТО адресного релейного модуля", "22-2203-104-4/1", "раз в 6 мес.", "2");
+        // ключ записан по старым правилам (сокращение «ТО» тогда не распознавалось) —
+        // категория пересчитывается при чтении, перезагружать эталон не требуется
+        addDecision(rm1.getId(), "то адресного релейного модуля", "ТО адресного релейного модуля",
+                "22-2203-104-4/1", "раз в 6 мес.", "2");
 
         UniqueEquipment rm2 = new UniqueEquipment();
         rm2.setNormKey("адресный релейный модуль|рм-2||апс");
@@ -901,9 +904,10 @@ class EstimateDraftEtalonTest extends IntegrationTestBase {
                 .get("rows").get(0).get("row");
         assertThat(row.get("matchSource").asText()).isEqualTo("CHOICE");
         // обе расценки релейного модуля из эталона АПС предлагаются на выбор,
-        // хотя оборудование объекта числится в другой системе
+        // хотя оборудование объекта числится в другой системе, и видно откуда они
         String suggestions = row.get("suggestions").asText();
-        assertThat(suggestions).contains("22-2203-104-4/1").contains("22-2203-74-1/1");
+        assertThat(suggestions).contains("22-2203-104-4/1").contains("22-2203-74-1/1")
+                .contains("из эталона (АПС)");
     }
 
     /**

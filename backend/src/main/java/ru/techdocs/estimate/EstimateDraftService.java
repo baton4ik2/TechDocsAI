@@ -437,8 +437,10 @@ public class EstimateDraftService {
             String code = e.rate().rateCode();
             if (code == null || !codes.add(code)) continue;
             NormativeRate r = catalogRate(code);
+            String from = e.system() == null || e.system().isBlank()
+                    ? "из эталона: " : "из эталона (" + e.system().toUpperCase() + "): ";
             options.add(option("ETALON", code, r == null ? null : r.getName(),
-                    e.rate().periodicity(), "из эталона: " + e.name()));
+                    e.rate().periodicity(), from + e.name()));
         }
         int aiShown = 0;
         for (NormativeAiMatchService.Match m : match.matches()) {
