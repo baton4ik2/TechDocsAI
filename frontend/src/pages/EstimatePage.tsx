@@ -6,6 +6,15 @@ import Modal from '../components/Modal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { toast } from '../components/Toast'
 
+type Alternative = { rateCode: string; rateName?: string; reason?: string }
+type Alternatives = { options: Alternative[]; aiConfigured: boolean }
+
+/**
+ * Аналоги, подобранные ИИ, кэшируются на время сессии по строке и текущему шифру:
+ * повторное открытие той же строки уже не обращается к модели.
+ */
+const alternativesCache = new Map<string, Alternatives>()
+
 /** Число из каталога в значение поля формы; пусто, если значения нет. */
 const num = (v?: number) => (v == null ? '' : String(v))
 
@@ -498,6 +507,25 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [rate, setRate] = useState<NormativeRate | null>(null)
+  const [alternatives, setAlternatives] = useState<Alternatives | null>(null)
+  const [altLoading, setAltLoading] = useState(false)
+
+  /**
+   * Аналоги от ИИ для уже подобранной расценки — чтобы было с чем сравнить выбор.
+   * Модель видит только короткий список найденных по каталогу расценок, поэтому
+   * запрос дешёвый; результат кэшируется на сессию.
+   */
+  useEffect(() => {
+    if (!row?.id || !row.rateCode) return
+    const key = `${row.id}|${row.rateCode}`
+    const cached = alternativesCache.get(key)
+    if (cached) { setAlternatives(cached); return }
+    setAltLoading(true)
+    api.get<Alternatives>(`/api/estimates/rows/${row.id}/alternatives`)
+      .then((a) => { alternativesCache.set(key, a); setAlternatives(a) })
+      .catch(() => setAlternatives(null))
+      .finally(() => setAltLoading(false))
+  }, [row?.id])
 
   /**
    * Расценка по шифру: её состав работ показывает карточка мероприятия, а цены
@@ -670,6 +698,42 @@ function RowModal({ estimateId, row, onClose, onSaved }: {
           <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
             <div className="text-xs font-medium text-slate-500 mb-1">Как подобрана расценка (служебное)</div>
             <div className="text-sm text-slate-600">{row.matchNote}</div>
+          </div>
+        )}
+        {row?.rateCode && (altLoading || alternatives) && (
+          <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-3 space-y-2">
+            <div className="text-xs font-medium text-sky-800">
+              Аналоги от ИИ — с чем сравнить выбранную расценку
+            </div>
+            {altLoading ? (
+              <div className="text-sm text-slate-400">Подбираем аналоги…</div>
+            ) : !alternatives?.aiConfigured ? (
+              <div className="text-sm text-slate-500">ИИ выключен — аналоги не подбираются.</div>
+            ) : alternatives.options.length === 0 ? (
+              <div className="text-sm text-slate-500">
+                ИИ не нашёл в каталоге других подходящих расценок.
+              </div>
+            ) : (
+              <>
+                {alternatives.options.map((a, i) => (
+                  <button type="button" key={i} onClick={() => setRateCode(a.rateCode)}
+                          className={`w-full text-left rounded-md border px-3 py-2 text-sm transition-colors ${
+                            f.rateCode === a.rateCode
+                              ? 'border-primary-400 bg-primary-50'
+                              : 'border-slate-200 bg-white hover:border-primary-300'}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded bg-sky-100 text-sky-800 px-1.5 py-0.5 text-[10px] font-semibold">ИИ</span>
+                      <span className="font-mono text-xs text-slate-700">{a.rateCode}</span>
+                    </div>
+                    {a.rateName && <div className="text-xs text-slate-600 mt-0.5">{a.rateName}</div>}
+                    {a.reason && <div className="text-[11px] text-slate-400 mt-0.5">{a.reason}</div>}
+                  </button>
+                ))}
+                <div className="text-[11px] text-sky-700">
+                  Это подсказка, а не замена: клик подставит шифр, цены подтянутся из каталога.
+                </div>
+              </>
+            )}
           </div>
         )}
         {error && <div className="text-sm text-red-600">{error}</div>}

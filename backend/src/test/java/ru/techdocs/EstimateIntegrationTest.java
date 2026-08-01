@@ -224,6 +224,28 @@ class EstimateIntegrationTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.matchNote").value(org.hamcrest.Matchers.containsString("нет в каталоге")));
     }
 
+    /**
+     * Аналоги для строки: в тестовом профиле ИИ выключен, поэтому предложений нет,
+     * но эндпоинт обязан честно сказать об этом, а не молчать.
+     */
+    @Test
+    void alternativesReportAiDisabledInsteadOfEmptySilence() throws Exception {
+        seedRate();
+        long est = createEstimate(facility());
+        String resp = mockMvc.perform(post("/api/estimates/" + est + "/rows").header("Authorization", bearer())
+                        .contentType("application/json")
+                        .content("{\"equipmentName\":\"Извещатель пожарный дымовой\","
+                                + "\"operationName\":\"Техническое обслуживание\","
+                                + "\"rateCode\":\"22-2203-113-1/1\",\"qty\":1}"))
+                .andReturn().getResponse().getContentAsString();
+        long rowId = json.readTree(resp).get("id").asLong();
+
+        mockMvc.perform(get("/api/estimates/rows/" + rowId + "/alternatives").header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.aiConfigured").value(false))
+                .andExpect(jsonPath("$.options.length()").value(0));
+    }
+
     @Test
     void requiresAuth() throws Exception {
         mockMvc.perform(get("/api/estimates")).andExpect(status().isUnauthorized());

@@ -21,6 +21,7 @@ public class EstimateService {
     private final EstimateRowRepository rowRepository;
     private final NormativeRateRepository rateRepository;
     private final EstimateCalculator calculator;
+    private final ru.techdocs.normative.NormativeAiMatchService aiMatchService;
 
     // ---- запросы на изменение ----
 
@@ -144,6 +145,36 @@ public class EstimateService {
     public void deleteRow(Long rowId) {
         if (!rowRepository.existsById(rowId)) throw new NotFoundException("Строка сметы не найдена");
         rowRepository.deleteById(rowId);
+    }
+
+    /** Сколько аналогов предлагать инженеру: больше — уже не выбор, а список. */
+    private static final int ALTERNATIVES_LIMIT = 3;
+
+    /**
+     * Аналоги расценки для строки. Запрос к ИИ идёт по короткому списку расценок,
+     * найденных в каталоге по описанию оборудования и работы, — модель видит не весь
+     * сборник, а десятки строк, поэтому опция дешёвая. Текущая расценка исключается.
+     */
+    public EstimateController.Alternatives alternatives(Long rowId) {
+        EstimateRow row = rowRepository.findById(rowId)
+                .orElseThrow(() -> new NotFoundException("Строка сметы не найдена"));
+        StringBuilder query = new StringBuilder();
+        if (row.getEquipmentName() != null) query.append(row.getEquipmentName()).append(' ');
+        if (row.getEquipmentType() != null) query.append(row.getEquipmentType()).append(' ');
+        if (row.getOperationName() != null) query.append(row.getOperationName());
+        if (query.isEmpty()) {
+            return new EstimateController.Alternatives(List.of(), aiMatchService.isAvailable());
+        }
+
+        var match = aiMatchService.match(query.toString().strip(), List.of(), row.getSection());
+        List<EstimateController.Alternative> options = new ArrayList<>();
+        for (var m : match.matches()) {
+            if (m.rate() == null || m.rate().getCode().equals(row.getRateCode())) continue;
+            options.add(new EstimateController.Alternative(
+                    m.rate().getCode(), m.rate().getName(), m.reason()));
+            if (options.size() >= ALTERNATIVES_LIMIT) break;
+        }
+        return new EstimateController.Alternatives(options, match.aiConfigured());
     }
 
     /**

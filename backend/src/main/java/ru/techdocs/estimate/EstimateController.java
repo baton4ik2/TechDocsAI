@@ -92,6 +92,21 @@ public class EstimateController {
         return java.util.Map.of("saved", decisionService.promote(id));
     }
 
+    /** Аналог расценки, предложенный ИИ для строки. */
+    public record Alternative(String rateCode, String rateName, String reason) {}
+
+    public record Alternatives(List<Alternative> options, boolean aiConfigured) {}
+
+    /**
+     * Аналоги расценки для строки: ИИ подбирает по описанию оборудования и работы
+     * из короткого списка найденных по каталогу расценок. Текущая расценка из
+     * предложений исключается — она уже стоит в строке.
+     */
+    @GetMapping("/rows/{rowId}/alternatives")
+    public Alternatives alternatives(@PathVariable Long rowId) {
+        return estimateService.alternatives(rowId);
+    }
+
     /** Одинаковые строки (оборудование + расценка + режим работ) — кандидаты на объединение. */
     @GetMapping("/{id}/duplicate-groups")
     public List<EstimateService.DuplicateGroup> duplicateGroups(@PathVariable Long id) {
