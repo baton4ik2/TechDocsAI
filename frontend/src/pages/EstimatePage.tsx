@@ -82,30 +82,50 @@ function ReviewButton({ estimateId, onFindings }: {
   )
 }
 
-/** Замечания проверки: список со ссылкой на строку сметы. */
-function ReviewPanel({ result, onClose, onOpenRow }: {
-  result: ReviewResult; onClose: () => void; onOpenRow: (position: number) => void
+/**
+ * Замечания проверки: список со ссылкой на строку сметы. Сворачивается, но не
+ * выбрасывается — прогон стоит денег и времени, терять его по нажатию «Скрыть»
+ * нельзя. Убрать результат совсем можно крестиком.
+ */
+function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow }: {
+  result: ReviewResult; collapsed: boolean; onToggle: () => void
+  onDismiss: () => void; onOpenRow: (position: number) => void
 }) {
   const cls: Record<string, string> = {
     HIGH: 'border-red-200 bg-red-50', MEDIUM: 'border-amber-200 bg-amber-50',
     LOW: 'border-slate-200 bg-slate-50',
   }
   const label: Record<string, string> = { HIGH: 'важно', MEDIUM: 'проверить', LOW: 'оформление' }
+  const counts = { HIGH: 0, MEDIUM: 0, LOW: 0 } as Record<string, number>
+  result.findings.forEach((f) => { counts[f.severity] = (counts[f.severity] ?? 0) + 1 })
 
   return (
     <div className="card p-5 space-y-3">
       <div className="flex items-center justify-between gap-4">
-        <div>
-          <div className="font-medium text-slate-900">Проверка сметы</div>
-          <p className="text-sm text-slate-500 mt-0.5">
+        <div className="min-w-0">
+          <div className="font-medium text-slate-900">
+            Проверка сметы
+            {collapsed && result.findings.length > 0 && (
+              <span className="text-slate-500 font-normal">
+                {' — '}замечаний: {result.findings.length}
+                {counts.HIGH > 0 && <span className="text-red-600"> · важно {counts.HIGH}</span>}
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-slate-500 mt-0.5 truncate">
             Замечания модели. Смета не изменена — решения за вами.
             {result.model && <span className="text-slate-400"> · {result.model}</span>}
           </p>
         </div>
-        <button className="btn-ghost text-sm" onClick={onClose}>Скрыть</button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button className="btn-ghost text-sm" onClick={onToggle}>
+            {collapsed ? 'Показать' : 'Свернуть'}
+          </button>
+          <button className="btn-ghost text-sm text-slate-400" onClick={onDismiss}
+                  title="Убрать результат проверки">✕</button>
+        </div>
       </div>
-
-      {result.error ? (
+      {!collapsed && (result.error ? (
         <div className="text-sm text-red-600">{result.error}</div>
       ) : result.findings.length === 0 ? (
         <div className="text-sm text-emerald-700">Замечаний не найдено.</div>
@@ -129,7 +149,7 @@ function ReviewPanel({ result, onClose, onOpenRow }: {
             </div>
           ))}
         </div>
-      )}
+      ))}
     </div>
   )
 }
@@ -182,6 +202,7 @@ export default function EstimatePage() {
   const [deletingRow, setDeletingRow] = useState<EstimateRowEntity | null>(null)
   const [merging, setMerging] = useState(false)
   const [findings, setFindings] = useState<ReviewResult | null>(null)
+  const [findingsCollapsed, setFindingsCollapsed] = useState(false)
 
   const load = () => {
     api.get<EstimateView>(`/api/estimates/${estimateId}`).then(setView).catch((e) => setError(e.message))
@@ -227,7 +248,8 @@ export default function EstimatePage() {
         <div className="flex items-center gap-2 flex-wrap">
           <div className="toolbar">
             <GenerateButton estimateId={estimate.id} onDone={load} />
-            <ReviewButton estimateId={estimate.id} onFindings={setFindings} />
+            <ReviewButton estimateId={estimate.id}
+                          onFindings={(r) => { setFindings(r); setFindingsCollapsed(false) }} />
             <button className="toolbar-btn" onClick={() => setMerging(true)}
                     title="Объединить строки с одной расценкой в одну позицию">
               <span className="text-slate-400">⇄</span> Объединить
@@ -254,7 +276,9 @@ export default function EstimatePage() {
       <Coefficients view={view} onSaved={load} />
 
       {findings && (
-        <ReviewPanel result={findings} onClose={() => setFindings(null)}
+        <ReviewPanel result={findings} collapsed={findingsCollapsed}
+                     onToggle={() => setFindingsCollapsed(!findingsCollapsed)}
+                     onDismiss={() => setFindings(null)}
                      onOpenRow={(p) => {
                        const target = rows.find((r) => r.row.position === p)
                        if (target) setEditing(target.row)
