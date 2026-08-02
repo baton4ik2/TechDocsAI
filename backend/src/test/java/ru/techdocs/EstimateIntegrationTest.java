@@ -265,6 +265,22 @@ class EstimateIntegrationTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("AI_REVIEW_MODEL")));
     }
 
+    /**
+     * Модель для проверки принимается только из настроек. Произвольная строка из
+     * браузера означала бы запрос к чему угодно за счёт владельца ключа.
+     */
+    @Test
+    void reviewRejectsModelOutsideConfiguredList() throws Exception {
+        long est = createEstimate(facility());
+        mockMvc.perform(post("/api/estimates/" + est + "/review")
+                        .param("model", "какая-нибудь-дорогая-модель")
+                        .header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.findings.length()").value(0))
+                .andExpect(jsonPath("$.error").value(
+                        org.hamcrest.Matchers.containsString("AI_REVIEW_MODELS")));
+    }
+
     /** Пустую смету на проверку не отправляем — незачем тратить запрос. */
     @Test
     void reviewOfEmptyEstimateDoesNotCallModel() throws Exception {

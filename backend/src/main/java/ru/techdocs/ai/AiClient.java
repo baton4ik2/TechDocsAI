@@ -143,7 +143,21 @@ public class AiClient {
 
     /** Запрос к модели проверки сметы (отдельный провайдер, сильнее match-модели). */
     public String completeReview(String systemPrompt, String userPrompt) {
-        return complete(reviewRestClient, reviewModel, systemPrompt, userPrompt);
+        return completeReview(systemPrompt, userPrompt, null);
+    }
+
+    /**
+     * То же с явным выбором модели — чтобы сравнивать модели на одной смете, не
+     * пересобирая контейнер. Пустое значение означает модель по умолчанию.
+     */
+    public String completeReview(String systemPrompt, String userPrompt, String model) {
+        String chosen = model == null || model.isBlank() ? reviewModel : model.strip();
+        return complete(reviewRestClient, chosen, systemPrompt, userPrompt);
+    }
+
+    /** Модель проверки по умолчанию — она же единственная, если список не задан. */
+    public String defaultReviewModel() {
+        return reviewModel;
     }
 
     private String complete(RestClient client, String model, String systemPrompt, String userPrompt) {

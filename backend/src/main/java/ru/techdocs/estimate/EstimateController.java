@@ -109,8 +109,15 @@ public class EstimateController {
      * методикой. Возвращает только замечания — смету не меняет.
      */
     @PostMapping("/{id}/review")
-    public EstimateReviewService.ReviewResult review(@PathVariable Long id) {
-        return reviewService.review(id);
+    public EstimateReviewService.ReviewResult review(@PathVariable Long id,
+                                                     @RequestParam(required = false) String model) {
+        return reviewService.review(id, model);
+    }
+
+    /** Модели проверки, между которыми можно переключаться, и модель по умолчанию. */
+    @GetMapping("/review-models")
+    public EstimateReviewService.ReviewModels reviewModels() {
+        return reviewService.models();
     }
 
     /**

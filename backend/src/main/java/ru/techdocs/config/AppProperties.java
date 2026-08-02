@@ -18,7 +18,8 @@ public record AppProperties(
     public record Ai(String baseUrl, String apiKey, String chatModel,
                      String visionBaseUrl, String visionApiKey, String visionModel,
                      String matchBaseUrl, String matchApiKey, String matchModel,
-                     String reviewBaseUrl, String reviewApiKey, String reviewModel) {}
+                     String reviewBaseUrl, String reviewApiKey, String reviewModel,
+                     String reviewModels) {}
 
     public record Document(int maxFileSizeMb, int maxPages) {}
 

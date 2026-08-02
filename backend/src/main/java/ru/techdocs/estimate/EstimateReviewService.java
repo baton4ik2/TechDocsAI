@@ -31,6 +31,7 @@ public class EstimateReviewService {
     private final EstimateRowRepository rowRepository;
     private final EstimateDecisionService decisionService;
     private final AiClient aiClient;
+    private final ru.techdocs.config.AppProperties props;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** Сколько эталонных решений подкладывать на систему — контекст, а не весь эталон. */
@@ -46,35 +47,77 @@ public class EstimateReviewService {
     public record Finding(Integer position, String severity, String category,
                           String title, String detail, String impact) {}
 
-    public record ReviewResult(List<Finding> findings, boolean aiConfigured, String error) {}
+    /** @param model какой моделью проверяли — чтобы сравнивать результаты между собой */
+    public record ReviewResult(List<Finding> findings, boolean aiConfigured, String error, String model) {}
+
+    /** Модели, между которыми можно переключаться в интерфейсе. */
+    public record ReviewModels(List<String> models, String defaultModel) {}
 
     public boolean isAvailable() {
         return aiClient.hasReviewModel();
     }
 
+    /**
+     * Список моделей из настроек. Пустой, если задана только одна: тогда выбирать
+     * нечего и в интерфейсе переключатель не нужен.
+     */
+    public ReviewModels models() {
+        List<String> models = new ArrayList<>();
+        String configured = props.ai().reviewModels();
+        if (configured != null && !configured.isBlank()) {
+            for (String m : configured.split(",")) {
+                String name = m.strip();
+                if (!name.isEmpty() && !models.contains(name)) models.add(name);
+            }
+        }
+        String fallback = aiClient.defaultReviewModel();
+        if (models.isEmpty() && fallback != null && !fallback.isBlank()) models.add(fallback);
+        String byDefault = fallback != null && !fallback.isBlank() ? fallback
+                : (models.isEmpty() ? null : models.get(0));
+        return new ReviewModels(models, byDefault);
+    }
+
     public ReviewResult review(Long estimateId) {
+        return review(estimateId, null);
+    }
+
+    public ReviewResult review(Long estimateId, String requestedModel) {
         Estimate estimate = estimateService.get(estimateId);
         List<EstimateRow> rows = rowRepository.findByEstimateIdOrderByPosition(estimateId);
+        ReviewModels available = models();
+        String model = available.defaultModel();
+        if (requestedModel != null && !requestedModel.isBlank()) {
+            // принимаем только модель из настроек: произвольная строка из браузера
+            // означала бы запрос к чему угодно за счёт владельца ключа
+            String asked = requestedModel.strip();
+            if (!available.models().contains(asked)) {
+                return new ReviewResult(List.of(), isAvailable(),
+                        "Модель «" + asked + "» не разрешена. Добавьте её в AI_REVIEW_MODELS.", model);
+            }
+            model = asked;
+        }
+
         if (rows.isEmpty()) {
-            return new ReviewResult(List.of(), isAvailable(), "В смете нет строк.");
+            return new ReviewResult(List.of(), isAvailable(), "В смете нет строк.", model);
         }
         if (!isAvailable()) {
             return new ReviewResult(List.of(), false,
                     "Модель проверки не настроена: задайте AI_REVIEW_MODEL (и при необходимости "
-                            + "AI_REVIEW_BASE_URL, AI_REVIEW_API_KEY).");
+                            + "AI_REVIEW_BASE_URL, AI_REVIEW_API_KEY).", model);
         }
 
         String answer;
         try {
-            answer = aiClient.completeReview(systemPrompt(), userPrompt(estimate, rows));
+            answer = aiClient.completeReview(systemPrompt(), userPrompt(estimate, rows), model);
         } catch (Exception e) {
-            log.warn("Проверка сметы {} не удалась: {}", estimateId, e.getMessage());
-            return new ReviewResult(List.of(), true, "Модель не ответила: " + e.getClass().getSimpleName());
+            log.warn("Проверка сметы {} моделью {} не удалась: {}", estimateId, model, e.getMessage());
+            return new ReviewResult(List.of(), true,
+                    "Модель не ответила: " + e.getClass().getSimpleName(), model);
         }
         if (answer == null || answer.isBlank()) {
-            return new ReviewResult(List.of(), true, "Модель вернула пустой ответ.");
+            return new ReviewResult(List.of(), true, "Модель вернула пустой ответ.", model);
         }
-        return new ReviewResult(parse(answer, rows), true, null);
+        return new ReviewResult(parse(answer, rows), true, null, model);
     }
 
     private String systemPrompt() {
@@ -111,8 +154,21 @@ public class EstimateReviewService {
                 "title":"кратко","detail":"почему это проблема и что проверить",
                 "impact":"влияние на деньги словами или пусто"}]}
                 position — номер строки сметы, null для замечания по смете в целом.
-                severity: HIGH — влияет на деньги или сдачу; MEDIUM — вероятная ошибка;
-                LOW — оформление. Если замечаний нет, верни {"findings":[]}.
+
+                Важность (severity) определяй по последствию, а не по тому, насколько
+                замечание выглядит формальным:
+                HIGH — деньги посчитаны неверно или работа не попадёт в расчёт. Сюда
+                  ВСЕГДА относятся: пустое или нулевое количество, отсутствие расценки
+                  или периодичности, расценка на другое изделие, пропущенная работа,
+                  разные расценки за одну и ту же работу (разная цена за одинаковое),
+                  подозрение на неверный измеритель (цена за 10 шт применена к 1 шт).
+                MEDIUM — вероятная ошибка, но нужно решение инженера: спорный аналог,
+                  оборудование не из этой системы, необоснованная периодичность.
+                LOW — только формулировки и оформление, на сумму не влияет:
+                  наименование мероприятия не совпадает с наименованием расценки,
+                  разнобой в написании периодичности.
+
+                Если замечаний нет, верни {"findings":[]}.
                 """;
     }
 

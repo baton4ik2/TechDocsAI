@@ -10,20 +10,33 @@ type Finding = {
   position?: number; severity: string; category?: string
   title: string; detail?: string; impact?: string
 }
-type ReviewResult = { findings: Finding[]; aiConfigured: boolean; error?: string }
+type ReviewResult = { findings: Finding[]; aiConfigured: boolean; error?: string; model?: string }
+type ReviewModels = { models: string[]; defaultModel?: string }
 
 /**
  * Проверка готовой сметы сильной моделью. Запускается вручную перед сдачей:
  * это не подсказка в процессе, а вычитка целиком — и она ничего не меняет.
+ * Если в настройках перечислено несколько моделей, рядом появляется выбор:
+ * так их можно сравнить на одной смете, не пересобирая контейнер.
  */
 function ReviewButton({ estimateId, onFindings }: {
   estimateId: number; onFindings: (r: ReviewResult) => void
 }) {
   const [loading, setLoading] = useState(false)
+  const [models, setModels] = useState<string[]>([])
+  const [model, setModel] = useState('')
+
+  useEffect(() => {
+    api.get<ReviewModels>('/api/estimates/review-models')
+      .then((r) => { setModels(r.models ?? []); setModel(r.defaultModel ?? '') })
+      .catch(() => setModels([]))
+  }, [])
+
   const run = async () => {
     setLoading(true)
     try {
-      const result = await api.post<ReviewResult>(`/api/estimates/${estimateId}/review`)
+      const query = model ? `?model=${encodeURIComponent(model)}` : ''
+      const result = await api.post<ReviewResult>(`/api/estimates/${estimateId}/review${query}`)
       onFindings(result)
       if (result.error) toast(result.error, 'error')
       else if (result.findings.length === 0) toast('Замечаний не найдено', 'success')
@@ -33,11 +46,21 @@ function ReviewButton({ estimateId, onFindings }: {
       setLoading(false)
     }
   }
+
   return (
-    <button className="btn-secondary" onClick={run} disabled={loading}
-            title="Проверить смету целиком: пропущенные работы, чужие расценки, противоречия">
-      {loading ? 'Проверяем…' : '🔍 Проверить смету'}
-    </button>
+    <div className="flex items-center gap-1">
+      {models.length > 1 && (
+        <select className="input py-1.5 text-xs w-44" value={model}
+                onChange={(e) => setModel(e.target.value)} disabled={loading}
+                title="Какой моделью проверять — для сравнения на одной смете">
+          {models.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+      )}
+      <button className="btn-secondary" onClick={run} disabled={loading}
+              title="Проверить смету целиком: пропущенные работы, чужие расценки, противоречия">
+        {loading ? 'Проверяем…' : '🔍 Проверить смету'}
+      </button>
+    </div>
   )
 }
 
@@ -58,6 +81,7 @@ function ReviewPanel({ result, onClose, onOpenRow }: {
           <div className="font-medium text-slate-900">Проверка сметы</div>
           <p className="text-sm text-slate-500 mt-0.5">
             Замечания модели. Смета не изменена — решения за вами.
+            {result.model && <span className="text-slate-400"> · {result.model}</span>}
           </p>
         </div>
         <button className="btn-ghost text-sm" onClick={onClose}>Скрыть</button>

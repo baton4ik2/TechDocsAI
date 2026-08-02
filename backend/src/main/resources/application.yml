@@ -61,6 +61,10 @@ techdocs:
     review-base-url: ${AI_REVIEW_BASE_URL:}
     review-api-key: ${AI_REVIEW_API_KEY:}
     review-model: ${AI_REVIEW_MODEL:}
+    # Список моделей через запятую, между которыми можно переключаться прямо в
+    # интерфейсе. Нужен, чтобы сравнить модели на одной смете, не пересобирая
+    # контейнер. Запрос принимается только с моделью из этого списка.
+    review-models: ${AI_REVIEW_MODELS:}
   document:
     max-file-size-mb: 100
     max-pages: 500
