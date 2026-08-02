@@ -26,6 +26,31 @@ body {
   @apply inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 font-medium text-slate-600 hover:bg-slate-100 transition-colors;
 }
 
+/*
+ * Панель действий: несколько равнозначных операций над одной сущностью
+ * собираются в одну группу с разделителями, а не рассыпаются отдельными
+ * кнопками — так видно, что это один набор инструментов, и шапка не рябит.
+ */
+/*
+ * Скругление задаётся крайним элементам, а не обрезкой контейнера: внутри
+ * группы есть кнопка с выпадающим списком, и overflow-hidden обрезал бы его.
+ */
+.toolbar {
+  @apply inline-flex items-stretch rounded-lg border border-slate-200 bg-white divide-x divide-slate-200;
+}
+
+.toolbar > :first-child {
+  @apply rounded-l-lg;
+}
+
+.toolbar > :last-child {
+  @apply rounded-r-lg;
+}
+
+.toolbar-btn {
+  @apply inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
 .input {
   @apply w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100;
 }

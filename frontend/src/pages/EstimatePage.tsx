@@ -47,19 +47,37 @@ function ReviewButton({ estimateId, onFindings }: {
     }
   }
 
+  // выбор модели нужен только при сравнении, поэтому он спрятан под стрелку,
+  // а не занимает место в шапке наравне с действиями
+  const [menuOpen, setMenuOpen] = useState(false)
+
   return (
-    <div className="flex items-center gap-1">
-      {models.length > 1 && (
-        <select className="input py-1.5 text-xs w-44" value={model}
-                onChange={(e) => setModel(e.target.value)} disabled={loading}
-                title="Какой моделью проверять — для сравнения на одной смете">
-          {models.map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
-      )}
-      <button className="btn-secondary" onClick={run} disabled={loading}
+    <div className="relative flex items-stretch">
+      <button className="toolbar-btn" onClick={run} disabled={loading}
               title="Проверить смету целиком: пропущенные работы, чужие расценки, противоречия">
-        {loading ? 'Проверяем…' : '🔍 Проверить смету'}
+        <span className="text-slate-400">🔍</span> {loading ? 'Проверяем…' : 'Проверить'}
       </button>
+      {models.length > 1 && (
+        <button type="button" className="toolbar-btn px-1.5 text-slate-400"
+                onClick={() => setMenuOpen(!menuOpen)} disabled={loading}
+                title={`Модель проверки: ${model}`}>▾</button>
+      )}
+      {menuOpen && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
+          <div className="absolute right-0 top-full mt-1 z-20 w-64 card p-1">
+            <div className="px-2 py-1 text-[11px] text-slate-400">Модель проверки</div>
+            {models.map((m) => (
+              <button type="button" key={m}
+                      className={`w-full text-left rounded px-2 py-1.5 text-xs hover:bg-slate-50 ${
+                        m === model ? 'text-primary-700 font-medium' : 'text-slate-600'}`}
+                      onClick={() => { setModel(m); setMenuOpen(false) }}>
+                {m === model ? '✓ ' : '   '}{m}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -189,23 +207,43 @@ export default function EstimatePage() {
 
   return (
     <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <Link to="/estimates" className="text-sm text-primary-600">← К сметам</Link>
-          <h1 className="text-2xl font-semibold text-slate-900 mt-1">{estimate.name}</h1>
+      <div className="flex items-start justify-between gap-6 flex-wrap">
+        <div className="min-w-0">
+          <Link to="/estimates" className="text-sm text-primary-600 hover:underline">← К сметам</Link>
+          <h1 className="text-2xl font-semibold text-slate-900 mt-1 truncate">{estimate.name}</h1>
+          <div className="text-sm text-slate-500 mt-0.5">
+            {rows.length} {rows.length === 1 ? 'строка' : rows.length < 5 ? 'строки' : 'строк'}
+            {reviewCount > 0 && (
+              <span className="text-amber-700"> · {reviewCount} на проверку</span>
+            )}
+          </div>
         </div>
-        <div className="flex gap-2">
-          <GenerateButton estimateId={estimate.id} onDone={load} />
-          <button className="btn-secondary"
-                  title="Сохранить строки в память решений — переиспользуются на других объектах"
-                  onClick={() => api.post<{ saved: number }>(`/api/estimates/${estimate.id}/promote`)
-                    .then((r) => toast(`В эталон сохранено решений: ${r.saved}`, 'success'))
-                    .catch((e) => toast(e.message, 'error'))}>
-            ★ В эталон
-          </button>
-          <ReviewButton estimateId={estimate.id} onFindings={setFindings} />
-          <button className="btn-secondary" onClick={() => setMerging(true)}>⇢⇠ Объединить одинаковые</button>
-          <button className="btn-secondary" onClick={() => setEditing('new')}>+ Строка</button>
+
+        {/*
+          Работа со сметой — одной группой, отдельно от выгрузки результата.
+          Значки различают природу действия: эмодзи у того, что делает ИИ,
+          простые знаки у ручных операций.
+        */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="toolbar">
+            <GenerateButton estimateId={estimate.id} onDone={load} />
+            <ReviewButton estimateId={estimate.id} onFindings={setFindings} />
+            <button className="toolbar-btn" onClick={() => setMerging(true)}
+                    title="Объединить строки с одной расценкой в одну позицию">
+              <span className="text-slate-400">⇄</span> Объединить
+            </button>
+            <button className="toolbar-btn" onClick={() => setEditing('new')}
+                    title="Добавить строку вручную">
+              <span className="text-slate-400">+</span> Строка
+            </button>
+            <button className="toolbar-btn"
+                    title="Сохранить строки в память решений — переиспользуются на других объектах"
+                    onClick={() => api.post<{ saved: number }>(`/api/estimates/${estimate.id}/promote`)
+                      .then((r) => toast(`В эталон сохранено решений: ${r.saved}`, 'success'))
+                      .catch((e) => toast(e.message, 'error'))}>
+              <span className="text-amber-500">★</span> В эталон
+            </button>
+          </div>
           <button className="btn-primary"
                   onClick={() => exportEstimate(estimate.id, `Смета_${estimate.name}.xlsx`).catch((e) => toast(e.message, 'error'))}>
             ⭳ Выгрузить XLSX
@@ -363,9 +401,9 @@ function GenerateButton({ estimateId, onDone }: { estimateId: number; onDone: ()
     }
   }
   return (
-    <button className="btn-secondary" onClick={run} disabled={loading}
+    <button className="toolbar-btn" onClick={run} disabled={loading}
             title="Заполнить смету из реестра оборудования: подбор расценки ИИ + периодичность из ПКМ">
-      {loading ? '🤖 Генерация…' : '🤖 ИИ-черновик'}
+      <span>🤖</span> {loading ? 'Генерация…' : 'ИИ-черновик'}
     </button>
   )
 }
