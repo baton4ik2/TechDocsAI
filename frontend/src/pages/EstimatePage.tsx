@@ -6,9 +6,29 @@ import Modal from '../components/Modal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { toast } from '../components/Toast'
 
+type Fix = {
+  action: string; rateCode?: string; periodicity?: string
+  opsPerYear?: number; qty?: number; operationName?: string
+}
 type Finding = {
   position?: number; severity: string; category?: string
   title: string; detail?: string; impact?: string
+  fix?: Fix; applied?: boolean
+}
+
+/** Что именно сделает правка — человеку, а не кодом действия. */
+function fixLabel(fix: Fix): string {
+  switch (fix.action) {
+    case 'SET_RATE': return `заменить расценку на ${fix.rateCode}`
+    case 'SET_PERIODICITY': return fix.periodicity
+      ? `периодичность → ${fix.periodicity}${fix.opsPerYear != null ? `, ${fix.opsPerYear} опер./год` : ''}`
+      : `операций в год → ${fix.opsPerYear}`
+    case 'SET_QTY': return `количество → ${fix.qty}`
+    case 'SET_OPERATION_NAME': return `мероприятие → ${fix.operationName}`
+    case 'ADD_ROW': return `добавить работу ${fix.rateCode}`
+      + (fix.periodicity ? ` (${fix.periodicity})` : '')
+    default: return fix.action
+  }
 }
 type ReviewResult = { findings: Finding[]; aiConfigured: boolean; error?: string; model?: string }
 type ReviewModels = { models: string[]; defaultModel?: string }
@@ -99,10 +119,24 @@ function ReviewButton({ estimateId, hasSaved, onFindings }: {
  * выбрасывается — прогон стоит денег и времени, терять его по нажатию «Скрыть»
  * нельзя. Убрать результат совсем можно крестиком.
  */
-function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow }: {
+function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow, onApply }: {
   result: ReviewResult; collapsed: boolean; onToggle: () => void
   onDismiss: () => void; onOpenRow: (position: number) => void
+  onApply: (indexes: number[]) => Promise<void>
 }) {
+  const [applying, setApplying] = useState<number | 'all' | null>(null)
+  const [confirmAll, setConfirmAll] = useState(false)
+  // применить можно только замечания с конкретной правкой и ещё не применённые
+  const pending = result.findings
+    .map((f, i) => ({ f, i }))
+    .filter(({ f }) => f.fix && !f.applied)
+
+  const apply = async (indexes: number[], marker: number | 'all') => {
+    setApplying(marker)
+    setConfirmAll(false)
+    try { await onApply(indexes) } finally { setApplying(null) }
+  }
+
   const cls: Record<string, string> = {
     HIGH: 'border-red-200 bg-red-50', MEDIUM: 'border-amber-200 bg-amber-50',
     LOW: 'border-slate-200 bg-slate-50',
@@ -130,12 +164,27 @@ function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow }: {
           </p>
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {pending.length > 0 && (
+            <button className="btn-secondary text-sm py-1.5" onClick={() => setConfirmAll(true)}
+                    disabled={applying !== null}
+                    title="Применить все замечания, для которых предложена конкретная правка">
+              {applying === 'all' ? 'Применяем…' : `Применить всё (${pending.length})`}
+            </button>
+          )}
           <button className="btn-ghost text-sm" onClick={onToggle}>
             {collapsed ? 'Показать' : 'Свернуть'}
           </button>
           <button className="btn-ghost text-sm text-slate-400" onClick={onDismiss}
                   title="Убрать результат проверки">✕</button>
         </div>
+        {confirmAll && (
+          <ConfirmDialog title={`Применить ${pending.length} правк${pending.length === 1 ? 'у' : 'и'}?`}
+                         message={'Смета изменится: ' + pending.map(({ f }) => fixLabel(f.fix!)).join('; ')
+                           + '. Остальные замечания требуют вашего решения и применены не будут.'}
+                         confirmLabel="Применить"
+                         onConfirm={() => apply(pending.map(({ i }) => i), 'all')}
+                         onClose={() => setConfirmAll(false)} />
+        )}
       </div>
       {!collapsed && (result.error ? (
         <div className="text-sm text-red-600">{result.error}</div>
@@ -144,10 +193,11 @@ function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow }: {
       ) : (
         <div className="space-y-2">
           {result.findings.map((fnd, i) => (
-            <div key={i} className={`rounded-lg border px-3 py-2 ${cls[fnd.severity] ?? cls.MEDIUM}`}>
+            <div key={i} className={`rounded-lg border px-3 py-2 ${
+              fnd.applied ? 'border-emerald-200 bg-emerald-50' : cls[fnd.severity] ?? cls.MEDIUM}`}>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
-                  {label[fnd.severity] ?? 'проверить'}
+                  {fnd.applied ? 'применено' : label[fnd.severity] ?? 'проверить'}
                 </span>
                 {fnd.position != null && (
                   <button className="text-xs text-primary-600 hover:underline"
@@ -158,6 +208,23 @@ function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow }: {
               <div className="text-sm font-medium text-slate-800 mt-1">{fnd.title}</div>
               {fnd.detail && <div className="text-sm text-slate-600 mt-0.5">{fnd.detail}</div>}
               {fnd.impact && <div className="text-xs text-slate-500 mt-0.5">Влияние: {fnd.impact}</div>}
+
+              {fnd.fix && (
+                <div className="flex items-center gap-2 flex-wrap mt-2">
+                  <span className="text-xs text-slate-500">Правка: {fixLabel(fnd.fix)}</span>
+                  {!fnd.applied && (
+                    <button className="btn-secondary text-xs py-1" disabled={applying !== null}
+                            onClick={() => apply([i], i)}>
+                      {applying === i ? 'Применяем…' : 'Применить'}
+                    </button>
+                  )}
+                </div>
+              )}
+              {!fnd.fix && !fnd.applied && (
+                <div className="text-[11px] text-slate-400 mt-2">
+                  Автоматической правки нет — решение за инженером.
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -302,6 +369,22 @@ export default function EstimatePage() {
                      onOpenRow={(p) => {
                        const target = rows.find((r) => r.row.position === p)
                        if (target) setEditing(target.row)
+                     }}
+                     onApply={async (indexes) => {
+                       try {
+                         const res = await api.post<{ applied: number; skipped: number; messages: string[] }>(
+                           `/api/estimates/${estimateId}/review/apply`, { indexes })
+                         toast(res.applied > 0
+                           ? `Применено правок: ${res.applied}${res.skipped ? `, пропущено: ${res.skipped}` : ''}`
+                           : 'Ничего не применено', res.applied > 0 ? 'success' : 'info')
+                         // смета изменилась, а замечания получили отметку «применено»
+                         load()
+                         const fresh = await api.get<ReviewResult | undefined>(
+                           `/api/estimates/${estimateId}/review`)
+                         if (fresh) setFindings(fresh)
+                       } catch (e) {
+                         toast(e instanceof Error ? e.message : 'Ошибка применения', 'error')
+                       }
                      }} />
       )}
 

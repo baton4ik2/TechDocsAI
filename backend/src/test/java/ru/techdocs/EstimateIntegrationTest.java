@@ -325,6 +325,81 @@ class EstimateIntegrationTest extends IntegrationTestBase {
         org.assertj.core.api.Assertions.assertThat(reviewRepository.findByEstimateId(est)).isEmpty();
     }
 
+    /**
+     * Применение правок из проверки: замечание с конкретной правкой меняет смету и
+     * помечается применённым, замечание без правки не трогается — оно требует
+     * решения инженера, а не действия приложения.
+     */
+    @Test
+    void appliesOnlyFindingsWithConcreteFix() throws Exception {
+        seedRate();
+        long est = createEstimate(facility());
+        mockMvc.perform(post("/api/estimates/" + est + "/rows").header("Authorization", bearer())
+                .contentType("application/json")
+                .content("{\"section\":\"АПС\",\"equipmentName\":\"Извещатель\","
+                        + "\"rateCode\":\"22-2203-113-1/1\",\"periodicity\":\"раз в год\",\"qty\":1}"));
+
+        ru.techdocs.estimate.EstimateReview review = new ru.techdocs.estimate.EstimateReview();
+        review.setEstimateId(est);
+        review.setModel("test");
+        review.setFindings("""
+                [{"position":1,"severity":"HIGH","title":"Не указано количество",
+                  "fix":{"action":"SET_QTY","qty":43}},
+                 {"position":1,"severity":"MEDIUM","title":"Проверьте предмет договора"}]
+                """);
+        reviewRepository.saveAndFlush(review);
+
+        mockMvc.perform(post("/api/estimates/" + est + "/review/apply").header("Authorization", bearer())
+                        .contentType("application/json").content("{\"indexes\":[0,1]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applied").value(1))
+                .andExpect(jsonPath("$.skipped").value(1));
+
+        // смета изменилась
+        mockMvc.perform(get("/api/estimates/" + est).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.rows[0].row.qty").value(43))
+                .andExpect(jsonPath("$.rows[0].row.matchNote")
+                        .value(org.hamcrest.Matchers.containsString("Не указано количество")));
+
+        // применённое замечание помечено и повторно не предлагается
+        mockMvc.perform(get("/api/estimates/" + est + "/review").header("Authorization", bearer()))
+                .andExpect(jsonPath("$.findings[0].applied").value(true))
+                .andExpect(jsonPath("$.findings[1].applied").value(false));
+    }
+
+    /** Пропущенная работа добавляется отдельной строкой к тому же оборудованию. */
+    @Test
+    void addRowFixCreatesMissingWorkForSameEquipment() throws Exception {
+        seedRate();
+        long est = createEstimate(facility());
+        mockMvc.perform(post("/api/estimates/" + est + "/rows").header("Authorization", bearer())
+                .contentType("application/json")
+                .content("{\"section\":\"АПС\",\"equipmentName\":\"Оповещатель SWS-103W\","
+                        + "\"rateCode\":\"22-2203-113-1/1\",\"periodicity\":\"раз в 6 мес.\",\"qty\":43}"));
+
+        ru.techdocs.estimate.EstimateReview review = new ru.techdocs.estimate.EstimateReview();
+        review.setEstimateId(est);
+        review.setModel("test");
+        review.setFindings("""
+                [{"position":1,"severity":"HIGH","title":"Отсутствует ТО оповещателя",
+                  "fix":{"action":"ADD_ROW","rateCode":"22-2203-113-1/1","periodicity":"раз в год",
+                         "opsPerYear":1,"operationName":"Техническое обслуживание"}}]
+                """);
+        reviewRepository.saveAndFlush(review);
+
+        mockMvc.perform(post("/api/estimates/" + est + "/review/apply").header("Authorization", bearer())
+                        .contentType("application/json").content("{\"indexes\":[0]}"))
+                .andExpect(jsonPath("$.applied").value(1));
+
+        mockMvc.perform(get("/api/estimates/" + est).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.rows.length()").value(2))
+                // количество и описание унаследованы от исходной строки
+                .andExpect(jsonPath("$.rows[1].row.qty").value(43))
+                .andExpect(jsonPath("$.rows[1].row.equipmentName").value("Оповещатель SWS-103W"))
+                .andExpect(jsonPath("$.rows[1].row.operationName").value("Техническое обслуживание"))
+                .andExpect(jsonPath("$.rows[1].row.needsReview").value(true));
+    }
+
     @Test
     void requiresAuth() throws Exception {
         mockMvc.perform(get("/api/estimates")).andExpect(status().isUnauthorized());

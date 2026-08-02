@@ -124,6 +124,18 @@ public class EstimateController {
         return result == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(result);
     }
 
+    public record ApplyRequest(List<Integer> indexes) {}
+
+    /**
+     * Применяет правки из сохранённой проверки. Пустой список — применить все,
+     * у которых правка вообще предложена.
+     */
+    @PostMapping("/{id}/review/apply")
+    public EstimateReviewService.ApplyResult applyReview(@PathVariable Long id,
+                                                         @RequestBody(required = false) ApplyRequest request) {
+        return reviewService.apply(id, request == null ? null : request.indexes());
+    }
+
     /** Модели проверки, между которыми можно переключаться, и модель по умолчанию. */
     @GetMapping("/review-models")
     public EstimateReviewService.ReviewModels reviewModels() {

@@ -39,14 +39,26 @@ public class EstimateReviewService {
     private static final int ETALON_LIMIT = 40;
 
     /**
-     * @param position   номер строки сметы (null — замечание по смете в целом)
-     * @param severity   HIGH / MEDIUM / LOW
-     * @param title      суть в одной строке
-     * @param detail     почему это проблема и что проверить
-     * @param impact     влияние на деньги словами, если модель смогла оценить
+     * Конкретная правка, которую можно применить к смете. Есть не у каждого
+     * замечания: «проверьте принадлежность позиции к предмету договора» — это
+     * решение инженера, а не действие приложения.
+     *
+     * @param action SET_RATE / SET_PERIODICITY / SET_QTY / SET_OPERATION_NAME / ADD_ROW
+     */
+    public record Fix(String action, String rateCode, String periodicity,
+                      BigDecimal opsPerYear, BigDecimal qty, String operationName) {}
+
+    /**
+     * @param position номер строки сметы (null — замечание по смете в целом)
+     * @param severity HIGH / MEDIUM / LOW
+     * @param detail   почему это проблема и что проверить
+     * @param impact   влияние на деньги словами, если модель смогла оценить
+     * @param fix      предложенная правка или null, если решать инженеру
+     * @param applied  правка уже применена — повторно не предлагаем
      */
     public record Finding(Integer position, String severity, String category,
-                          String title, String detail, String impact) {}
+                          String title, String detail, String impact,
+                          Fix fix, boolean applied) {}
 
     /** @param model какой моделью проверяли — чтобы сравнивать результаты между собой */
     public record ReviewResult(List<Finding> findings, boolean aiConfigured, String error, String model) {}
@@ -156,6 +168,96 @@ public class EstimateReviewService {
         }).orElse(null);
     }
 
+    /** @param applied сколько правок применено, @param messages что именно сделано или почему нет */
+    public record ApplyResult(int applied, int skipped, List<String> messages) {}
+
+    /**
+     * Применяет выбранные правки к смете. Меняются только те поля, что названы в
+     * правке: цены пересчитываются из каталога по шифру, остальное остаётся как было.
+     * В служебное обоснование строки пишется, по какому замечанию она изменена —
+     * иначе потом не понять, откуда взялась правка.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public ApplyResult apply(Long estimateId, List<Integer> indexes) {
+        ReviewResult saved = lastReview(estimateId);
+        if (saved == null) return new ApplyResult(0, 0, List.of("Сохранённой проверки нет."));
+
+        List<Finding> findings = new ArrayList<>(saved.findings());
+        List<String> messages = new ArrayList<>();
+        int applied = 0, skipped = 0;
+        for (int i = 0; i < findings.size(); i++) {
+            Finding f = findings.get(i);
+            if (indexes != null && !indexes.contains(i)) continue;
+            if (f.applied() || f.fix() == null) { skipped++; continue; }
+            try {
+                messages.add(applyFix(estimateId, f));
+                findings.set(i, new Finding(f.position(), f.severity(), f.category(), f.title(),
+                        f.detail(), f.impact(), f.fix(), true));
+                applied++;
+            } catch (Exception e) {
+                skipped++;
+                messages.add("Строка " + f.position() + ": не применено — " + e.getMessage());
+            }
+        }
+        save(estimateId, new ReviewResult(findings, saved.aiConfigured(), null, saved.model()));
+        return new ApplyResult(applied, skipped, messages);
+    }
+
+    private String applyFix(Long estimateId, Finding f) {
+        EstimateRow row = rowRepository.findByEstimateIdOrderByPosition(estimateId).stream()
+                .filter(r -> f.position().equals(r.getPosition()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("строки уже нет в смете"));
+        Fix fix = f.fix();
+        String note = "Изменено по замечанию проверки: " + f.title();
+
+        return switch (fix.action()) {
+            case "SET_RATE" -> {
+                estimateService.updateRow(row.getId(), rowInput(fix.rateCode(), null, null, null, null, note));
+                yield "Строка " + f.position() + ": расценка → " + fix.rateCode();
+            }
+            case "SET_PERIODICITY" -> {
+                estimateService.updateRow(row.getId(),
+                        rowInput(null, fix.periodicity(), fix.opsPerYear(), null, null, note));
+                yield "Строка " + f.position() + ": периодичность → "
+                        + (fix.periodicity() == null ? fix.opsPerYear() + " опер./год" : fix.periodicity());
+            }
+            case "SET_QTY" -> {
+                estimateService.updateRow(row.getId(), rowInput(null, null, null, fix.qty(), null, note));
+                yield "Строка " + f.position() + ": количество → " + fix.qty().stripTrailingZeros().toPlainString();
+            }
+            case "SET_OPERATION_NAME" -> {
+                estimateService.updateRow(row.getId(),
+                        rowInput(null, null, null, null, fix.operationName(), note));
+                yield "Строка " + f.position() + ": мероприятие → " + fix.operationName();
+            }
+            case "ADD_ROW" -> {
+                // пропущенная работа тому же оборудованию: описание берём из строки,
+                // расценку и режим — из правки
+                estimateService.addRow(estimateId, new EstimateService.RowInput(
+                        row.getSection(), row.getEquipmentId(), row.getEquipmentName(),
+                        row.getEquipmentType(), row.getManufacturer(),
+                        fix.operationName() != null ? fix.operationName() : row.getOperationName(),
+                        fix.rateCode(), null, fix.periodicity(), row.getJustification(),
+                        fix.opsPerYear(), fix.qty() != null ? fix.qty() : row.getQty(),
+                        null, null, null, null, null, null, null,
+                        true, "MANUAL", null,
+                        note + " (работа добавлена к строке " + f.position() + ")"));
+                yield "Добавлена строка: " + fix.rateCode() + " к «" + row.getEquipmentName() + "»";
+            }
+            default -> throw new IllegalStateException("неизвестное действие " + fix.action());
+        };
+    }
+
+    /** Точечная правка строки: null-поля EstimateService не трогает. */
+    private EstimateService.RowInput rowInput(String rateCode, String periodicity, BigDecimal opsPerYear,
+                                              BigDecimal qty, String operationName, String note) {
+        return new EstimateService.RowInput(null, null, null, null, null, operationName,
+                rateCode, null, periodicity, null, opsPerYear, qty,
+                null, null, null, null, null, null, null,
+                null, null, null, note);
+    }
+
     private String systemPrompt() {
         return """
                 Ты — сметчик-эксперт по обслуживанию систем безопасности, проверяешь готовую
@@ -188,8 +290,23 @@ public class EstimateReviewService {
                 Ответ — СТРОГО JSON без пояснений вокруг:
                 {"findings":[{"position":12,"severity":"HIGH","category":"пропущенная работа",
                 "title":"кратко","detail":"почему это проблема и что проверить",
-                "impact":"влияние на деньги словами или пусто"}]}
+                "impact":"влияние на деньги словами или пусто",
+                "fix":{"action":"ADD_ROW","rateCode":"22-2203-109-1/1","periodicity":"раз в год",
+                "opsPerYear":1,"qty":null,"operationName":"Техническое обслуживание"}}]}
                 position — номер строки сметы, null для замечания по смете в целом.
+
+                Поле fix — конкретная правка, которую приложение применит само.
+                Добавляй его ТОЛЬКО когда изменение однозначно и следует из эталона
+                или сборника; если нужно решение инженера — fix не указывай вовсе.
+                Допустимые action:
+                  SET_RATE — заменить шифр расценки строки (rateCode обязателен);
+                  SET_PERIODICITY — исправить периодичность (periodicity, opsPerYear);
+                  SET_QTY — проставить количество (qty);
+                  SET_OPERATION_NAME — привести наименование работы к расценке (operationName);
+                  ADD_ROW — добавить пропущенную работу тому же оборудованию
+                            (rateCode, periodicity, opsPerYear; количество берётся из строки).
+                Шифры бери только из присланных данных — эталона или строк сметы.
+                Не предлагай удаление строк: это решение инженера.
 
                 Важность (severity) определяй по последствию, а не по тому, насколько
                 замечание выглядит формальным:
@@ -269,12 +386,58 @@ public class EstimateReviewService {
                         node.path("category").asText("").strip(),
                         title,
                         node.path("detail").asText("").strip(),
-                        node.path("impact").asText("").strip()));
+                        node.path("impact").asText("").strip(),
+                        fix(node.path("fix"), position),
+                        false));
             }
         } catch (Exception e) {
             log.warn("Не удалось разобрать ответ проверки сметы: {}", e.getMessage());
         }
         return findings;
+    }
+
+    /** Действия, которые приложение умеет применять само. */
+    private static final Set<String> ACTIONS = Set.of(
+            "SET_RATE", "SET_PERIODICITY", "SET_QTY", "SET_OPERATION_NAME", "ADD_ROW");
+
+    /**
+     * Правка из ответа модели. Возвращает null, если применить нечего: без строки
+     * или без обязательного значения правка бессмысленна, а кнопка «Применить»,
+     * которая ничего не делает, хуже её отсутствия.
+     */
+    private Fix fix(JsonNode node, Integer position) {
+        if (node == null || node.isMissingNode() || node.isNull() || position == null) return null;
+        String action = node.path("action").asText("").strip().toUpperCase();
+        if (!ACTIONS.contains(action)) return null;
+
+        String rateCode = text(node.path("rateCode"));
+        String periodicity = text(node.path("periodicity"));
+        BigDecimal opsPerYear = decimal(node.path("opsPerYear"));
+        BigDecimal qty = decimal(node.path("qty"));
+        String operationName = text(node.path("operationName"));
+
+        boolean usable = switch (action) {
+            case "SET_RATE", "ADD_ROW" -> rateCode != null;
+            case "SET_PERIODICITY" -> periodicity != null || opsPerYear != null;
+            case "SET_QTY" -> qty != null && qty.signum() > 0;
+            case "SET_OPERATION_NAME" -> operationName != null;
+            default -> false;
+        };
+        return usable ? new Fix(action, rateCode, periodicity, opsPerYear, qty, operationName) : null;
+    }
+
+    private String text(JsonNode node) {
+        String value = node == null || node.isNull() ? "" : node.asText("").strip();
+        return value.isEmpty() ? null : value;
+    }
+
+    private BigDecimal decimal(JsonNode node) {
+        if (node == null || node.isNull() || node.isMissingNode()) return null;
+        try {
+            return node.isNumber() ? node.decimalValue() : new BigDecimal(node.asText().strip());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private String severity(String raw) {
