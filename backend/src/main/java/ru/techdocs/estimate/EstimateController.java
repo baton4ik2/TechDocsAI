@@ -114,6 +114,16 @@ public class EstimateController {
         return reviewService.review(id, model);
     }
 
+    /**
+     * Последняя сохранённая проверка сметы. Возвращает 204, если проверки ещё не
+     * было — тогда предупреждать о затирании нечего.
+     */
+    @GetMapping("/{id}/review")
+    public ResponseEntity<EstimateReviewService.ReviewResult> lastReview(@PathVariable Long id) {
+        EstimateReviewService.ReviewResult result = reviewService.lastReview(id);
+        return result == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(result);
+    }
+
     /** Модели проверки, между которыми можно переключаться, и модель по умолчанию. */
     @GetMapping("/review-models")
     public EstimateReviewService.ReviewModels reviewModels() {

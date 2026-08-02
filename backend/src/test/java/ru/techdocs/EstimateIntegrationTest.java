@@ -19,6 +19,7 @@ class EstimateIntegrationTest extends IntegrationTestBase {
 
     @Autowired NormativeSourcebookRepository sourcebookRepository;
     @Autowired NormativeRateRepository rateRepository;
+    @Autowired ru.techdocs.estimate.EstimateReviewRepository reviewRepository;
 
     private long facility() throws Exception {
         String resp = mockMvc.perform(post("/api/facilities").header("Authorization", bearer())
@@ -288,6 +289,40 @@ class EstimateIntegrationTest extends IntegrationTestBase {
         mockMvc.perform(post("/api/estimates/" + est + "/review").header("Authorization", bearer()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("нет строк")));
+    }
+
+    /**
+     * Проверка живёт рядом со сметой: обновление страницы её не теряет, а удаление
+     * сметы уносит вместе с собой. Прогон стоит денег — терять его нельзя.
+     */
+    @Test
+    void savedReviewSurvivesReloadAndDiesWithEstimate() throws Exception {
+        long est = createEstimate(facility());
+
+        // проверки ещё не было — предупреждать о затирании нечего
+        mockMvc.perform(get("/api/estimates/" + est + "/review").header("Authorization", bearer()))
+                .andExpect(status().isNoContent());
+
+        ru.techdocs.estimate.EstimateReview review = new ru.techdocs.estimate.EstimateReview();
+        review.setEstimateId(est);
+        review.setModel("anthropic/claude-opus-5");
+        review.setFindings("[{\"position\":5,\"severity\":\"HIGH\",\"category\":\"пропущенная работа\","
+                + "\"title\":\"Нет ТО оповещателя\",\"detail\":\"проверьте\",\"impact\":\"11 153 ₽\"}]");
+        reviewRepository.saveAndFlush(review);
+
+        mockMvc.perform(get("/api/estimates/" + est + "/review").header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.model").value("anthropic/claude-opus-5"))
+                .andExpect(jsonPath("$.findings[0].position").value(5))
+                .andExpect(jsonPath("$.findings[0].severity").value("HIGH"))
+                .andExpect(jsonPath("$.findings[0].title").value("Нет ТО оповещателя"));
+
+        mockMvc.perform(delete("/api/estimates/" + est).header("Authorization", bearer()))
+                .andExpect(status().isNoContent());
+        // удаление сметы каскадом уносит проверку, но каскад срабатывает в базе —
+        // внутри теста надо довести отложенный DELETE до неё
+        reviewRepository.flush();
+        org.assertj.core.api.Assertions.assertThat(reviewRepository.findByEstimateId(est)).isEmpty();
     }
 
     @Test

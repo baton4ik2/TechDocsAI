@@ -19,12 +19,13 @@ type ReviewModels = { models: string[]; defaultModel?: string }
  * Если в настройках перечислено несколько моделей, рядом появляется выбор:
  * так их можно сравнить на одной смете, не пересобирая контейнер.
  */
-function ReviewButton({ estimateId, onFindings }: {
-  estimateId: number; onFindings: (r: ReviewResult) => void
+function ReviewButton({ estimateId, hasSaved, onFindings }: {
+  estimateId: number; hasSaved: boolean; onFindings: (r: ReviewResult) => void
 }) {
   const [loading, setLoading] = useState(false)
   const [models, setModels] = useState<string[]>([])
   const [model, setModel] = useState('')
+  const [confirming, setConfirming] = useState(false)
 
   useEffect(() => {
     api.get<ReviewModels>('/api/estimates/review-models')
@@ -32,7 +33,11 @@ function ReviewButton({ estimateId, onFindings }: {
       .catch(() => setModels([]))
   }, [])
 
+  // повторный прогон затирает сохранённые замечания и стоит денег — спрашиваем
+  const start = () => (hasSaved ? setConfirming(true) : run())
+
   const run = async () => {
+    setConfirming(false)
     setLoading(true)
     try {
       const query = model ? `?model=${encodeURIComponent(model)}` : ''
@@ -53,10 +58,17 @@ function ReviewButton({ estimateId, onFindings }: {
 
   return (
     <div className="relative flex items-stretch">
-      <button className="toolbar-btn" onClick={run} disabled={loading}
+      <button className="toolbar-btn" onClick={start} disabled={loading}
               title="Проверить смету целиком: пропущенные работы, чужие расценки, противоречия">
         <span className="text-slate-400">🔍</span> {loading ? 'Проверяем…' : 'Проверить'}
       </button>
+      {confirming && (
+        <ConfirmDialog title="Проверить заново?"
+                       message={'Сохранённые замечания предыдущей проверки будут удалены безвозвратно, '
+                         + 'а прогон модели снова потратит деньги. Если замечания ещё нужны — сначала разберите их.'}
+                       confirmLabel="Проверить заново" danger
+                       onConfirm={run} onClose={() => setConfirming(false)} />
+      )}
       {models.length > 1 && (
         <button type="button" className="toolbar-btn px-1.5 text-slate-400"
                 onClick={() => setMenuOpen(!menuOpen)} disabled={loading}
@@ -209,6 +221,14 @@ export default function EstimatePage() {
   }
   useEffect(() => { load() }, [estimateId])
 
+  // сохранённая проверка переживает обновление страницы; показываем её свёрнутой,
+  // чтобы итог был на виду, но не заслонял смету
+  useEffect(() => {
+    api.get<ReviewResult | undefined>(`/api/estimates/${estimateId}/review`)
+      .then((r) => { if (r) { setFindings(r); setFindingsCollapsed(true) } })
+      .catch(() => setFindings(null))
+  }, [estimateId])
+
   const removeRow = async () => {
     if (!deletingRow) return
     try {
@@ -248,7 +268,7 @@ export default function EstimatePage() {
         <div className="flex items-center gap-2 flex-wrap">
           <div className="toolbar">
             <GenerateButton estimateId={estimate.id} onDone={load} />
-            <ReviewButton estimateId={estimate.id}
+            <ReviewButton estimateId={estimate.id} hasSaved={findings != null && !findings.error}
                           onFindings={(r) => { setFindings(r); setFindingsCollapsed(false) }} />
             <button className="toolbar-btn" onClick={() => setMerging(true)}
                     title="Объединить строки с одной расценкой в одну позицию">

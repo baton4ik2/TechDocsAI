@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        Результат проверки сметы. Прогон стоит денег и времени, поэтому замечания
+        живут не в браузере, а рядом со сметой: обновление страницы их не теряет.
+        Одна запись на смету — храним последнюю проверку; новый прогон её заменяет,
+        удаление сметы уносит вместе с собой.
+    -->
+    <changeSet id="017-01-estimate-reviews" author="techdocs">
+        <createTable tableName="estimate_reviews">
+            <column name="id" type="BIGSERIAL">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="estimate_id" type="BIGINT">
+                <constraints nullable="false" unique="true"
+                             uniqueConstraintName="uk_estimate_reviews_estimate"/>
+            </column>
+            <column name="model" type="TEXT"/>
+            <column name="findings" type="TEXT"/>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addForeignKeyConstraint baseTableName="estimate_reviews" baseColumnNames="estimate_id"
+                                 constraintName="fk_estimate_reviews_estimate"
+                                 referencedTableName="estimates" referencedColumnNames="id"
+                                 onDelete="CASCADE"/>
+    </changeSet>
+
+</databaseChangeLog>

@@ -31,6 +31,7 @@ public class EstimateReviewService {
     private final EstimateRowRepository rowRepository;
     private final EstimateDecisionService decisionService;
     private final AiClient aiClient;
+    private final EstimateReviewRepository reviewRepository;
     private final ru.techdocs.config.AppProperties props;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -117,7 +118,42 @@ public class EstimateReviewService {
         if (answer == null || answer.isBlank()) {
             return new ReviewResult(List.of(), true, "Модель вернула пустой ответ.", model);
         }
-        return new ReviewResult(parse(answer, rows), true, null, model);
+        ReviewResult result = new ReviewResult(parse(answer, rows), true, null, model);
+        save(estimateId, result);
+        return result;
+    }
+
+    /**
+     * Сохраняет проверку рядом со сметой, заменяя предыдущую. Неудачные прогоны
+     * (модель не настроена, не ответила) не сохраняем: иначе они затирали бы
+     * нормальный результат, полученный до них.
+     */
+    private void save(Long estimateId, ReviewResult result) {
+        try {
+            EstimateReview review = reviewRepository.findByEstimateId(estimateId)
+                    .orElseGet(EstimateReview::new);
+            review.setEstimateId(estimateId);
+            review.setModel(result.model());
+            review.setFindings(objectMapper.writeValueAsString(result.findings()));
+            review.setCreatedAt(java.time.Instant.now());
+            reviewRepository.save(review);
+        } catch (Exception e) {
+            log.warn("Не удалось сохранить проверку сметы {}: {}", estimateId, e.getMessage());
+        }
+    }
+
+    /** Последняя сохранённая проверка сметы или null, если её ещё не делали. */
+    public ReviewResult lastReview(Long estimateId) {
+        return reviewRepository.findByEstimateId(estimateId).map(review -> {
+            try {
+                List<Finding> findings = objectMapper.readValue(review.getFindings(),
+                        objectMapper.getTypeFactory().constructCollectionType(List.class, Finding.class));
+                return new ReviewResult(findings, isAvailable(), null, review.getModel());
+            } catch (Exception e) {
+                log.warn("Не удалось прочитать сохранённую проверку сметы {}: {}", estimateId, e.getMessage());
+                return null;
+            }
+        }).orElse(null);
     }
 
     private String systemPrompt() {
