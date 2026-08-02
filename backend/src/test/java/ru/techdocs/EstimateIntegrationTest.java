@@ -400,6 +400,30 @@ class EstimateIntegrationTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.rows[1].row.needsReview").value(true));
     }
 
+    /**
+     * Разбор замечания кэшируется: если пояснение уже получено, повторный запрос
+     * отдаёт сохранённое и к модели не ходит — иначе каждое открытие стоило бы денег.
+     */
+    @Test
+    void explanationIsServedFromCacheWithoutModel() throws Exception {
+        long est = createEstimate(facility());
+        ru.techdocs.estimate.EstimateReview review = new ru.techdocs.estimate.EstimateReview();
+        review.setEstimateId(est);
+        review.setModel("test");
+        review.setFindings("""
+                [{"position":1,"severity":"HIGH","title":"Пропущено ТО",
+                  "explanation":"Осмотр без обслуживания не закрывает регламент."}]
+                """);
+        reviewRepository.saveAndFlush(review);
+
+        // ИИ в тестовом профиле выключен, но сохранённое пояснение отдаётся
+        mockMvc.perform(post("/api/estimates/" + est + "/review/explain")
+                        .param("index", "0").header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.explanation")
+                        .value(org.hamcrest.Matchers.containsString("не закрывает регламент")));
+    }
+
     @Test
     void requiresAuth() throws Exception {
         mockMvc.perform(get("/api/estimates")).andExpect(status().isUnauthorized());

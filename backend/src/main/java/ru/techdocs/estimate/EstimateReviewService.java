@@ -32,6 +32,7 @@ public class EstimateReviewService {
     private final EstimateDecisionService decisionService;
     private final AiClient aiClient;
     private final EstimateReviewRepository reviewRepository;
+    private final ru.techdocs.normative.NormativeRateRepository rateRepository;
     private final ru.techdocs.config.AppProperties props;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -55,10 +56,12 @@ public class EstimateReviewService {
      * @param impact   влияние на деньги словами, если модель смогла оценить
      * @param fix      предложенная правка или null, если решать инженеру
      * @param applied  правка уже применена — повторно не предлагаем
+     * @param explanation развёрнутое пояснение модели; считается по запросу и
+     *                    сохраняется, чтобы повторное открытие не стоило денег
      */
     public record Finding(Integer position, String severity, String category,
                           String title, String detail, String impact,
-                          Fix fix, boolean applied) {}
+                          Fix fix, boolean applied, String explanation) {}
 
     /** @param model какой моделью проверяли — чтобы сравнивать результаты между собой */
     public record ReviewResult(List<Finding> findings, boolean aiConfigured, String error, String model) {}
@@ -168,6 +171,136 @@ public class EstimateReviewService {
         }).orElse(null);
     }
 
+    /**
+     * Развёрнутое пояснение к замечанию. Модель получает не всю смету, а узкий
+     * контекст: саму строку, её соседей по тому же оборудованию, расценку из
+     * каталога и эталон для этого изделия. Ответ сохраняется — повторное открытие
+     * замечания не стоит ничего.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public String explain(Long estimateId, int index) {
+        ReviewResult saved = lastReview(estimateId);
+        if (saved == null || index < 0 || index >= saved.findings().size()) {
+            throw new ru.techdocs.common.NotFoundException("Замечание не найдено");
+        }
+        Finding finding = saved.findings().get(index);
+        if (finding.explanation() != null && !finding.explanation().isBlank()) {
+            return finding.explanation();   // уже разбирали — второй раз не платим
+        }
+        if (!isAvailable()) {
+            throw new ru.techdocs.common.BadRequestException(
+                    "Модель проверки не настроена — пояснение получить не у кого.");
+        }
+
+        String answer = aiClient.completeReview("""
+                Ты — сметчик-эксперт по обслуживанию систем безопасности. Тебе дают одно
+                замечание к смете по СН-2012 и данные только по нему.
+
+                Разверни замечание для инженера: в чём именно проблема, чем она
+                подтверждается в присланных данных, к чему приведёт, если оставить как
+                есть, и что конкретно сделать. Опирайся только на присланное — не
+                выдумывай шифры и цифры, которых здесь нет. Если данных не хватает,
+                так и скажи, что именно нужно посмотреть.
+
+                Пиши по-русски, спокойно и по делу, 4–8 предложений, без заголовков
+                и списков.
+                """, explainPrompt(estimateId, finding), saved.model());
+
+        if (answer == null || answer.isBlank()) {
+            throw new ru.techdocs.common.BadRequestException("Модель не вернула пояснение.");
+        }
+        String explanation = answer.strip();
+        List<Finding> findings = new ArrayList<>(saved.findings());
+        findings.set(index, new Finding(finding.position(), finding.severity(), finding.category(),
+                finding.title(), finding.detail(), finding.impact(), finding.fix(),
+                finding.applied(), explanation));
+        save(estimateId, new ReviewResult(findings, saved.aiConfigured(), null, saved.model()));
+        return explanation;
+    }
+
+    /** Узкий контекст замечания: строка, соседи по оборудованию, расценки, эталон. */
+    private String explainPrompt(Long estimateId, Finding finding) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("ЗАМЕЧАНИЕ: ").append(finding.title()).append('\n');
+        if (finding.detail() != null && !finding.detail().isBlank()) {
+            sb.append("Пояснение из проверки: ").append(finding.detail()).append('\n');
+        }
+        if (finding.fix() != null) {
+            sb.append("Предложенная правка: ").append(finding.fix().action());
+            if (finding.fix().rateCode() != null) sb.append(' ').append(finding.fix().rateCode());
+            sb.append('\n');
+        }
+
+        List<EstimateRow> rows = rowRepository.findByEstimateIdOrderByPosition(estimateId);
+        EstimateRow target = rows.stream()
+                .filter(r -> finding.position() != null && finding.position().equals(r.getPosition()))
+                .findFirst().orElse(null);
+        if (target == null) {
+            sb.append("\nЗамечание относится к смете в целом, конкретной строки нет.\n");
+            return sb.toString();
+        }
+
+        sb.append("\nСТРОКА СМЕТЫ №").append(target.getPosition()).append(":\n");
+        sb.append(describeRow(target));
+
+        // соседние строки того же оборудования: пары «осмотр + ТО» видны только вместе
+        String name = EstimateDecisionService.nameKey(target.getEquipmentName());
+        StringBuilder siblings = new StringBuilder();
+        for (EstimateRow r : rows) {
+            if (r.getId().equals(target.getId())) continue;
+            if (!EstimateDecisionService.nameKey(r.getEquipmentName()).equals(name)) continue;
+            siblings.append(describeRow(r));
+        }
+        if (!siblings.isEmpty()) {
+            sb.append("\nДРУГИЕ РАБОТЫ ЭТОГО ЖЕ ОБОРУДОВАНИЯ В СМЕТЕ:\n").append(siblings);
+        }
+
+        appendRate(sb, "РАСЦЕНКА СТРОКИ", target.getRateCode());
+        if (finding.fix() != null && finding.fix().rateCode() != null
+                && !finding.fix().rateCode().equals(target.getRateCode())) {
+            appendRate(sb, "РАСЦЕНКА ИЗ ПРАВКИ", finding.fix().rateCode());
+        }
+
+        // эталон по этому же оборудованию — чем подтверждается ожидаемый набор работ
+        StringBuilder etalon = new StringBuilder();
+        var data = decisionService.systemEtalon(target.getSection(), ETALON_LIMIT);
+        for (var entry : data.entries()) {
+            if (!EstimateDecisionService.nameKey(entry.name()).equals(name)) continue;
+            etalon.append("- ").append(entry.name()).append(" | ").append(entry.rate().rateCode())
+                    .append(" | ").append(nz(entry.rate().periodicity())).append('\n');
+        }
+        if (!etalon.isEmpty()) {
+            sb.append("\nЭТАЛОН ПО ЭТОМУ ОБОРУДОВАНИЮ:\n").append(etalon);
+        }
+        return sb.toString();
+    }
+
+    private String describeRow(EstimateRow r) {
+        return "№" + r.getPosition() + " | " + nz(r.getEquipmentName()) + " | " + nz(r.getEquipmentType())
+                + " | " + nz(r.getOperationName()) + " | шифр " + nz(r.getRateCode())
+                + " | " + nz(r.getPeriodicity()) + " | опер./год " + nz(r.getOpsPerYear())
+                + " | кол-во " + nz(r.getQty()) + " | ЗП за ед. " + nz(r.getPriceZp()) + '\n';
+    }
+
+    private void appendRate(StringBuilder sb, String title, String code) {
+        if (code == null || code.isBlank()) return;
+        rateRepository.findFirstByCodeOrderById(code).ifPresent(rate -> {
+            sb.append('\n').append(title).append(" ").append(code).append(":\n");
+            sb.append("наименование: ").append(nz(rate.getName())).append('\n');
+            sb.append("измеритель: ").append(nz(rate.getUnit()))
+                    .append(", ЗП ").append(nz(rate.getLaborCost()))
+                    .append(", ЭМ ").append(nz(rate.getMachineCost()))
+                    .append(", МР ").append(nz(rate.getMaterialCost()))
+                    .append(", чел.-ч ").append(nz(rate.getLaborHours())).append('\n');
+            if (rate.getWorkComposition() != null && !rate.getWorkComposition().isBlank()) {
+                String composition = rate.getWorkComposition().strip();
+                sb.append("состав работ: ")
+                        .append(composition.length() > 800 ? composition.substring(0, 800) : composition)
+                        .append('\n');
+            }
+        });
+    }
+
     /** @param applied сколько правок применено, @param messages что именно сделано или почему нет */
     public record ApplyResult(int applied, int skipped, List<String> messages) {}
 
@@ -192,7 +325,7 @@ public class EstimateReviewService {
             try {
                 messages.add(applyFix(estimateId, f));
                 findings.set(i, new Finding(f.position(), f.severity(), f.category(), f.title(),
-                        f.detail(), f.impact(), f.fix(), true));
+                        f.detail(), f.impact(), f.fix(), true, f.explanation()));
                 applied++;
             } catch (Exception e) {
                 skipped++;
@@ -388,7 +521,7 @@ public class EstimateReviewService {
                         node.path("detail").asText("").strip(),
                         node.path("impact").asText("").strip(),
                         fix(node.path("fix"), position),
-                        false));
+                        false, null));
             }
         } catch (Exception e) {
             log.warn("Не удалось разобрать ответ проверки сметы: {}", e.getMessage());

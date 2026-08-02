@@ -13,7 +13,7 @@ type Fix = {
 type Finding = {
   position?: number; severity: string; category?: string
   title: string; detail?: string; impact?: string
-  fix?: Fix; applied?: boolean
+  fix?: Fix; applied?: boolean; explanation?: string
 }
 
 /** Что именно сделает правка — человеку, а не кодом действия. */
@@ -119,13 +119,35 @@ function ReviewButton({ estimateId, hasSaved, onFindings }: {
  * выбрасывается — прогон стоит денег и времени, терять его по нажатию «Скрыть»
  * нельзя. Убрать результат совсем можно крестиком.
  */
-function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow, onApply }: {
+function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow, onApply,
+                       onShowRow, onExplain }: {
   result: ReviewResult; collapsed: boolean; onToggle: () => void
   onDismiss: () => void; onOpenRow: (position: number) => void
   onApply: (indexes: number[]) => Promise<void>
+  onShowRow: (position: number) => void
+  onExplain: (index: number) => Promise<string>
 }) {
   const [applying, setApplying] = useState<number | 'all' | null>(null)
   const [confirmAll, setConfirmAll] = useState(false)
+  // пояснения раскрываются по клику и кэшируются на сервере: повторное открытие бесплатно
+  const [openExplain, setOpenExplain] = useState<Record<number, boolean>>({})
+  const [explanations, setExplanations] = useState<Record<number, string>>({})
+  const [explaining, setExplaining] = useState<number | null>(null)
+
+  const toggleExplain = async (index: number, saved?: string) => {
+    const isOpen = !!openExplain[index]
+    setOpenExplain({ ...openExplain, [index]: !isOpen })
+    if (isOpen || saved || explanations[index]) return
+    setExplaining(index)
+    try {
+      const text = await onExplain(index)
+      setExplanations((prev) => ({ ...prev, [index]: text }))
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Не удалось разобрать замечание', 'error')
+    } finally {
+      setExplaining(null)
+    }
+  }
   // применить можно только замечания с конкретной правкой и ещё не применённые
   const pending = result.findings
     .map((f, i) => ({ f, i }))
@@ -200,14 +222,42 @@ function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow, onAppl
                   {fnd.applied ? 'применено' : label[fnd.severity] ?? 'проверить'}
                 </span>
                 {fnd.position != null && (
-                  <button className="text-xs text-primary-600 hover:underline"
-                          onClick={() => onOpenRow(fnd.position!)}>строка {fnd.position}</button>
+                  <>
+                    <button className="text-xs text-primary-600 hover:underline"
+                            onClick={() => onShowRow(fnd.position!)}
+                            title="Прокрутить смету к этой строке и подсветить её">
+                      показать строку {fnd.position}
+                    </button>
+                    <button className="text-xs text-slate-500 hover:underline"
+                            onClick={() => onOpenRow(fnd.position!)}
+                            title="Открыть строку для правки">открыть</button>
+                  </>
                 )}
                 {fnd.category && <span className="text-[11px] text-slate-500">{fnd.category}</span>}
               </div>
-              <div className="text-sm font-medium text-slate-800 mt-1">{fnd.title}</div>
+              <button type="button" className="text-left w-full"
+                      onClick={() => toggleExplain(i, fnd.explanation)}
+                      title="Разобрать замечание подробно">
+                <div className="text-sm font-medium text-slate-800 mt-1 hover:underline">
+                  {fnd.title}
+                  <span className="ml-1 text-slate-400 text-xs">{openExplain[i] ? '▴' : '▾'}</span>
+                </div>
+              </button>
               {fnd.detail && <div className="text-sm text-slate-600 mt-0.5">{fnd.detail}</div>}
               {fnd.impact && <div className="text-xs text-slate-500 mt-0.5">Влияние: {fnd.impact}</div>}
+
+              {openExplain[i] && (
+                <div className="mt-2 rounded-md bg-white/70 border border-slate-200 px-3 py-2">
+                  <div className="text-[11px] font-medium text-slate-500 mb-1">Разбор замечания</div>
+                  {explaining === i ? (
+                    <div className="text-sm text-slate-400">Разбираем…</div>
+                  ) : (
+                    <div className="text-sm text-slate-700 whitespace-pre-line">
+                      {fnd.explanation || explanations[i] || 'Пояснение получить не удалось.'}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {fnd.fix && (
                 <div className="flex items-center gap-2 flex-wrap mt-2">
@@ -282,6 +332,16 @@ export default function EstimatePage() {
   const [merging, setMerging] = useState(false)
   const [findings, setFindings] = useState<ReviewResult | null>(null)
   const [findingsCollapsed, setFindingsCollapsed] = useState(false)
+  // строка, к которой перешли из замечания: подсвечиваем ненадолго, чтобы её
+  // было видно среди полусотни других, но подсветка не осталась насовсем
+  const [highlighted, setHighlighted] = useState<number | null>(null)
+
+  const showRow = (position: number) => {
+    document.getElementById(`estimate-row-${position}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setHighlighted(position)
+    setTimeout(() => setHighlighted((current) => (current === position ? null : current)), 2500)
+  }
 
   const load = () => {
     api.get<EstimateView>(`/api/estimates/${estimateId}`).then(setView).catch((e) => setError(e.message))
@@ -370,6 +430,12 @@ export default function EstimatePage() {
                        const target = rows.find((r) => r.row.position === p)
                        if (target) setEditing(target.row)
                      }}
+                     onShowRow={showRow}
+                     onExplain={async (index) => {
+                       const res = await api.post<{ explanation: string }>(
+                         `/api/estimates/${estimateId}/review/explain?index=${index}`)
+                       return res.explanation
+                     }}
                      onApply={async (indexes) => {
                        try {
                          const res = await api.post<{ applied: number; skipped: number; messages: string[] }>(
@@ -430,8 +496,11 @@ export default function EstimatePage() {
                     </td>
                   </tr>
                 )}
-              <tr className={`border-b border-slate-50 cursor-pointer ${
-                    row.needsReview ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-slate-50'}`}
+              <tr id={`estimate-row-${row.position}`}
+                  className={`border-b border-slate-50 cursor-pointer transition-colors ${
+                    highlighted === row.position
+                      ? 'bg-primary-100 ring-2 ring-inset ring-primary-400'
+                      : row.needsReview ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-slate-50'}`}
                   onClick={() => setEditing(row)}>
                 <td className="py-2 px-3 text-slate-400">{row.position}</td>
                 <td className="py-2 px-3 max-w-[220px] truncate" title={row.equipmentName}>

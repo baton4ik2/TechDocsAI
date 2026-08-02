@@ -124,6 +124,16 @@ public class EstimateController {
         return result == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(result);
     }
 
+    /**
+     * Развёрнутое пояснение к замечанию. Модель получает узкий контекст — строку,
+     * её соседей по оборудованию, расценку и эталон, — а не всю смету заново.
+     * Ответ сохраняется, повторный запрос ничего не стоит.
+     */
+    @PostMapping("/{id}/review/explain")
+    public java.util.Map<String, String> explainFinding(@PathVariable Long id, @RequestParam int index) {
+        return java.util.Map.of("explanation", reviewService.explain(id, index));
+    }
+
     public record ApplyRequest(List<Integer> indexes) {}
 
     /**
