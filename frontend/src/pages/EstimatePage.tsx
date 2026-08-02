@@ -134,6 +134,10 @@ function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow, onAppl
   const [explanations, setExplanations] = useState<Record<number, string>>({})
   const [explaining, setExplaining] = useState<number | null>(null)
 
+  /** Разбор уже есть: сохранён на сервере или получен в этой сессии. */
+  const explained = (index: number, finding: Finding) =>
+    !!(finding.explanation || explanations[index])
+
   const toggleExplain = async (index: number, saved?: string) => {
     const isOpen = !!openExplain[index]
     setOpenExplain({ ...openExplain, [index]: !isOpen })
@@ -266,9 +270,22 @@ function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow, onAppl
                     </span>
                   )
                 )}
-                <button className="btn-ghost text-xs border border-slate-200 ml-auto"
-                        onClick={() => toggleExplain(i, fnd.explanation)}>
-                  {openExplain[i] ? '▴ Свернуть разбор' : '▾ Разобрать подробно'}
+                {/*
+                  Разбор уже получен — раскрытие бесплатное и мгновенное;
+                  если его нет, кнопка обращается к модели и тратит деньги.
+                  Это разные действия, поэтому и выглядят по-разному.
+                */}
+                <button className={`btn-ghost text-xs border ml-auto ${
+                  explained(i, fnd) || openExplain[i]
+                    ? 'border-slate-200'
+                    : 'border-sky-200 text-sky-700 hover:bg-sky-50'}`}
+                        onClick={() => toggleExplain(i, fnd.explanation)}
+                        title={explained(i, fnd)
+                          ? 'Разбор уже получен — показать сохранённый'
+                          : 'Запрос к модели: займёт несколько секунд и стоит денег'}>
+                  {openExplain[i]
+                    ? '▴ Свернуть разбор'
+                    : explained(i, fnd) ? '▾ Раскрыть разбор' : '✨ Разобрать подробно'}
                 </button>
               </div>
 
