@@ -159,9 +159,14 @@ function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow, onAppl
     try { await onApply(indexes) } finally { setApplying(null) }
   }
 
-  const cls: Record<string, string> = {
-    HIGH: 'border-red-200 bg-red-50', MEDIUM: 'border-amber-200 bg-amber-50',
-    LOW: 'border-slate-200 bg-slate-50',
+  // Цветная полоса слева и цветной ярлык статуса: на белой карточке они читаются,
+  // а прежняя сплошная заливка делала все замечания на одно лицо.
+  const accent: Record<string, string> = {
+    HIGH: 'border-l-red-500', MEDIUM: 'border-l-amber-500', LOW: 'border-l-slate-300',
+  }
+  const badge: Record<string, string> = {
+    HIGH: 'bg-red-100 text-red-800', MEDIUM: 'bg-amber-100 text-amber-800',
+    LOW: 'bg-slate-200 text-slate-700',
   }
   const label: Record<string, string> = { HIGH: 'важно', MEDIUM: 'проверить', LOW: 'оформление' }
   const counts = { HIGH: 0, MEDIUM: 0, LOW: 0 } as Record<string, number>
@@ -185,18 +190,18 @@ function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow, onAppl
             {result.model && <span className="text-slate-400"> · {result.model}</span>}
           </p>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           {pending.length > 0 && (
-            <button className="btn-secondary text-sm py-1.5" onClick={() => setConfirmAll(true)}
+            <button className="btn-primary text-sm py-1.5" onClick={() => setConfirmAll(true)}
                     disabled={applying !== null}
                     title="Применить все замечания, для которых предложена конкретная правка">
               {applying === 'all' ? 'Применяем…' : `Применить всё (${pending.length})`}
             </button>
           )}
-          <button className="btn-ghost text-sm" onClick={onToggle}>
-            {collapsed ? 'Показать' : 'Свернуть'}
+          <button className="btn-secondary text-sm py-1.5" onClick={onToggle}>
+            {collapsed ? '▾ Показать' : '▴ Свернуть'}
           </button>
-          <button className="btn-ghost text-sm text-slate-400" onClick={onDismiss}
+          <button className="btn-secondary text-sm py-1.5 px-2.5 text-slate-400" onClick={onDismiss}
                   title="Убрать результат проверки">✕</button>
         </div>
         {confirmAll && (
@@ -215,40 +220,60 @@ function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow, onAppl
       ) : (
         <div className="space-y-2">
           {result.findings.map((fnd, i) => (
-            <div key={i} className={`rounded-lg border px-3 py-2 ${
-              fnd.applied ? 'border-emerald-200 bg-emerald-50' : cls[fnd.severity] ?? cls.MEDIUM}`}>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
-                  {fnd.applied ? 'применено' : label[fnd.severity] ?? 'проверить'}
-                </span>
+            <div key={i} className={`rounded-lg border border-slate-200 border-l-4 bg-white px-3 py-2.5 ${
+              fnd.applied ? 'border-l-emerald-500' : accent[fnd.severity] ?? accent.MEDIUM}`}>
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap min-w-0">
+                  <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${
+                    fnd.applied ? 'bg-emerald-100 text-emerald-800' : badge[fnd.severity] ?? badge.MEDIUM}`}>
+                    {fnd.applied ? '✓ применено' : label[fnd.severity] ?? 'проверить'}
+                  </span>
+                  {fnd.category && <span className="text-xs text-slate-500">{fnd.category}</span>}
+                </div>
                 {fnd.position != null && (
-                  <>
-                    <button className="text-xs text-primary-600 hover:underline"
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button className="btn-ghost text-xs border border-slate-200"
                             onClick={() => onShowRow(fnd.position!)}
                             title="Прокрутить смету к этой строке и подсветить её">
-                      показать строку {fnd.position}
+                      ↧ Показать строку {fnd.position}
                     </button>
-                    <button className="text-xs text-slate-500 hover:underline"
+                    <button className="btn-ghost text-xs border border-slate-200"
                             onClick={() => onOpenRow(fnd.position!)}
-                            title="Открыть строку для правки">открыть</button>
-                  </>
+                            title="Открыть строку для правки">Открыть</button>
+                  </div>
                 )}
-                {fnd.category && <span className="text-[11px] text-slate-500">{fnd.category}</span>}
               </div>
-              <button type="button" className="text-left w-full"
-                      onClick={() => toggleExplain(i, fnd.explanation)}
-                      title="Разобрать замечание подробно">
-                <div className="text-sm font-medium text-slate-800 mt-1 hover:underline">
-                  {fnd.title}
-                  <span className="ml-1 text-slate-400 text-xs">{openExplain[i] ? '▴' : '▾'}</span>
-                </div>
-              </button>
+
+              <div className="text-sm font-medium text-slate-900 mt-2">{fnd.title}</div>
               {fnd.detail && <div className="text-sm text-slate-600 mt-0.5">{fnd.detail}</div>}
-              {fnd.impact && <div className="text-xs text-slate-500 mt-0.5">Влияние: {fnd.impact}</div>}
+              {fnd.impact && <div className="text-xs text-slate-500 mt-1">Влияние: {fnd.impact}</div>}
+
+              <div className="flex items-center gap-2 flex-wrap mt-2.5 pt-2.5 border-t border-slate-100">
+                {fnd.fix ? (
+                  <>
+                    <span className="text-xs text-slate-500">Правка: {fixLabel(fnd.fix)}</span>
+                    {!fnd.applied && (
+                      <button className="btn-secondary text-xs py-1" disabled={applying !== null}
+                              onClick={() => apply([i], i)}>
+                        {applying === i ? 'Применяем…' : 'Применить'}
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  !fnd.applied && (
+                    <span className="text-xs text-slate-400">
+                      Автоматической правки нет — решение за инженером.
+                    </span>
+                  )
+                )}
+                <button className="btn-ghost text-xs border border-slate-200 ml-auto"
+                        onClick={() => toggleExplain(i, fnd.explanation)}>
+                  {openExplain[i] ? '▴ Свернуть разбор' : '▾ Разобрать подробно'}
+                </button>
+              </div>
 
               {openExplain[i] && (
-                <div className="mt-2 rounded-md bg-white/70 border border-slate-200 px-3 py-2">
-                  <div className="text-[11px] font-medium text-slate-500 mb-1">Разбор замечания</div>
+                <div className="mt-2 rounded-md bg-slate-50 border border-slate-200 px-3 py-2">
                   {explaining === i ? (
                     <div className="text-sm text-slate-400">Разбираем…</div>
                   ) : (
@@ -256,23 +281,6 @@ function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow, onAppl
                       {fnd.explanation || explanations[i] || 'Пояснение получить не удалось.'}
                     </div>
                   )}
-                </div>
-              )}
-
-              {fnd.fix && (
-                <div className="flex items-center gap-2 flex-wrap mt-2">
-                  <span className="text-xs text-slate-500">Правка: {fixLabel(fnd.fix)}</span>
-                  {!fnd.applied && (
-                    <button className="btn-secondary text-xs py-1" disabled={applying !== null}
-                            onClick={() => apply([i], i)}>
-                      {applying === i ? 'Применяем…' : 'Применить'}
-                    </button>
-                  )}
-                </div>
-              )}
-              {!fnd.fix && !fnd.applied && (
-                <div className="text-[11px] text-slate-400 mt-2">
-                  Автоматической правки нет — решение за инженером.
                 </div>
               )}
             </div>

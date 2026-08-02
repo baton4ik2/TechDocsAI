@@ -202,9 +202,9 @@ public class EstimateReviewService {
                 выдумывай шифры и цифры, которых здесь нет. Если данных не хватает,
                 так и скажи, что именно нужно посмотреть.
 
-                Пиши по-русски, спокойно и по делу, 4–8 предложений, без заголовков
+                Пиши по-русски, спокойно и по делу, 3–5 предложений, без заголовков
                 и списков.
-                """, explainPrompt(estimateId, finding), saved.model());
+                """, explainPrompt(estimateId, finding), explainModel(saved.model()));
 
         if (answer == null || answer.isBlank()) {
             throw new ru.techdocs.common.BadRequestException("Модель не вернула пояснение.");
@@ -216,6 +216,16 @@ public class EstimateReviewService {
                 finding.applied(), explanation));
         save(estimateId, new ReviewResult(findings, saved.aiConfigured(), null, saved.model()));
         return explanation;
+    }
+
+    /**
+     * Модель для разбора замечания. Разбор проще проверки всей сметы — десяток
+     * фактов и несколько предложений, — поэтому держать на нём ту же сильную
+     * модель дорого без пользы. Настраивается отдельно; не задана — та же.
+     */
+    private String explainModel(String reviewModel) {
+        String configured = props.ai().reviewExplainModel();
+        return configured == null || configured.isBlank() ? reviewModel : configured.strip();
     }
 
     /** Узкий контекст замечания: строка, соседи по оборудованию, расценки, эталон. */
@@ -295,7 +305,7 @@ public class EstimateReviewService {
             if (rate.getWorkComposition() != null && !rate.getWorkComposition().isBlank()) {
                 String composition = rate.getWorkComposition().strip();
                 sb.append("состав работ: ")
-                        .append(composition.length() > 800 ? composition.substring(0, 800) : composition)
+                        .append(composition.length() > 400 ? composition.substring(0, 400) + "…" : composition)
                         .append('\n');
             }
         });
