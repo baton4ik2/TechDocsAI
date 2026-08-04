@@ -232,6 +232,8 @@ export interface UniqueEquipment {
   passportFilename?: string
   passportStatus?: string
   passportError?: string
+  passportModel?: string
+  passportMode?: string
   createdAt: string
 }
 
@@ -252,6 +254,16 @@ export interface PlannedWork {
   periodicity?: string
   periodicityPerYear?: number
   source: string
+  sourceQuote?: string
+  sourcePage?: number
+  quoteVerified?: boolean | null
+  sourceLabel?: string
+}
+
+export interface PassportModels {
+  models: string[]
+  defaultModel?: string
+  aiConfigured: boolean
 }
 
 export interface Dashboard {

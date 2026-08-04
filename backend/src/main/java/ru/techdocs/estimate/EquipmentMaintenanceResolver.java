@@ -52,8 +52,7 @@ public class EquipmentMaintenanceResolver {
             if (!works.isEmpty()) {
                 return works.stream().map(w -> new Planned(
                         w.getName(), w.getWorkType(), w.getPeriodicity(), w.getPeriodicityPerYear(),
-                        SOURCE_PASSPORT,
-                        "Плановая работа из паспорта" + (w.getWorkType() != null ? " (" + w.getWorkType() + ")" : "")
+                        SOURCE_PASSPORT, passportNote(w)
                 )).toList();
             }
         }
@@ -63,6 +62,23 @@ public class EquipmentMaintenanceResolver {
             if (pkm != null) return List.of(pkm);
         }
         return List.of();
+    }
+
+    /**
+     * Обоснование периодичности для строки сметы. Указываем страницу паспорта —
+     * это то, что проверяет инженер и что защищает смету при разборе. Работу с
+     * неподтверждённой цитатой помечаем прямо здесь: она попадёт в смету, но
+     * будет видно, что первоисточник не сверен.
+     */
+    private String passportNote(PlannedWork w) {
+        StringBuilder sb = new StringBuilder(w.getSourceLabel() == null ? "Паспорт" : w.getSourceLabel());
+        if (w.getWorkType() != null && !w.getWorkType().isBlank()) {
+            sb.append(" (").append(w.getWorkType()).append(')');
+        }
+        if (Boolean.FALSE.equals(w.getQuoteVerified())) {
+            sb.append(" — ⚠ цитата не подтверждена, проверьте паспорт");
+        }
+        return sb.toString();
     }
 
     private Planned resolveFromPkm(String systemType) {

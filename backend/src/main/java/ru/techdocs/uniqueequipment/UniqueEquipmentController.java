@@ -56,13 +56,22 @@ public class UniqueEquipmentController {
     }
 
     @PostMapping("/{id}/passport")
-    public UniqueEquipment uploadPassport(@PathVariable Long id, @RequestParam("file") MultipartFile file) {
-        return passportService.upload(id, file);
+    public UniqueEquipment uploadPassport(@PathVariable Long id, @RequestParam("file") MultipartFile file,
+                                          @RequestParam(required = false) String model) {
+        return passportService.upload(id, file, model);
     }
 
+    /** Пересобрать работы из уже загруженного паспорта — в т.ч. другой моделью. */
     @PostMapping("/{id}/passport/reprocess")
-    public ResponseEntity<Void> reprocessPassport(@PathVariable Long id) {
-        passportService.processAsync(id);
+    public ResponseEntity<Void> reprocessPassport(@PathVariable Long id,
+                                                  @RequestParam(required = false) String model) {
+        passportService.processAsync(id, model);
         return ResponseEntity.accepted().build();
+    }
+
+    /** Модели разбора паспортов, между которыми можно переключаться. */
+    @GetMapping("/passport-models")
+    public UniqueEquipmentPassportService.PassportModels passportModels() {
+        return passportService.models();
     }
 }

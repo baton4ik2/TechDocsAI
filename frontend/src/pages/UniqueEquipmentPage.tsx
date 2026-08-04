@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api'
-import { PlannedWork, UniqueEquipment } from '../types'
+import { PassportModels, PlannedWork, UniqueEquipment } from '../types'
 import Modal from '../components/Modal'
 import StatusBadge from '../components/StatusBadge'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -68,7 +68,7 @@ export default function UniqueEquipmentPage() {
                 <th className="py-2 px-4 font-medium">Наименование</th>
                 <th className="py-2 px-4 font-medium">Периодичность</th>
                 <th className="py-2 px-4 font-medium text-right">раз/год</th>
-                <th className="py-2 px-4 font-medium">Источник</th>
+                <th className="py-2 px-4 font-medium">Основание</th>
                 <th className="py-2 px-4 font-medium"></th>
               </tr>
             </thead>
@@ -81,9 +81,7 @@ export default function UniqueEquipmentPage() {
                   <td className="py-2 px-4 whitespace-nowrap">{w.periodicity || '—'}</td>
                   <td className="py-2 px-4 text-right">{w.periodicityPerYear ?? '—'}</td>
                   <td className="py-2 px-4 text-xs">
-                    {w.source === 'PASSPORT'
-                      ? <span className="text-emerald-600">из паспорта</span>
-                      : <span className="text-slate-400">вручную</span>}
+                    <SourceCell work={w} />
                   </td>
                   <td className="py-2 px-4 text-right">
                     <button className="text-red-500 hover:text-red-700"
@@ -113,16 +111,49 @@ export default function UniqueEquipmentPage() {
   )
 }
 
+const MODE_LABELS: Record<string, string> = {
+  TEXT: 'текстовый слой',
+  OCR: 'распознан OCR',
+  VISION: 'страницы читала vision-модель',
+}
+
+/** Основание плановой работы: страница паспорта и подтверждена ли цитата. */
+function SourceCell({ work }: { work: PlannedWork }) {
+  if (work.source !== 'PASSPORT') return <span className="text-slate-400">вручную</span>
+  const label = work.sourceLabel || 'Паспорт'
+  if (work.quoteVerified === false) {
+    return (
+      <span className="text-amber-600" title={work.sourceQuote || 'Цитата не найдена в тексте паспорта'}>
+        ⚠ {label} · не подтверждено
+      </span>
+    )
+  }
+  return (
+    <span className="text-emerald-600" title={work.sourceQuote || ''}>
+      {label}
+    </span>
+  )
+}
+
 function PassportCard({ ue, onChange }: { ue: UniqueEquipment; onChange: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
+  const [models, setModels] = useState<PassportModels | null>(null)
+  const [model, setModel] = useState('')
+
+  useEffect(() => {
+    api.get<PassportModels>('/api/unique-equipment/passport-models')
+      .then((m) => { setModels(m); setModel(ue.passportModel || m.defaultModel || '') })
+      .catch(() => {})
+  }, [])
 
   const upload = async (file: File) => {
     setUploading(true)
     try {
       const form = new FormData()
       form.append('file', file)
-      await api.postForm(`/api/unique-equipment/${ue.id}/passport`, form)
+      const query = model ? `?model=${encodeURIComponent(model)}` : ''
+      await api.postForm(`/api/unique-equipment/${ue.id}/passport${query}`, form)
       toast('Паспорт загружен, извлекаем плановые работы', 'success')
       onChange()
     } catch (e) {
@@ -131,6 +162,19 @@ function PassportCard({ ue, onChange }: { ue: UniqueEquipment; onChange: () => v
       setUploading(false)
     }
   }
+
+  const reprocess = async () => {
+    try {
+      const query = model ? `?model=${encodeURIComponent(model)}` : ''
+      await api.post(`/api/unique-equipment/${ue.id}/passport/reprocess${query}`)
+      toast('Пересобираем работы из паспорта', 'success')
+      onChange()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Ошибка', 'error')
+    }
+  }
+
+  const busy = ue.passportStatus === 'PROCESSING' || ue.passportStatus === 'UPLOADED'
 
   return (
     <div className="card p-5 flex items-center gap-4 flex-wrap">
@@ -141,23 +185,37 @@ function PassportCard({ ue, onChange }: { ue: UniqueEquipment; onChange: () => v
           <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-2 flex-wrap">
             <span className="truncate">{ue.passportFilename}</span>
             {ue.passportStatus && <StatusBadge status={ue.passportStatus} />}
+            {ue.passportMode && (
+              <span className="text-slate-400">{MODE_LABELS[ue.passportMode] || ue.passportMode}</span>
+            )}
+            {ue.passportModel && <span className="text-slate-400">· {ue.passportModel}</span>}
             {ue.passportError && <span className="text-amber-600">{ue.passportError}</span>}
           </div>
         ) : (
           <div className="text-xs text-slate-400 mt-0.5">
-            Загрузите PDF/DOCX/TXT — ИИ выделит плановые работы (осмотр, ТО, контроль…).
+            Загрузите PDF/DOCX/TXT — ИИ выделит плановые работы (осмотр, ТО, контроль…) с цитатой из паспорта.
           </div>
         )}
       </div>
+      {models && models.models.length > 1 && (
+        <label className="text-xs text-slate-500 flex items-center gap-2">
+          Модель
+          <select className="input py-1 text-xs w-56" value={model} onChange={(e) => setModel(e.target.value)}>
+            {models.models.map((m) => (
+              <option key={m} value={m}>{m}{m === models.defaultModel ? ' (по умолчанию)' : ''}</option>
+            ))}
+          </select>
+        </label>
+      )}
       <input ref={fileRef} type="file" accept=".pdf,.docx,.txt,.doc" className="hidden"
              onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f) }} />
-      <button className="btn-secondary text-sm" disabled={uploading} onClick={() => fileRef.current?.click()}>
+      <button className="btn-secondary text-sm" disabled={uploading || busy}
+              onClick={() => fileRef.current?.click()}>
         {uploading ? 'Загрузка…' : ue.passportFilename ? 'Заменить паспорт' : 'Загрузить паспорт'}
       </button>
       {ue.passportFilename && (
-        <button className="btn-ghost text-sm"
-                onClick={() => api.post(`/api/unique-equipment/${ue.id}/passport/reprocess`).then(onChange)}>
-          Пересобрать работы
+        <button className="btn-ghost text-sm" disabled={busy} onClick={reprocess}>
+          {busy ? 'Разбираем…' : 'Пересобрать работы'}
         </button>
       )}
     </div>
@@ -226,6 +284,19 @@ function WorkModal({ ueId, work, onClose, onSaved }: {
           <textarea className="input" rows={3} value={f.workComposition}
                     onChange={(e) => set('workComposition', e.target.value)} />
         </div>
+        {work?.source === 'PASSPORT' && (
+          <div className={`rounded-lg border p-3 text-xs ${
+            work.quoteVerified === false
+              ? 'border-amber-200 bg-amber-50 text-amber-800'
+              : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+            <div className="font-medium mb-1">
+              {work.sourceLabel || 'Паспорт'}
+              {work.quoteVerified === false && ' · цитата не найдена в тексте паспорта'}
+              {work.quoteVerified === true && ' · цитата подтверждена'}
+            </div>
+            <div className="italic">{work.sourceQuote ? `«${work.sourceQuote}»` : 'Модель не привела цитату.'}</div>
+          </div>
+        )}
         {error && <div className="text-sm text-red-600">{error}</div>}
         <div className="flex justify-end gap-2">
           <button type="button" className="btn-secondary" onClick={onClose}>Отмена</button>

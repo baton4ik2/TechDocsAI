@@ -55,6 +55,14 @@ public class UniqueEquipment {
     @Column(name = "passport_error")
     private String passportError;
 
+    /** Модель, разобравшая паспорт, — чтобы сравнивать модели между собой. */
+    @Column(name = "passport_model")
+    private String passportModel;
+
+    /** Как читали паспорт: TEXT (текстовый слой), OCR или VISION (картинка). */
+    @Column(name = "passport_mode")
+    private String passportMode;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 }

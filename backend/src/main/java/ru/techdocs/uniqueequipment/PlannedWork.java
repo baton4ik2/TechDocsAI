@@ -43,4 +43,27 @@ public class PlannedWork {
 
     @Column(nullable = false)
     private String source = SOURCE_MANUAL;
+
+    /** Дословная цитата из паспорта, на которой основана работа и её периодичность. */
+    @Column(name = "source_quote", columnDefinition = "text")
+    private String sourceQuote;
+
+    /** Страница паспорта с этой цитатой. */
+    @Column(name = "source_page")
+    private Integer sourcePage;
+
+    /**
+     * Найдена ли цитата в тексте паспорта. false — модель её сочинила или
+     * пересказала: работу показываем, но помечаем «требует проверки».
+     * null — работа добавлена вручную, проверять нечего.
+     */
+    @Column(name = "quote_verified")
+    private Boolean quoteVerified;
+
+    /** Обоснование для сметы: «Паспорт, с. 14» — то, что видит инженер. */
+    @Transient
+    public String getSourceLabel() {
+        if (!SOURCE_PASSPORT.equals(source)) return null;
+        return sourcePage == null ? "Паспорт" : "Паспорт, с. " + sourcePage;
+    }
 }

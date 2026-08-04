@@ -25,6 +25,7 @@ public class AiClient {
     private final String visionModel;
     private final String matchModel;
     private final String reviewModel;
+    private final String passportModel;
     private final boolean configured;
     private final boolean visionConfigured;
     private final boolean matchConfigured;
@@ -75,6 +76,10 @@ public class AiClient {
             this.reviewRestClient = this.restClient;
             this.reviewConfigured = this.configured;
         }
+
+        // разбор паспорта — извлечение фактов из короткого текста, задача дешёвая:
+        // отдельного провайдера не заводим, ходим через match-провайдер, меняя модель
+        this.passportModel = props.ai().passportModel();
     }
 
     private static boolean isUsable(String baseUrl, String apiKey) {
@@ -108,10 +113,16 @@ public class AiClient {
 
     /** Запрос к vision-модели: текстовый промпт + изображение страницы (PNG). */
     public String completeVision(String systemPrompt, String userPrompt, byte[] pngImage) {
+        return completeVision(systemPrompt, userPrompt, pngImage, null);
+    }
+
+    /** То же с явным выбором vision-модели (провайдер прежний). */
+    public String completeVision(String systemPrompt, String userPrompt, byte[] pngImage, String model) {
+        String chosen = model == null || model.isBlank() ? visionModel : model.strip();
         String dataUri = "data:image/png;base64," +
                 java.util.Base64.getEncoder().encodeToString(pngImage);
         Map<String, Object> body = Map.of(
-                "model", visionModel,
+                "model", chosen,
                 "temperature", 0.1,
                 "messages", List.of(
                         Map.of("role", "system", "content", systemPrompt),
@@ -158,6 +169,29 @@ public class AiClient {
     /** Модель проверки по умолчанию — она же единственная, если список не задан. */
     public String defaultReviewModel() {
         return reviewModel;
+    }
+
+    /**
+     * Разбор паспорта оборудования. Провайдер — тот же, что у подбора расценок,
+     * потому что модель здесь тоже дешёвая и задача та же по природе: вытащить
+     * факты из короткого текста. Пустая модель — значение по умолчанию.
+     */
+    public String completePassport(String systemPrompt, String userPrompt, String model) {
+        String chosen = model == null || model.isBlank() ? defaultPassportModel() : model.strip();
+        if (chosen == null || chosen.isBlank()) return null;
+        return complete(hasMatchModel() ? matchRestClient : restClient, chosen, systemPrompt, userPrompt);
+    }
+
+    /** Модель для паспортов по умолчанию: своя, иначе match-модель, иначе чатовая. */
+    public String defaultPassportModel() {
+        if (passportModel != null && !passportModel.isBlank()) return passportModel.strip();
+        return hasMatchModel() ? matchModel : model;
+    }
+
+    public boolean hasPassportModel() {
+        String chosen = defaultPassportModel();
+        if (chosen == null || chosen.isBlank()) return false;
+        return hasMatchModel() || configured;
     }
 
     private String complete(RestClient client, String model, String systemPrompt, String userPrompt) {
