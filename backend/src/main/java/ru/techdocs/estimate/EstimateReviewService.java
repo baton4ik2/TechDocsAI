@@ -178,14 +178,17 @@ public class EstimateReviewService {
      * замечания не стоит ничего.
      */
     @org.springframework.transaction.annotation.Transactional
-    public String explain(Long estimateId, int index) {
+    public String explain(Long estimateId, int index, boolean deep) {
         ReviewResult saved = lastReview(estimateId);
         if (saved == null || index < 0 || index >= saved.findings().size()) {
             throw new ru.techdocs.common.NotFoundException("Замечание не найдено");
         }
         Finding finding = saved.findings().get(index);
-        if (finding.explanation() != null && !finding.explanation().isBlank()) {
-            return finding.explanation();   // уже разбирали — второй раз не платим
+        // короткий разбор приходит вместе с проверкой; за ним не идём повторно.
+        // Глубокий запрашивают явно — у него есть состав работ, соседние строки и
+        // эталон, то есть данные, которых в проверке не было.
+        if (!deep && finding.explanation() != null && !finding.explanation().isBlank()) {
+            return finding.explanation();
         }
         if (!isAvailable()) {
             throw new ru.techdocs.common.BadRequestException(
@@ -434,6 +437,7 @@ public class EstimateReviewService {
                 {"findings":[{"position":12,"severity":"HIGH","category":"пропущенная работа",
                 "title":"кратко","detail":"почему это проблема и что проверить",
                 "impact":"влияние на деньги словами или пусто",
+                "explanation":"2-3 предложения: почему это проблема именно здесь",
                 "fix":{"action":"ADD_ROW","rateCode":"22-2203-109-1/1","periodicity":"раз в год",
                 "opsPerYear":1,"qty":null,"operationName":"Техническое обслуживание"}}]}
                 position — номер строки сметы, null для замечания по смете в целом.
@@ -463,6 +467,11 @@ public class EstimateReviewService {
                 LOW — только формулировки и оформление, на сумму не влияет:
                   наименование мероприятия не совпадает с наименованием расценки,
                   разнобой в написании периодичности.
+
+                Поле explanation заполняй у каждого замечания: 2–3 предложения о том,
+                почему это проблема именно в этой строке и чем она подтверждается.
+                Контекст сметы у тебя уже есть, отдельно его запрашивать не нужно —
+                поэтому пиши сразу, коротко и по делу, без повторения заголовка.
 
                 Если замечаний нет, верни {"findings":[]}.
                 """;
@@ -531,7 +540,7 @@ public class EstimateReviewService {
                         node.path("detail").asText("").strip(),
                         node.path("impact").asText("").strip(),
                         fix(node.path("fix"), position),
-                        false, null));
+                        false, text(node.path("explanation"))));
             }
         } catch (Exception e) {
             log.warn("Не удалось разобрать ответ проверки сметы: {}", e.getMessage());

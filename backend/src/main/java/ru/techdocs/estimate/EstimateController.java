@@ -130,8 +130,10 @@ public class EstimateController {
      * Ответ сохраняется, повторный запрос ничего не стоит.
      */
     @PostMapping("/{id}/review/explain")
-    public java.util.Map<String, String> explainFinding(@PathVariable Long id, @RequestParam int index) {
-        return java.util.Map.of("explanation", reviewService.explain(id, index));
+    public java.util.Map<String, String> explainFinding(
+            @PathVariable Long id, @RequestParam int index,
+            @RequestParam(defaultValue = "false") boolean deep) {
+        return java.util.Map.of("explanation", reviewService.explain(id, index, deep));
     }
 
     public record ApplyRequest(List<Integer> indexes) {}

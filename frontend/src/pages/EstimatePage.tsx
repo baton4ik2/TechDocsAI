@@ -125,7 +125,7 @@ function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow, onAppl
   onDismiss: () => void; onOpenRow: (position: number) => void
   onApply: (indexes: number[]) => Promise<void>
   onShowRow: (position: number) => void
-  onExplain: (index: number) => Promise<string>
+  onExplain: (index: number, deep?: boolean) => Promise<string>
 }) {
   const [applying, setApplying] = useState<number | 'all' | null>(null)
   const [confirmAll, setConfirmAll] = useState(false)
@@ -134,9 +134,25 @@ function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow, onAppl
   const [explanations, setExplanations] = useState<Record<number, string>>({})
   const [explaining, setExplaining] = useState<number | null>(null)
 
-  /** Разбор уже есть: сохранён на сервере или получен в этой сессии. */
+  const [deepened, setDeepened] = useState<Record<number, boolean>>({})
+
+  /** Разбор уже есть: пришёл с проверкой или получен в этой сессии. */
   const explained = (index: number, finding: Finding) =>
     !!(finding.explanation || explanations[index])
+
+  /** Глубокий разбор: отдельный запрос с составом работ, соседями и эталоном. */
+  const deepen = async (index: number) => {
+    setExplaining(index)
+    try {
+      const text = await onExplain(index, true)
+      setExplanations((prev) => ({ ...prev, [index]: text }))
+      setDeepened((prev) => ({ ...prev, [index]: true }))
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Не удалось разобрать глубже', 'error')
+    } finally {
+      setExplaining(null)
+    }
+  }
 
   const toggleExplain = async (index: number, saved?: string) => {
     const isOpen = !!openExplain[index]
@@ -294,9 +310,23 @@ function ReviewPanel({ result, collapsed, onToggle, onDismiss, onOpenRow, onAppl
                   {explaining === i ? (
                     <div className="text-sm text-slate-400">Разбираем…</div>
                   ) : (
-                    <div className="text-sm text-slate-700 whitespace-pre-line">
-                      {fnd.explanation || explanations[i] || 'Пояснение получить не удалось.'}
-                    </div>
+                    <>
+                      <div className="text-sm text-slate-700 whitespace-pre-line">
+                        {explanations[i] || fnd.explanation || 'Пояснение получить не удалось.'}
+                      </div>
+                      {/*
+                        Короткий разбор пришёл вместе с проверкой. Глубокий видит то,
+                        чего в ней не было: состав работ расценки, соседние строки
+                        оборудования и эталон по нему — но это отдельный запрос.
+                      */}
+                      {!deepened[i] && (explanations[i] || fnd.explanation) && (
+                        <button className="btn-ghost text-xs border border-sky-200 text-sky-700 hover:bg-sky-50 mt-2"
+                                onClick={() => deepen(i)}
+                                title="Отдельный запрос к модели: добавит состав работ расценки и эталон по этому оборудованию">
+                          ✨ Разобрать глубже
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -456,9 +486,10 @@ export default function EstimatePage() {
                        if (target) setEditing(target.row)
                      }}
                      onShowRow={showRow}
-                     onExplain={async (index) => {
+                     onExplain={async (index, deep) => {
                        const res = await api.post<{ explanation: string }>(
-                         `/api/estimates/${estimateId}/review/explain?index=${index}`)
+                         `/api/estimates/${estimateId}/review/explain?index=${index}`
+                         + (deep ? '&deep=true' : ''))
                        return res.explanation
                      }}
                      onApply={async (indexes) => {
