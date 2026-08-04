@@ -207,7 +207,8 @@ public class EstimateReviewService {
 
                 Пиши по-русски, спокойно и по делу, 3–5 предложений, без заголовков
                 и списков.
-                """, explainPrompt(estimateId, finding), explainModel(saved.model()));
+                """, explainPrompt(estimateId, finding),
+                deep ? saved.model() : explainModel(saved.model()));
 
         if (answer == null || answer.isBlank()) {
             throw new ru.techdocs.common.BadRequestException("Модель не вернула пояснение.");
@@ -222,9 +223,10 @@ public class EstimateReviewService {
     }
 
     /**
-     * Модель для разбора замечания. Разбор проще проверки всей сметы — десяток
-     * фактов и несколько предложений, — поэтому держать на нём ту же сильную
-     * модель дорого без пользы. Настраивается отдельно; не задана — та же.
+     * Модель для ПРОСТОГО разбора — пересказа замечания, у которого нет пояснения
+     * из самой проверки. Это несложная задача, и держать на ней сильную модель
+     * дорого без пользы. Глубокий разбор сюда не попадает: он существует ровно
+     * ради глубины и идёт той же моделью, что и проверка.
      */
     private String explainModel(String reviewModel) {
         String configured = props.ai().reviewExplainModel();
