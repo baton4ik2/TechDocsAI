@@ -111,6 +111,18 @@ export default function UniqueEquipmentPage() {
   )
 }
 
+/** Сколько уже идёт разбор — чтобы «Обрабатывается» не выглядело вечным. */
+function Elapsed({ since }: { since?: string }) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 10000)
+    return () => clearInterval(t)
+  }, [])
+  if (!since) return null
+  const min = Math.floor((now - new Date(since).getTime()) / 60000)
+  return <span className="text-slate-400">идёт {min < 1 ? 'меньше минуты' : `${min} мин`}</span>
+}
+
 const MODE_LABELS: Record<string, string> = {
   TEXT: 'текстовый слой',
   OCR: 'распознан OCR',
@@ -189,6 +201,7 @@ function PassportCard({ ue, onChange }: { ue: UniqueEquipment; onChange: () => v
               <span className="text-slate-400">{MODE_LABELS[ue.passportMode] || ue.passportMode}</span>
             )}
             {ue.passportModel && <span className="text-slate-400">· {ue.passportModel}</span>}
+            {busy && <Elapsed since={ue.passportStartedAt} />}
             {ue.passportError && <span className="text-amber-600">{ue.passportError}</span>}
           </div>
         ) : (
@@ -214,8 +227,10 @@ function PassportCard({ ue, onChange }: { ue: UniqueEquipment; onChange: () => v
         {uploading ? 'Загрузка…' : ue.passportFilename ? 'Заменить паспорт' : 'Загрузить паспорт'}
       </button>
       {ue.passportFilename && (
-        <button className="btn-ghost text-sm" disabled={busy} onClick={reprocess}>
-          {busy ? 'Разбираем…' : 'Пересобрать работы'}
+        // намеренно доступна и во время разбора: зависший прогон иначе не перебить,
+        // а поздний ответ старого запроса уже не затрёт результат нового
+        <button className="btn-ghost text-sm" onClick={reprocess}>
+          {busy ? 'Разобрать заново' : 'Пересобрать работы'}
         </button>
       )}
     </div>

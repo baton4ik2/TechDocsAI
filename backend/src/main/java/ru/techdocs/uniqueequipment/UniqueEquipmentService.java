@@ -25,6 +25,7 @@ public class UniqueEquipmentService {
     private final PlannedWorkRepository plannedWorkRepository;
     private final EquipmentRepository equipmentRepository;
     private final EngineeringSystemRepository systemRepository;
+    private final UniqueEquipmentPassportService passportService;
 
     // ---- нормализация и линковка ----
 
@@ -171,6 +172,7 @@ public class UniqueEquipmentService {
 
         List<UniqueEquipmentView> views = new ArrayList<>();
         for (UniqueEquipment ue : repository.findAllByOrderByName()) {
+            passportService.releaseIfStale(ue);
             List<Equipment> eqs = byUnique.getOrDefault(ue.getId(), List.of());
             String system = dominantSystem(eqs, systemNames);
             if (system == null) system = ue.getSystemType();   // запись без объектного оборудования (только паспорт/эталон)
@@ -194,8 +196,11 @@ public class UniqueEquipmentService {
     }
 
     public UniqueEquipment get(Long id) {
-        return repository.findById(id)
+        UniqueEquipment ue = repository.findById(id)
                 .orElseThrow(() -> new NotFoundException("Оборудование не найдено в реестре"));
+        // зависший разбор освобождаем при чтении: иначе карточка вечно «Обрабатывается»
+        passportService.releaseIfStale(ue);
+        return ue;
     }
 
     /** Оборудование реестра в канонической системе (для few-shot примеров из эталона). */

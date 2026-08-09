@@ -47,6 +47,11 @@ public class UniqueEquipmentPassportService {
     private static final int MAX_CHARS = 12000;
     /** Сколько страниц скана отдаём vision-модели: каждая страница — отдельный платный запрос. */
     private static final int MAX_VISION_PAGES = 12;
+    /**
+     * Через сколько «Обрабатывается» считается зависшим. Чуть больше таймаута чтения
+     * у HTTP-клиента ИИ (10 минут), чтобы не отобрать статус у живого запроса.
+     */
+    public static final java.time.Duration STALE_AFTER = java.time.Duration.ofMinutes(12);
 
     public static final String MODE_TEXT = "TEXT";
     public static final String MODE_OCR = "OCR";
@@ -115,9 +120,11 @@ public class UniqueEquipmentPassportService {
             return;
         }
 
+        java.time.Instant startedAt = java.time.Instant.now();
         ue.setPassportStatus(UniqueEquipment.PASSPORT_PROCESSING);
         ue.setPassportError(null);
         ue.setPassportModel(model);
+        ue.setPassportStartedAt(startedAt);
         repository.save(ue);
         try {
             if (!aiClient.hasPassportModel() && !aiClient.hasVisionModel()) {
@@ -149,10 +156,25 @@ public class UniqueEquipmentPassportService {
                 }
             }
 
-            List<PlannedWork> works = MODE_VISION.equals(mode)
+            Extraction extraction = MODE_VISION.equals(mode)
                     ? extractFromScan(equipmentId, ue.getPassportFilename(), bytes)
                     : extractFromText(equipmentId, pages, model);
 
+            if (superseded(equipmentId, startedAt)) {
+                log.info("Паспорт оборудования {}: результат отброшен — запущен более новый разбор", equipmentId);
+                return;
+            }
+
+            if (extraction.modelFailed()) {
+                // молчание модели — это не «работ нет»: чаще всего кончился лимит
+                // или провайдер вернул ошибку. Раньше это выглядело как успешный
+                // разбор с пустым результатом, и причину было не найти.
+                finishError(ue, "Модель «" + model + "» не ответила: закончился лимит у провайдера "
+                        + "или запрос отклонён. Проверьте баланс и запустите разбор заново.");
+                return;
+            }
+
+            List<PlannedWork> works = extraction.works();
             // заменяем ранее извлечённые из паспорта работы (ручные не трогаем)
             plannedWorkRepository.deleteByUniqueEquipmentIdAndSource(equipmentId, PlannedWork.SOURCE_PASSPORT);
             plannedWorkRepository.saveAll(works);
@@ -165,7 +187,48 @@ public class UniqueEquipmentPassportService {
                     equipmentId, mode, model, works.size());
         } catch (Throwable e) {
             log.error("Ошибка обработки паспорта {}: {}", equipmentId, e.getMessage(), e);
-            finishError(ue, "Не удалось обработать паспорт (" + e.getClass().getSimpleName() + ").");
+            if (!superseded(equipmentId, startedAt)) {
+                finishError(ue, "Не удалось обработать паспорт (" + e.getClass().getSimpleName() + ").");
+            }
+        }
+    }
+
+    /**
+     * Пока шёл разбор, запись мог перехватить новый прогон (инженер нажал
+     * «Разобрать заново», не дождавшись зависшего). Тогда старый результат
+     * записывать нельзя — он затрёт свежий.
+     */
+    private boolean superseded(Long equipmentId, java.time.Instant startedAt) {
+        return repository.findById(equipmentId)
+                .map(fresh -> !startedAt.equals(fresh.getPassportStartedAt()))
+                .orElse(true);
+    }
+
+    /**
+     * Освобождает разбор, который завис: приложение перезапустили или поток
+     * умер, а статус остался «Обрабатывается». Без этого запись висит вечно.
+     * Вызывается при чтении реестра — отдельный планировщик ради этого не нужен.
+     */
+    public boolean releaseIfStale(UniqueEquipment ue) {
+        if (!UniqueEquipment.PASSPORT_PROCESSING.equals(ue.getPassportStatus())) return false;
+        java.time.Instant startedAt = ue.getPassportStartedAt();
+        if (startedAt != null && startedAt.isAfter(java.time.Instant.now().minus(STALE_AFTER))) return false;
+        finishError(ue, "Разбор не завершился за " + STALE_AFTER.toMinutes()
+                + " мин — вероятно, приложение перезапустили или провайдер не ответил. "
+                + "Запустите «Разобрать заново».");
+        return true;
+    }
+
+    /** После перезапуска ни один PROCESSING уже никем не выполняется — освобождаем сразу. */
+    @org.springframework.context.event.EventListener(
+            org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    public void releaseStuckOnStartup() {
+        List<UniqueEquipment> stuck = repository.findByPassportStatus(UniqueEquipment.PASSPORT_PROCESSING);
+        for (UniqueEquipment ue : stuck) {
+            finishError(ue, "Разбор прерван перезапуском приложения — запустите «Разобрать заново».");
+        }
+        if (!stuck.isEmpty()) {
+            log.info("Освобождено зависших разборов паспортов: {}", stuck.size());
         }
     }
 
@@ -179,20 +242,25 @@ public class UniqueEquipmentPassportService {
 
     // ---------- текстовый путь ----------
 
-    private List<PlannedWork> extractFromText(Long equipmentId, List<PageText> pages, String model) {
+    /** Результат разбора: пустой список без ответа модели и пустой из-за отсутствия работ — разные вещи. */
+    private record Extraction(List<PlannedWork> works, boolean modelFailed) {}
+
+    private Extraction extractFromText(Long equipmentId, List<PageText> pages, String model) {
         Document doc = Document.of(pages);
-        if (doc.text().isBlank()) return List.of();
+        if (doc.text().isBlank()) return new Extraction(List.of(), false);
         String snippet = doc.relevantWindow(MAX_CHARS);
         String answer = aiClient.completePassport(systemPrompt(), snippet, model);
-        return parse(equipmentId, answer, doc, null);
+        if (answer == null || answer.isBlank()) return new Extraction(List.of(), true);
+        return new Extraction(parse(equipmentId, answer, doc, null), false);
     }
 
     // ---------- путь скана: страницы читает vision-модель ----------
 
-    private List<PlannedWork> extractFromScan(Long equipmentId, String filename, byte[] bytes) {
+    private Extraction extractFromScan(Long equipmentId, String filename, byte[] bytes) {
         int pageCount = pageCount(filename, bytes);
         int limit = Math.min(pageCount, MAX_VISION_PAGES);
         List<PlannedWork> works = new ArrayList<>();
+        int answered = 0;
         int visionDpi = 200;
         for (int page = 1; page <= limit; page++) {
             String answer;
@@ -205,11 +273,14 @@ public class UniqueEquipmentPassportService {
                         equipmentId, page, e.getMessage());
                 continue;
             }
+            if (answer == null || answer.isBlank()) continue;
+            answered++;
             // сверять цитату не с чем — текста нет; страница известна точно, её и ставим
             works.addAll(parse(equipmentId, answer, null, page));
         }
         renumber(works);
-        return works;
+        // ни одна страница не получила ответа — это отказ провайдера, а не пустой паспорт
+        return new Extraction(works, answered == 0 && limit > 0);
     }
 
     private int pageCount(String filename, byte[] bytes) {

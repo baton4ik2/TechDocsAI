@@ -234,6 +234,7 @@ export interface UniqueEquipment {
   passportError?: string
   passportModel?: string
   passportMode?: string
+  passportStartedAt?: string
   createdAt: string
 }
 

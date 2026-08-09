@@ -63,6 +63,10 @@ public class UniqueEquipment {
     @Column(name = "passport_mode")
     private String passportMode;
 
+    /** Момент старта разбора — по нему видно, что PROCESSING завис. */
+    @Column(name = "passport_started_at")
+    private Instant passportStartedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 }

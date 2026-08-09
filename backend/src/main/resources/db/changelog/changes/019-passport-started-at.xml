@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        Момент старта разбора паспорта. Статус PROCESSING сам по себе ничей: если
+        приложение перезапустили или поток разбора умер, запись остаётся
+        «Обрабатывается» навсегда, и кнопки заблокированы. По этой отметке видно,
+        сколько разбор идёт, и зависший можно освободить.
+    -->
+    <changeSet id="019-01-passport-started-at" author="techdocs">
+        <addColumn tableName="unique_equipment">
+            <column name="passport_started_at" type="TIMESTAMPTZ"/>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

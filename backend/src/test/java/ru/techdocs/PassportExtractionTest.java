@@ -117,6 +117,75 @@ class PassportExtractionTest {
     }
 
     @Test
+    void silentModelIsAnErrorNotAnEmptyPassport() throws Exception {
+        givenTextPassport();
+        UniqueEquipment ue = equipment();
+        when(repository.findById(1L)).thenReturn(Optional.of(ue));
+        // так выглядит исчерпанный лимит: провайдер не отдал ответ
+        when(aiClient.completePassport(any(), any(), any())).thenReturn(null);
+
+        service(null).process(1L, null);
+
+        assertThat(ue.getPassportStatus()).isEqualTo(UniqueEquipment.PASSPORT_ERROR);
+        assertThat(ue.getPassportError()).contains("не ответила").contains("лимит");
+        verify(plannedWorks, never()).saveAll(any());
+        // прежние работы из паспорта остаются: неудачный прогон их не стирает
+        verify(plannedWorks, never()).deleteByUniqueEquipmentIdAndSource(any(), any());
+    }
+
+    @Test
+    void lateResultDoesNotOverwriteNewerRun() throws Exception {
+        givenTextPassport();
+        UniqueEquipment ue = equipment();
+        UniqueEquipment newerRun = equipment();
+        newerRun.setPassportStartedAt(java.time.Instant.now().plusSeconds(60));
+        // пока шёл разбор, инженер запустил новый: repository отдаёт уже его отметку
+        when(repository.findById(1L)).thenReturn(Optional.of(ue), Optional.of(newerRun));
+        when(aiClient.completePassport(any(), any(), any())).thenReturn(
+                "[{\"наименование\":\"Технический осмотр\",\"периодичность\":\"Ежемесячно\","
+                        + "\"цитата\":\"Технический осмотр извещателя проводится ежемесячно\"}]");
+
+        service(null).process(1L, null);
+
+        verify(plannedWorks, never()).saveAll(any());
+        assertThat(ue.getPassportStatus()).isEqualTo(UniqueEquipment.PASSPORT_PROCESSING);
+    }
+
+    @Test
+    void stuckProcessingIsReleasedAfterTimeout() {
+        UniqueEquipment ue = equipment();
+        ue.setPassportStatus(UniqueEquipment.PASSPORT_PROCESSING);
+        ue.setPassportStartedAt(java.time.Instant.now()
+                .minus(UniqueEquipmentPassportService.STALE_AFTER).minusSeconds(60));
+
+        assertThat(service(null).releaseIfStale(ue)).isTrue();
+        assertThat(ue.getPassportStatus()).isEqualTo(UniqueEquipment.PASSPORT_ERROR);
+        assertThat(ue.getPassportError()).contains("Разобрать заново");
+    }
+
+    @Test
+    void runningProcessingIsLeftAlone() {
+        UniqueEquipment ue = equipment();
+        ue.setPassportStatus(UniqueEquipment.PASSPORT_PROCESSING);
+        ue.setPassportStartedAt(java.time.Instant.now().minusSeconds(30));
+
+        assertThat(service(null).releaseIfStale(ue)).isFalse();
+        assertThat(ue.getPassportStatus()).isEqualTo(UniqueEquipment.PASSPORT_PROCESSING);
+    }
+
+    @Test
+    void restartReleasesEveryStuckPassport() {
+        UniqueEquipment ue = equipment();
+        ue.setPassportStatus(UniqueEquipment.PASSPORT_PROCESSING);
+        when(repository.findByPassportStatus(UniqueEquipment.PASSPORT_PROCESSING)).thenReturn(List.of(ue));
+
+        service(null).releaseStuckOnStartup();
+
+        assertThat(ue.getPassportStatus()).isEqualTo(UniqueEquipment.PASSPORT_ERROR);
+        assertThat(ue.getPassportError()).contains("перезапуском");
+    }
+
+    @Test
     void unlistedModelIsRejected() {
         UniqueEquipment ue = equipment();
         when(repository.findById(1L)).thenReturn(Optional.of(ue));

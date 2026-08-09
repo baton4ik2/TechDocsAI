@@ -14,4 +14,6 @@ public interface UniqueEquipmentRepository extends JpaRepository<UniqueEquipment
     /** Оборудование реестра в конкретной системе — для few-shot примеров из эталона. */
     List<UniqueEquipment> findBySystemType(String systemType);
     List<UniqueEquipment> findAllByOrderByName();
+    /** Записи в разборе — для освобождения зависших после перезапуска. */
+    List<UniqueEquipment> findByPassportStatus(String passportStatus);
 }
