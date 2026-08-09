@@ -16,9 +16,11 @@ import java.util.List;
  * Определяет плановые операции и периодичность обслуживания оборудования по
  * приоритету источников:
  * <ol>
+ *   <li><b>Midio</b> — регламент, заведённый командой в Midio. Старше паспорта:
+ *       это принятое инженерное решение, а не извлечение ИИ из текста.</li>
  *   <li><b>Паспорт</b> — плановые работы уникального оборудования (осмотр, ТО,
- *       контроль функционирования …). Приоритетны: если у оборудования есть
- *       паспортные работы — черновик сметы идёт по ним, а не по ПКМ.</li>
+ *       контроль функционирования …). Приоритетны перед ПКМ: если у оборудования
+ *       есть паспортные работы — черновик сметы идёт по ним.</li>
  *   <li><b>ПКМ</b> — регламент по типу системы (основная операция ТО).</li>
  *   <li><b>Наименование расценки</b> — периодичность из названия («- ежемесячное»),
  *       используется как запасной вариант в {@link #perYearFromRate}.</li>
@@ -28,6 +30,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class EquipmentMaintenanceResolver {
 
+    public static final String SOURCE_MIDIO = "MIDIO";
     public static final String SOURCE_PASSPORT = "PASSPORT";
     public static final String SOURCE_PKM = "PKM";
     public static final String SOURCE_RATE = "RATE_NAME";
@@ -40,19 +43,19 @@ public class EquipmentMaintenanceResolver {
                           BigDecimal perYear, String source, String note) {}
 
     /**
-     * Плановые операции для оборудования (по приоритету паспорт → ПКМ).
+     * Плановые операции для оборудования (по приоритету Midio → паспорт → ПКМ).
      * Пустой список — источников нет, вызывающий формирует одну общую операцию ТО
      * и берёт периодичность из наименования расценки.
      */
     public List<Planned> resolveOperations(Equipment equipment, String systemType) {
-        // 1) паспорт: плановые работы уникального оборудования
+        // 1) плановые работы уникального оборудования
         if (equipment.getUniqueEquipmentId() != null) {
-            List<PlannedWork> works =
-                    plannedWorkRepository.findByUniqueEquipmentIdOrderByPosition(equipment.getUniqueEquipmentId());
+            List<PlannedWork> works = relevantWorks(equipment.getUniqueEquipmentId());
             if (!works.isEmpty()) {
                 return works.stream().map(w -> new Planned(
                         w.getName(), w.getWorkType(), w.getPeriodicity(), w.getPeriodicityPerYear(),
-                        SOURCE_PASSPORT, passportNote(w)
+                        PlannedWork.SOURCE_MIDIO.equals(w.getSource()) ? SOURCE_MIDIO : SOURCE_PASSPORT,
+                        workNote(w)
                 )).toList();
             }
         }
@@ -65,12 +68,26 @@ public class EquipmentMaintenanceResolver {
     }
 
     /**
+     * Регламент из Midio вытесняет паспортный: там его вела команда — это принятое
+     * инженерное решение, а не извлечённое ИИ из текста. Работы, заведённые вручную,
+     * остаются в любом случае: их добавил инженер осознанно, и молча терять их нельзя.
+     */
+    private List<PlannedWork> relevantWorks(Long uniqueEquipmentId) {
+        List<PlannedWork> works = plannedWorkRepository.findByUniqueEquipmentIdOrderByPosition(uniqueEquipmentId);
+        boolean hasMidio = works.stream().anyMatch(w -> PlannedWork.SOURCE_MIDIO.equals(w.getSource()));
+        if (!hasMidio) return works;
+        return works.stream()
+                .filter(w -> !PlannedWork.SOURCE_PASSPORT.equals(w.getSource()))
+                .toList();
+    }
+
+    /**
      * Обоснование периодичности для строки сметы. Указываем страницу паспорта —
      * это то, что проверяет инженер и что защищает смету при разборе. Работу с
      * неподтверждённой цитатой помечаем прямо здесь: она попадёт в смету, но
      * будет видно, что первоисточник не сверен.
      */
-    private String passportNote(PlannedWork w) {
+    private String workNote(PlannedWork w) {
         StringBuilder sb = new StringBuilder(w.getSourceLabel() == null ? "Паспорт" : w.getSourceLabel());
         if (w.getWorkType() != null && !w.getWorkType().isBlank()) {
             sb.append(" (").append(w.getWorkType()).append(')');

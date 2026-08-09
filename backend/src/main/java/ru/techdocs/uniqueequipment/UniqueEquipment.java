@@ -67,6 +67,13 @@ public class UniqueEquipment {
     @Column(name = "passport_started_at")
     private Instant passportStartedAt;
 
+    /** Идентификатор этого же оборудования в Midio (привязка не по названию). */
+    @Column(name = "midio_id")
+    private String midioId;
+
+    @Column(name = "midio_synced_at")
+    private Instant midioSyncedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 }

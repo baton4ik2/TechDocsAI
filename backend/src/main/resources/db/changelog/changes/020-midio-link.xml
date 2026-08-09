@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        Связь записи реестра с оборудованием в Midio. Привязка по идентификатору, а
+        не по наименованию: сопоставление по тексту делается один раз, а дальше
+        повторная синхронизация должна быть идемпотентной и переживать
+        переименования на той стороне.
+    -->
+    <changeSet id="020-01-unique-equipment-midio" author="techdocs">
+        <addColumn tableName="unique_equipment">
+            <column name="midio_id" type="TEXT"/>
+            <column name="midio_synced_at" type="TIMESTAMPTZ"/>
+        </addColumn>
+        <createIndex tableName="unique_equipment" indexName="idx_unique_equipment_midio">
+            <column name="midio_id"/>
+        </createIndex>
+    </changeSet>
+
+    <!--
+        Идентификатор работы во внешней системе. Нужен, чтобы синхронизация
+        обновляла ту же работу, а не плодила дубли при каждом прогоне.
+    -->
+    <changeSet id="020-02-planned-work-external-id" author="techdocs">
+        <addColumn tableName="planned_works">
+            <column name="external_id" type="TEXT"/>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

@@ -17,6 +17,8 @@ public class PlannedWork {
 
     public static final String SOURCE_PASSPORT = "PASSPORT";
     public static final String SOURCE_MANUAL = "MANUAL";
+    /** Регламент, заведённый в Midio: решение инженера, а не извлечение ИИ из текста. */
+    public static final String SOURCE_MIDIO = "MIDIO";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -60,9 +62,14 @@ public class PlannedWork {
     @Column(name = "quote_verified")
     private Boolean quoteVerified;
 
-    /** Обоснование для сметы: «Паспорт, с. 14» — то, что видит инженер. */
+    /** Идентификатор работы во внешней системе — чтобы синхронизация не плодила дубли. */
+    @Column(name = "external_id")
+    private String externalId;
+
+    /** Обоснование для сметы: «Паспорт, с. 14» или «Midio» — то, что видит инженер. */
     @Transient
     public String getSourceLabel() {
+        if (SOURCE_MIDIO.equals(source)) return "Midio";
         if (!SOURCE_PASSPORT.equals(source)) return null;
         return sourcePage == null ? "Паспорт" : "Паспорт, с. " + sourcePage;
     }
