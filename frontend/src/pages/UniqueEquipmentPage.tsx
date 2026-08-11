@@ -77,7 +77,15 @@ export default function UniqueEquipmentPage() {
                 <tr key={w.id} className="border-b border-slate-50 hover:bg-slate-50 cursor-pointer"
                     onClick={() => setEditing(w)}>
                   <td className="py-2 px-4 text-xs text-slate-500 whitespace-nowrap">{w.workType || '—'}</td>
-                  <td className="py-2 px-4">{w.name}</td>
+                  <td className="py-2 px-4">
+                    {w.name}
+                    {w.mandatory === false && (
+                      <span className="ml-2 text-[10px] text-amber-600 align-middle"
+                            title="Рекомендуемая работа — заказчик не обязан её оплачивать">
+                        рекомендуемая
+                      </span>
+                    )}
+                  </td>
                   <td className="py-2 px-4 whitespace-nowrap">{w.periodicity || '—'}</td>
                   <td className="py-2 px-4 text-right">{w.periodicityPerYear ?? '—'}</td>
                   <td className="py-2 px-4 text-xs">
@@ -131,6 +139,7 @@ const MODE_LABELS: Record<string, string> = {
 
 /** Основание плановой работы: страница паспорта и подтверждена ли цитата. */
 function SourceCell({ work }: { work: PlannedWork }) {
+  if (work.source === 'MIDIO') return <span className="text-primary-600">Midio</span>
   if (work.source !== 'PASSPORT') return <span className="text-slate-400">вручную</span>
   const label = work.sourceLabel || 'Паспорт'
   if (work.quoteVerified === false) {

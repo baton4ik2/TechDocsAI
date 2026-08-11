@@ -45,7 +45,7 @@ class PassportExtractionTest {
         AppProperties props = new AppProperties(null, null,
                 new AppProperties.Ai(null, null, null, null, null, null, null, null, null,
                         null, null, null, null, null, "cheap/model", models),
-                null, null, null);
+                null, null, null, null);
         return new UniqueEquipmentPassportService(repository, plannedWorks, fileStorage,
                 textExtractor, ocrExtractor, renderer, aiClient, props);
     }

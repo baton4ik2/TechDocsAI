@@ -66,6 +66,13 @@ public class PlannedWork {
     @Column(name = "external_id")
     private String externalId;
 
+    /**
+     * Обязательная работа или рекомендуемая. null — источник этого не различает
+     * (паспорт, ручной ввод), и додумывать за него нельзя.
+     */
+    @Column(name = "mandatory")
+    private Boolean mandatory;
+
     /** Обоснование для сметы: «Паспорт, с. 14» или «Midio» — то, что видит инженер. */
     @Transient
     public String getSourceLabel() {

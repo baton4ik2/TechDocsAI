@@ -9,7 +9,8 @@ public record AppProperties(
         Ai ai,
         Document document,
         Cors cors,
-        Drive drive
+        Drive drive,
+        Midio midio
 ) {
     public record Auth(String adminEmail, String adminPassword, String jwtSecret, int jwtExpirationMinutes) {}
 
@@ -27,4 +28,7 @@ public record AppProperties(
     public record Cors(String allowedOrigins) {}
 
     public record Drive(String serviceAccountKeyPath) {}
+
+    /** Доступ к Midio: свой токен, иначе логин и пароль сервисной учётной записи. */
+    public record Midio(String baseUrl, String login, String password, String token) {}
 }

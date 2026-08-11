@@ -25,5 +25,6 @@
     <include file="db/changelog/changes/018-planned-work-source.xml" relativeToChangelogFile="false"/>
     <include file="db/changelog/changes/019-passport-started-at.xml" relativeToChangelogFile="false"/>
     <include file="db/changelog/changes/020-midio-link.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/021-planned-work-mandatory.xml" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

@@ -235,6 +235,8 @@ export interface UniqueEquipment {
   passportModel?: string
   passportMode?: string
   passportStartedAt?: string
+  midioId?: string
+  midioSyncedAt?: string
   createdAt: string
 }
 
@@ -255,10 +257,35 @@ export interface PlannedWork {
   periodicity?: string
   periodicityPerYear?: number
   source: string
+  mandatory?: boolean | null
   sourceQuote?: string
   sourcePage?: number
   quoteVerified?: boolean | null
   sourceLabel?: string
+}
+
+export interface MidioCandidate {
+  uniqueEquipmentId: number
+  name?: string
+  model?: string
+  manufacturer?: string
+}
+
+export interface MidioPending {
+  externalId: string
+  name?: string
+  model?: string
+  manufacturer?: string
+  reason: string
+  candidates: MidioCandidate[]
+}
+
+export interface MidioSyncResult {
+  linkedEquipment: number
+  importedWorks: number
+  skippedWorks: number
+  pending: MidioPending[]
+  unknown: MidioPending[]
 }
 
 export interface PassportModels {

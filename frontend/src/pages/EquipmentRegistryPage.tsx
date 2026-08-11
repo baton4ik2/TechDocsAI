@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { UniqueEquipmentView } from '../types'
 import { toast } from '../components/Toast'
+import MidioSync from '../components/MidioSync'
 
 export default function EquipmentRegistryPage() {
   const [items, setItems] = useState<UniqueEquipmentView[]>([])
@@ -54,6 +55,8 @@ export default function EquipmentRegistryPage() {
       </div>
 
       {error && <div className="text-red-600 text-sm">{error}</div>}
+
+      <MidioSync onChange={load} />
 
       {items.length === 0 ? (
         <div className="card text-center text-slate-400 py-16">

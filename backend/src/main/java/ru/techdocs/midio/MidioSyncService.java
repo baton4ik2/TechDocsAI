@@ -136,7 +136,10 @@ public class MidioSyncService {
             pw.setWorkType(w.workType());
             pw.setWorkComposition(w.composition());
             pw.setPeriodicity(w.periodicity());
-            pw.setPeriodicityPerYear(Periodicity.perYear(w.periodicity()));
+            // число берём как есть: обратный разбор текста терял бы нетиповые
+            // периодичности вроде «раз в 2 года»
+            pw.setPeriodicityPerYear(w.perYear() != null ? w.perYear() : Periodicity.perYear(w.periodicity()));
+            pw.setMandatory(w.mandatory());
             pw.setSource(PlannedWork.SOURCE_MIDIO);
             pw.setExternalId(w.externalId());
             saved.add(pw);

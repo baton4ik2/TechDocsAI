@@ -62,9 +62,11 @@ class MidioSyncServiceTest {
         UniqueEquipment target = ue(1L, "Извещатель пожарный дымовой", "ИП 212-64", "АПС");
         var result = service(List.of(target),
                 List.of(new ExternalEquipment("mid-5", "Извещатель пожарный дымовой", "ИП 212-64", "Рубеж", "АПС")),
-                List.of(new ExternalWork("w-1", "mid-5", "Технический осмотр", "осмотр", "Ежемесячно", null),
+                List.of(new ExternalWork("w-1", "mid-5", "Технический осмотр", "осмотр", "Ежемесячно",
+                                new java.math.BigDecimal("12"), null, true),
                         new ExternalWork("w-2", "mid-5", "Проверка работоспособности", "проверка",
-                                "Раз в 6 мес.", "Продувка оптической системы"))).sync();
+                                "раз в 6 мес.", new java.math.BigDecimal("2"),
+                                "Продувка оптической системы", false))).sync();
 
         assertThat(result.linkedEquipment()).isEqualTo(1);
         assertThat(result.importedWorks()).isEqualTo(2);
@@ -84,7 +86,8 @@ class MidioSyncServiceTest {
         UniqueEquipment target = ue(1L, "Извещатель пожарный дымовой", "ИП 212-64", "АПС");
         service(List.of(target),
                 List.of(new ExternalEquipment("mid-5", "Извещатель пожарный дымовой", "ИП 212-64", "Рубеж", "АПС")),
-                List.of(new ExternalWork("w-1", "mid-5", "Технический осмотр", "осмотр", "Ежемесячно", null)))
+                List.of(new ExternalWork("w-1", "mid-5", "Технический осмотр", "осмотр", "Ежемесячно",
+                                new java.math.BigDecimal("12"), null, true)))
                 .sync();
 
         // паспортные и ручные работы синхронизация не трогает
@@ -99,7 +102,8 @@ class MidioSyncServiceTest {
         UniqueEquipment rm4 = ue(2L, "Модуль релейный", "РМ-4К", "АПС");
         var result = service(List.of(rm1, rm4),
                 List.of(new ExternalEquipment("mid-9", "Модуль релейный", "РМ-2К", "Рубеж", "АПС")),
-                List.of(new ExternalWork("w-9", "mid-9", "Техническое обслуживание", "ТО", "Ежемесячно", null)))
+                List.of(new ExternalWork("w-9", "mid-9", "Техническое обслуживание", "ТО", "Ежемесячно",
+                                new java.math.BigDecimal("12"), null, true)))
                 .sync();
 
         assertThat(result.linkedEquipment()).isZero();

@@ -12,9 +12,14 @@ import java.util.List;
  */
 public interface MidioClient {
 
-    /** Регламентная работа на стороне Midio. */
+    /**
+     * Регламентная работа на стороне Midio. Периодичность приходит и числом:
+     * «раз в 2 года» наш парсер текста не понимает, и через строку значение
+     * потерялось бы.
+     */
     record ExternalWork(String externalId, String equipmentExternalId, String name,
-                        String workType, String periodicity, String composition) {}
+                        String workType, String periodicity, java.math.BigDecimal perYear,
+                        String composition, Boolean mandatory) {}
 
     /** Настроен ли доступ: без реквизитов синхронизацию не предлагаем. */
     boolean isConfigured();

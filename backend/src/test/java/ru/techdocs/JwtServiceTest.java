@@ -13,7 +13,7 @@ class JwtServiceTest {
     private AppProperties props(String secret, int minutes) {
         return new AppProperties(
                 new AppProperties.Auth("admin@x", "pass", secret, minutes),
-                null, null, null, null, null);
+                null, null, null, null, null, null);
     }
 
     private User user() {
