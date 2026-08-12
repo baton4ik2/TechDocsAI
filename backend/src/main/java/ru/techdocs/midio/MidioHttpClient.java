@@ -85,23 +85,30 @@ public class MidioHttpClient implements MidioClient {
             String planId = text(plan, "id", "maintenancePlanId", "planId");
             if (planId == null) continue;
             planCount++;
-            String planEquipmentId = equipmentRef(plan);
-            if (samplePlan == null && planEquipmentId == null) samplePlan = plan;
+            List<String> planEquipmentIds = equipmentRefs(plan);
+            if (samplePlan == null && planEquipmentIds.isEmpty()) samplePlan = plan;
             JsonNode incidents = execute("PlannedIncidents.GetByMaintenancePlan",
                     Map.of("maintenancePlanId", asNumberOrText(planId)));
             for (JsonNode item : array(incidents, "items", "plannedIncidents", "incidents")) {
                 String title = text(item, "title", "name");
                 if (title == null || title.isBlank()) continue;
-                // работа может быть заведена на другое оборудование, чем план целиком
-                String equipmentId = equipmentRef(item);
-                if (equipmentId == null) equipmentId = planEquipmentId;
-                if (equipmentId == null) noEquipmentLink++;
+                // у работы может стоять собственная ссылка на оборудование; без неё
+                // работа относится ко всему оборудованию плана — план в Midio накрывает
+                // несколько изделий сразу (equipmentIds: [372, 144, …])
+                List<String> targets = equipmentRefs(item);
+                if (targets.isEmpty()) targets = planEquipmentIds;
+                if (targets.isEmpty()) {
+                    noEquipmentLink++;
+                    targets = java.util.Collections.singletonList(null);
+                }
                 var recurrence = MidioMapping.recurrence(
                         integer(item, "recurrenceInterval"), text(item, "recurrenceIntervalUnit"));
-                result.add(new ExternalWork(
-                        text(item, "plannedIncidentId", "id"), equipmentId, title,
-                        MidioMapping.workType(title), recurrence.text(), recurrence.perYear(),
-                        composition(item), MidioMapping.mandatory(text(item, "category"))));
+                for (String equipmentId : targets) {
+                    result.add(new ExternalWork(
+                            text(item, "plannedIncidentId", "id"), equipmentId, title,
+                            MidioMapping.workType(title), recurrence.text(), recurrence.perYear(),
+                            composition(item), MidioMapping.mandatory(text(item, "category"))));
+                }
             }
         }
         log.info("Midio: получено {} регламентных работ из {} планов обслуживания"
@@ -115,23 +122,28 @@ public class MidioHttpClient implements MidioClient {
     }
 
     /**
-     * Ссылка на карточку оборудования. В документации это поле equipmentId, но
-     * живые ответы бывают богаче: вложенный объект equipment или список
-     * equipmentIds. Без этой ссылки работа не найдёт свою запись реестра.
+     * Ссылки на карточки оборудования. В документации это одиночное поле
+     * equipmentId, но живой ответ планов несёт массив equipmentIds — один план
+     * накрывает несколько изделий сразу. Без ссылки работа не найдёт свою
+     * запись реестра.
      */
-    private String equipmentRef(JsonNode node) {
+    private List<String> equipmentRefs(JsonNode node) {
         String direct = text(node, "equipmentId", "equipmentCardId");
-        if (direct != null) return direct;
+        if (direct != null) return List.of(direct);
         JsonNode nested = node.get("equipment");
         if (nested != null && nested.isObject()) {
             String fromNested = text(nested, "id", "equipmentId");
-            if (fromNested != null) return fromNested;
+            if (fromNested != null) return List.of(fromNested);
         }
         JsonNode list = node.get("equipmentIds");
-        if (list != null && list.isArray() && list.size() == 1 && !list.get(0).isNull()) {
-            return list.get(0).asText().strip();
+        if (list != null && list.isArray()) {
+            List<String> ids = new ArrayList<>();
+            for (JsonNode id : list) {
+                if (!id.isNull() && !id.asText().isBlank()) ids.add(id.asText().strip());
+            }
+            return ids;
         }
-        return null;
+        return List.of();
     }
 
     /** Состав работы: чеклист, иначе описание — то, что инженер увидит в строке сметы. */
