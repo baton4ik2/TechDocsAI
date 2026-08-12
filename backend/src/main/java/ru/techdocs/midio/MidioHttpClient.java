@@ -79,19 +79,23 @@ public class MidioHttpClient implements MidioClient {
         JsonNode plans = execute("MaintenancePlans.GetList", Map.of());
         List<ExternalWork> result = new ArrayList<>();
         int planCount = 0;
+        int noEquipmentLink = 0;
+        JsonNode samplePlan = null;
         for (JsonNode plan : array(plans, "maintenancePlans", "plans", "items")) {
             String planId = text(plan, "id", "maintenancePlanId", "planId");
             if (planId == null) continue;
             planCount++;
-            String planEquipmentId = text(plan, "equipmentId");
+            String planEquipmentId = equipmentRef(plan);
+            if (samplePlan == null && planEquipmentId == null) samplePlan = plan;
             JsonNode incidents = execute("PlannedIncidents.GetByMaintenancePlan",
                     Map.of("maintenancePlanId", asNumberOrText(planId)));
             for (JsonNode item : array(incidents, "items", "plannedIncidents", "incidents")) {
                 String title = text(item, "title", "name");
                 if (title == null || title.isBlank()) continue;
                 // работа может быть заведена на другое оборудование, чем план целиком
-                String equipmentId = text(item, "equipmentId");
+                String equipmentId = equipmentRef(item);
                 if (equipmentId == null) equipmentId = planEquipmentId;
+                if (equipmentId == null) noEquipmentLink++;
                 var recurrence = MidioMapping.recurrence(
                         integer(item, "recurrenceInterval"), text(item, "recurrenceIntervalUnit"));
                 result.add(new ExternalWork(
@@ -100,8 +104,34 @@ public class MidioHttpClient implements MidioClient {
                         composition(item), MidioMapping.mandatory(text(item, "category"))));
             }
         }
-        log.info("Midio: получено {} регламентных работ из {} планов обслуживания", result.size(), planCount);
+        log.info("Midio: получено {} регламентных работ из {} планов обслуживания"
+                        + (noEquipmentLink > 0 ? ", из них БЕЗ привязки к оборудованию: " + noEquipmentLink : ""),
+                result.size(), planCount);
+        if (samplePlan != null && noEquipmentLink > 0) {
+            // структура живого ответа — прямо в лог: без неё причину не назвать
+            log.warn("Midio: пример плана без распознанной ссылки на оборудование: {}", samplePlan);
+        }
         return result;
+    }
+
+    /**
+     * Ссылка на карточку оборудования. В документации это поле equipmentId, но
+     * живые ответы бывают богаче: вложенный объект equipment или список
+     * equipmentIds. Без этой ссылки работа не найдёт свою запись реестра.
+     */
+    private String equipmentRef(JsonNode node) {
+        String direct = text(node, "equipmentId", "equipmentCardId");
+        if (direct != null) return direct;
+        JsonNode nested = node.get("equipment");
+        if (nested != null && nested.isObject()) {
+            String fromNested = text(nested, "id", "equipmentId");
+            if (fromNested != null) return fromNested;
+        }
+        JsonNode list = node.get("equipmentIds");
+        if (list != null && list.isArray() && list.size() == 1 && !list.get(0).isNull()) {
+            return list.get(0).asText().strip();
+        }
+        return null;
     }
 
     /** Состав работы: чеклист, иначе описание — то, что инженер увидит в строке сметы. */

@@ -64,6 +64,22 @@ public class MidioSyncService {
             worksByEquipment.computeIfAbsent(w.equipmentExternalId(), k -> new ArrayList<>()).add(w);
         }
 
+        // работы, ссылающиеся на оборудование вне полученного списка карточек, —
+        // признак несовпадения идентификаторов между методами; молча пропадать не должны
+        java.util.Set<String> knownIds = new java.util.HashSet<>();
+        for (ExternalEquipment e : external) knownIds.add(e.externalId());
+        long strayWorks = worksByEquipment.entrySet().stream()
+                .filter(en -> !knownIds.contains(en.getKey()))
+                .mapToLong(en -> en.getValue().size())
+                .sum();
+        if (strayWorks > 0) {
+            String sampleWorkKey = worksByEquipment.keySet().stream()
+                    .filter(k -> !knownIds.contains(k)).findFirst().orElse("?");
+            log.warn("Midio: {} работ ссылаются на оборудование вне списка карточек "
+                    + "(пример ссылки из работы: «{}», пример id карточки: «{}»)",
+                    strayWorks, sampleWorkKey, knownIds.stream().findFirst().orElse("?"));
+        }
+
         List<Match> matches = matcher.matchAll(external);
         List<Pending> pending = new ArrayList<>();
         List<Pending> unknown = new ArrayList<>();
