@@ -39,7 +39,7 @@ public class MidioSyncService {
 
     /** Позиция, которую не удалось привязать однозначно. */
     public record Pending(String externalId, String name, String model, String manufacturer,
-                          String reason, List<Candidate> candidates) {}
+                          String reason, int workCount, List<Candidate> candidates) {}
 
     public record Candidate(Long uniqueEquipmentId, String name, String model, String manufacturer) {}
 
@@ -90,9 +90,14 @@ public class MidioSyncService {
         for (Match m : matches) {
             ExternalEquipment e = m.source();
             if (!m.isResolved()) {
-                Pending p = pending(m);
-                if (m.kind() == Kind.NONE) unknown.add(p); else pending.add(p);
-                skipped += worksByEquipment.getOrDefault(e.externalId(), List.of()).size();
+                int workCount = worksByEquipment.getOrDefault(e.externalId(), List.of()).size();
+                skipped += workCount;
+                // позиции без работ в отчёт не попадают: подтверждать их незачем —
+                // переносить нечего, а тысячи пустых строк топят настоящие
+                if (workCount > 0) {
+                    Pending p = pending(m, workCount);
+                    if (m.kind() == Kind.NONE) unknown.add(p); else pending.add(p);
+                }
                 continue;
             }
             UniqueEquipment target = m.target();
@@ -164,7 +169,7 @@ public class MidioSyncService {
         return saved.size();
     }
 
-    private Pending pending(Match m) {
+    private Pending pending(Match m, int workCount) {
         ExternalEquipment e = m.source();
         String reason = switch (m.kind()) {
             case AMBIGUOUS -> "Подходит несколько записей реестра — выберите нужную.";
@@ -174,6 +179,6 @@ public class MidioSyncService {
         List<Candidate> candidates = m.candidates().stream()
                 .map(c -> new Candidate(c.getId(), c.getName(), c.getModel(), c.getManufacturer()))
                 .toList();
-        return new Pending(e.externalId(), e.name(), e.model(), e.manufacturer(), reason, candidates);
+        return new Pending(e.externalId(), e.name(), e.model(), e.manufacturer(), reason, workCount, candidates);
     }
 }

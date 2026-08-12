@@ -773,8 +773,12 @@ public class EstimateDraftService {
      * (напр. извещатель без паспорта → раз в 6 мес.) → ПКМ/наименование расценки.
      */
     private Per periodicity(EquipmentMaintenanceResolver.Planned op, String name, NormativeRate rate) {
-        boolean passport = op != null && EquipmentMaintenanceResolver.SOURCE_PASSPORT.equals(op.source());
-        if (passport && op.perYear() != null) {
+        // Midio и паспорт — источники по КОНКРЕТНОМУ изделию, их периодичность
+        // не перебивается дефолтом по типу оборудования
+        boolean authoritative = op != null
+                && (EquipmentMaintenanceResolver.SOURCE_MIDIO.equals(op.source())
+                    || EquipmentMaintenanceResolver.SOURCE_PASSPORT.equals(op.source()));
+        if (authoritative && op.perYear() != null) {
             return new Per(op.perYear(), op.periodicityText() != null ? op.periodicityText()
                     : maintenanceResolver.label(op.perYear()));
         }

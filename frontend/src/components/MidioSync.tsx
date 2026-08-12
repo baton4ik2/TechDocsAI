@@ -86,6 +86,7 @@ export default function MidioSync({ onChange }: { onChange: () => void }) {
               {result.unknown.map((p) => (
                 <div key={p.externalId} className="text-sm text-slate-600 py-1.5">
                   {[p.name, p.model, p.manufacturer].filter(Boolean).join(' · ') || p.externalId}
+                  <span className="ml-2 text-xs text-slate-400">{p.workCount} раб.</span>
                 </div>
               ))}
             </Section>
@@ -128,6 +129,7 @@ function PendingRow({ item, onLink }: {
     <div className="py-2.5">
       <div className="text-sm text-slate-900">
         {[item.name, item.model, item.manufacturer].filter(Boolean).join(' · ') || item.externalId}
+        <span className="ml-2 text-xs text-slate-400">{item.workCount} раб.</span>
       </div>
       <div className="text-xs text-slate-500 mt-0.5">{item.reason}</div>
       <div className="flex gap-2 flex-wrap mt-2">

@@ -120,12 +120,17 @@ class MidioSyncServiceTest {
     void equipmentMissingFromRegistryIsReportedSeparately() {
         UniqueEquipment target = ue(1L, "Извещатель пожарный дымовой", "ИП 212-64", "АПС");
         var result = service(List.of(target),
-                List.of(new ExternalEquipment("mid-77", "Насос дренажный", "GRUNDFOS UNILIFT", "Grundfos", "ВК")),
-                List.of()).sync();
+                List.of(new ExternalEquipment("mid-77", "Насос дренажный", "GRUNDFOS UNILIFT", "Grundfos", "ВК"),
+                        new ExternalEquipment("mid-78", "Щит без работ", "ЩУ-1", "Прочее", "ВК")),
+                List.of(new ExternalWork("w-77", "mid-77", "Техническое обслуживание", "ТО", "Ежемесячно",
+                        new java.math.BigDecimal("12"), null, true))).sync();
 
         // это не «неоднозначно», а «нет в реестре» — и лечится синхронизацией с объектами
         assertThat(result.pending()).isEmpty();
+        // mid-78 без работ в отчёт не попадает: подтверждать нечего
         assertThat(result.unknown()).hasSize(1);
+        assertThat(result.unknown().getFirst().externalId()).isEqualTo("mid-77");
+        assertThat(result.unknown().getFirst().workCount()).isEqualTo(1);
         assertThat(result.unknown().getFirst().reason()).contains("нет такого оборудования");
     }
 

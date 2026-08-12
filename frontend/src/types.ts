@@ -277,6 +277,7 @@ export interface MidioPending {
   model?: string
   manufacturer?: string
   reason: string
+  workCount: number
   candidates: MidioCandidate[]
 }
 
