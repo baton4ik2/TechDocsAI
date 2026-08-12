@@ -25,6 +25,8 @@ class MidioSyncServiceTest {
 
     private final UniqueEquipmentRepository equipmentRepository = mock(UniqueEquipmentRepository.class);
     private final PlannedWorkRepository plannedWorks = mock(PlannedWorkRepository.class);
+    private final ru.techdocs.midio.MidioSyncReportRepository reports =
+            mock(ru.techdocs.midio.MidioSyncReportRepository.class);
 
     private UniqueEquipment ue(Long id, String name, String model, String system) {
         UniqueEquipment u = new UniqueEquipment();
@@ -47,7 +49,7 @@ class MidioSyncServiceTest {
             @Override public List<ExternalWork> works() { return works; }
         };
         return new MidioSyncService(client, new MidioEquipmentMatcher(equipmentRepository),
-                equipmentRepository, plannedWorks);
+                equipmentRepository, plannedWorks, reports);
     }
 
     @SuppressWarnings("unchecked")
@@ -111,6 +113,11 @@ class MidioSyncServiceTest {
         assertThat(result.skippedWorks()).isEqualTo(1);
         assertThat(result.pending()).hasSize(1);
         assertThat(result.pending().getFirst().candidates()).hasSize(2);
+        // состав работ виден прямо в отчёте — в Midio за ним ходить не нужно
+        assertThat(result.pending().getFirst().works()).hasSize(1);
+        assertThat(result.pending().getFirst().works().getFirst().name())
+                .isEqualTo("Техническое обслуживание");
+        assertThat(result.pending().getFirst().works().getFirst().mandatory()).isTrue();
         verify(plannedWorks, never()).saveAll(any());
         assertThat(rm1.getMidioId()).isNull();
         assertThat(rm4.getMidioId()).isNull();
@@ -149,6 +156,31 @@ class MidioSyncServiceTest {
     }
 
     @Test
+    void reportSurvivesAndConfirmationCrossesOutThePosition() throws Exception {
+        UniqueEquipment rm1 = ue(1L, "Модуль релейный", "РМ-1К", "АПС");
+        UniqueEquipment rm4 = ue(2L, "Модуль релейный", "РМ-4К", "АПС");
+        MidioSyncService service = service(List.of(rm1, rm4),
+                List.of(new ExternalEquipment("mid-9", "Модуль релейный", "РМ-2К", "Рубеж", "АПС")),
+                List.of(new ExternalWork("w-9", "mid-9", "Техническое обслуживание", "ТО", "Ежемесячно",
+                        new java.math.BigDecimal("12"), null, true)));
+
+        // sync сохраняет отчёт; репозиторий-мок возвращает то, что сохранили
+        ArgumentCaptor<ru.techdocs.midio.MidioSyncReport> saved =
+                ArgumentCaptor.forClass(ru.techdocs.midio.MidioSyncReport.class);
+        service.sync();
+        verify(reports).save(saved.capture());
+        when(reports.findTopByOrderByIdDesc()).thenReturn(Optional.of(saved.getValue()));
+
+        assertThat(service.lastReport().pending()).hasSize(1);
+
+        service.link(2L, "mid-9");
+
+        verify(reports, org.mockito.Mockito.times(2)).save(saved.capture());
+        when(reports.findTopByOrderByIdDesc()).thenReturn(Optional.of(saved.getValue()));
+        assertThat(service.lastReport().pending()).isEmpty();
+    }
+
+    @Test
     void syncWithoutCredentialsFailsLoudly() {
         MidioClient offline = new MidioClient() {
             @Override public boolean isConfigured() { return false; }
@@ -156,7 +188,7 @@ class MidioSyncServiceTest {
             @Override public List<ExternalWork> works() { return List.of(); }
         };
         MidioSyncService service = new MidioSyncService(offline,
-                new MidioEquipmentMatcher(equipmentRepository), equipmentRepository, plannedWorks);
+                new MidioEquipmentMatcher(equipmentRepository), equipmentRepository, plannedWorks, reports);
 
         assertThat(org.junit.jupiter.api.Assertions.assertThrows(
                 ru.techdocs.common.BadRequestException.class, service::sync).getMessage())

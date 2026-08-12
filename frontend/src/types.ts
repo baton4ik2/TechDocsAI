@@ -271,6 +271,12 @@ export interface MidioCandidate {
   manufacturer?: string
 }
 
+export interface MidioWorkPreview {
+  name: string
+  periodicity?: string
+  mandatory?: boolean | null
+}
+
 export interface MidioPending {
   externalId: string
   name?: string
@@ -278,6 +284,7 @@ export interface MidioPending {
   manufacturer?: string
   reason: string
   workCount: number
+  works: MidioWorkPreview[]
   candidates: MidioCandidate[]
 }
 

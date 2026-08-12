@@ -26,6 +26,16 @@ public class MidioController {
         return syncService.sync();
     }
 
+    /**
+     * Последний сохранённый отчёт синхронизации. 204 — синхронизаций ещё не было.
+     * Нужен, чтобы уход со страницы не терял список ручных подтверждений.
+     */
+    @GetMapping("/last-sync")
+    public ResponseEntity<MidioSyncService.SyncResult> lastSync() {
+        MidioSyncService.SyncResult saved = syncService.lastReport();
+        return saved == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(saved);
+    }
+
     public record LinkRequest(Long uniqueEquipmentId, String midioId) {}
 
     /** Подтверждение связи для позиции, которую не удалось узнать однозначно. */

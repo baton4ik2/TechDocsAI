@@ -80,7 +80,9 @@ public class MidioHttpClient implements MidioClient {
         List<ExternalWork> result = new ArrayList<>();
         int planCount = 0;
         int noEquipmentLink = 0;
+        int noRecurrence = 0;
         JsonNode samplePlan = null;
+        JsonNode sampleNoRecurrence = null;
         for (JsonNode plan : array(plans, "maintenancePlans", "plans", "items")) {
             String planId = text(plan, "id", "maintenancePlanId", "planId");
             if (planId == null) continue;
@@ -101,24 +103,51 @@ public class MidioHttpClient implements MidioClient {
                     noEquipmentLink++;
                     targets = java.util.Collections.singletonList(null);
                 }
-                var recurrence = MidioMapping.recurrence(
-                        integer(item, "recurrenceInterval"), text(item, "recurrenceIntervalUnit"));
+                var recurrence = recurrence(item);
+                if (recurrence.perYear() == null) {
+                    noRecurrence++;
+                    if (sampleNoRecurrence == null) sampleNoRecurrence = item;
+                }
                 for (String equipmentId : targets) {
                     result.add(new ExternalWork(
                             text(item, "plannedIncidentId", "id"), equipmentId, title,
                             MidioMapping.workType(title), recurrence.text(), recurrence.perYear(),
-                            composition(item), MidioMapping.mandatory(text(item, "category"))));
+                            composition(item),
+                            MidioMapping.mandatory(text(item, "category", "incidentCategory", "type"))));
                 }
             }
         }
         log.info("Midio: получено {} регламентных работ из {} планов обслуживания"
-                        + (noEquipmentLink > 0 ? ", из них БЕЗ привязки к оборудованию: " + noEquipmentLink : ""),
+                        + (noEquipmentLink > 0 ? ", из них БЕЗ привязки к оборудованию: " + noEquipmentLink : "")
+                        + (noRecurrence > 0 ? ", без периодичности: " + noRecurrence : ""),
                 result.size(), planCount);
         if (samplePlan != null && noEquipmentLink > 0) {
             // структура живого ответа — прямо в лог: без неё причину не назвать
             log.warn("Midio: пример плана без распознанной ссылки на оборудование: {}", samplePlan);
         }
+        if (sampleNoRecurrence != null) {
+            log.warn("Midio: пример работы без распознанной периодичности: {}", sampleNoRecurrence);
+        }
         return result;
+    }
+
+    /**
+     * Периодичность работы: interval + unit. По документации это плоские поля
+     * recurrenceInterval / recurrenceIntervalUnit, но живые ответы бывают с
+     * вложенным объектом recurrence — ищем и там, прежде чем сдаться.
+     */
+    private MidioMapping.Recurrence recurrence(JsonNode item) {
+        Integer interval = integer(item, "recurrenceInterval");
+        String unit = text(item, "recurrenceIntervalUnit", "recurrenceUnit");
+        if (interval == null || unit == null) {
+            for (String key : new String[]{"recurrence", "recurrenceRule", "schedule"}) {
+                JsonNode nested = item.get(key);
+                if (nested == null || !nested.isObject()) continue;
+                if (interval == null) interval = integer(nested, "recurrenceInterval", "interval");
+                if (unit == null) unit = text(nested, "recurrenceIntervalUnit", "intervalUnit", "unit");
+            }
+        }
+        return MidioMapping.recurrence(interval, unit);
     }
 
     /**
@@ -314,12 +343,15 @@ public class MidioHttpClient implements MidioClient {
         return null;
     }
 
-    private static Integer integer(JsonNode node, String key) {
-        JsonNode value = node.get(key);
-        if (value == null || value.isNull()) return null;
-        if (value.isNumber()) return value.asInt();
-        String raw = value.asText().strip();
-        return raw.matches("\\d+") ? Integer.parseInt(raw) : null;
+    private static Integer integer(JsonNode node, String... keys) {
+        for (String key : keys) {
+            JsonNode value = node.get(key);
+            if (value == null || value.isNull()) continue;
+            if (value.isNumber()) return value.asInt();
+            String raw = value.asText().strip();
+            if (raw.matches("\\d+")) return Integer.parseInt(raw);
+        }
+        return null;
     }
 
     /** Идентификаторы у Midio числовые — строкой их метод может не принять. */

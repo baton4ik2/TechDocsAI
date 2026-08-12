@@ -39,7 +39,11 @@ public class MidioSyncService {
 
     /** Позиция, которую не удалось привязать однозначно. */
     public record Pending(String externalId, String name, String model, String manufacturer,
-                          String reason, int workCount, List<Candidate> candidates) {}
+                          String reason, int workCount, List<WorkPreview> works,
+                          List<Candidate> candidates) {}
+
+    /** Работа Midio в отчёте — чтобы инженер видел, ЧТО привязывает, не заходя в Midio. */
+    public record WorkPreview(String name, String periodicity, Boolean mandatory) {}
 
     public record Candidate(Long uniqueEquipmentId, String name, String model, String manufacturer) {}
 
@@ -50,6 +54,9 @@ public class MidioSyncService {
     private final MidioEquipmentMatcher matcher;
     private final UniqueEquipmentRepository equipmentRepository;
     private final PlannedWorkRepository plannedWorkRepository;
+    private final MidioSyncReportRepository reportRepository;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper =
+            new com.fasterxml.jackson.databind.ObjectMapper();
 
     @Transactional
     public SyncResult sync() {
@@ -95,7 +102,7 @@ public class MidioSyncService {
                 // позиции без работ в отчёт не попадают: подтверждать их незачем —
                 // переносить нечего, а тысячи пустых строк топят настоящие
                 if (workCount > 0) {
-                    Pending p = pending(m, workCount);
+                    Pending p = pending(m, worksByEquipment.get(e.externalId()));
                     if (m.kind() == Kind.NONE) unknown.add(p); else pending.add(p);
                 }
                 continue;
@@ -109,7 +116,36 @@ public class MidioSyncService {
         log.info("Синхронизация с Midio: привязано {} позиций, перенесено {} работ, "
                 + "на подтверждении {}, не найдено в реестре {}",
                 linked, imported, pending.size(), unknown.size());
-        return new SyncResult(linked, imported, skipped, pending, unknown);
+        SyncResult result = new SyncResult(linked, imported, skipped, pending, unknown);
+        saveReport(result);
+        return result;
+    }
+
+    /** Последний отчёт синхронизации — чтобы уход со страницы его не терял. */
+    public SyncResult lastReport() {
+        return reportRepository.findTopByOrderByIdDesc()
+                .map(r -> {
+                    try {
+                        return objectMapper.readValue(r.getReport(), SyncResult.class);
+                    } catch (Exception e) {
+                        log.warn("Сохранённый отчёт Midio не читается: {}", e.getMessage());
+                        return null;
+                    }
+                })
+                .orElse(null);
+    }
+
+    private void saveReport(SyncResult result) {
+        try {
+            String json = objectMapper.writeValueAsString(result);
+            reportRepository.deleteAll();
+            MidioSyncReport report = new MidioSyncReport();
+            report.setReport(json);
+            reportRepository.save(report);
+        } catch (Exception e) {
+            // отчёт вспомогательный: его потеря не должна валить синхронизацию
+            log.warn("Не удалось сохранить отчёт синхронизации Midio: {}", e.getMessage());
+        }
     }
 
     /**
@@ -129,6 +165,16 @@ public class MidioSyncService {
                     equipmentRepository.save(other);
                 });
         link(ue, midioId);
+        removeFromReport(midioId);
+    }
+
+    /** Подтверждённая позиция вычёркивается из сохранённого отчёта. */
+    private void removeFromReport(String midioId) {
+        SyncResult saved = lastReport();
+        if (saved == null) return;
+        saveReport(new SyncResult(saved.linkedEquipment(), saved.importedWorks(), saved.skippedWorks(),
+                saved.pending().stream().filter(p -> !midioId.equals(p.externalId())).toList(),
+                saved.unknown()));
     }
 
     private void link(UniqueEquipment ue, String midioId) {
@@ -169,7 +215,7 @@ public class MidioSyncService {
         return saved.size();
     }
 
-    private Pending pending(Match m, int workCount) {
+    private Pending pending(Match m, List<ExternalWork> works) {
         ExternalEquipment e = m.source();
         String reason = switch (m.kind()) {
             case AMBIGUOUS -> "Подходит несколько записей реестра — выберите нужную.";
@@ -179,6 +225,10 @@ public class MidioSyncService {
         List<Candidate> candidates = m.candidates().stream()
                 .map(c -> new Candidate(c.getId(), c.getName(), c.getModel(), c.getManufacturer()))
                 .toList();
-        return new Pending(e.externalId(), e.name(), e.model(), e.manufacturer(), reason, workCount, candidates);
+        List<WorkPreview> previews = works.stream()
+                .map(w -> new WorkPreview(w.name(), w.periodicity(), w.mandatory()))
+                .toList();
+        return new Pending(e.externalId(), e.name(), e.model(), e.manufacturer(), reason,
+                works.size(), previews, candidates);
     }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { MidioPending, MidioSyncResult } from '../types'
+import { MidioPending, MidioSyncResult, MidioWorkPreview } from '../types'
 import { toast } from './Toast'
 
 /**
@@ -15,6 +15,10 @@ export default function MidioSync({ onChange }: { onChange: () => void }) {
   useEffect(() => {
     api.get<{ configured: boolean }>('/api/midio/status')
       .then((s) => setConfigured(s.configured))
+      .catch(() => {})
+    // отчёт хранится на бэкенде: уход со страницы его не теряет
+    api.get<MidioSyncResult | undefined>('/api/midio/last-sync')
+      .then((saved) => { if (saved) setResult(saved) })
       .catch(() => {})
   }, [])
 
@@ -84,9 +88,11 @@ export default function MidioSync({ onChange }: { onChange: () => void }) {
             <Section title="Нет в реестре"
                      hint="Это оборудование ещё не попало в реестр — нажмите «Синхронизировать с объектами» и повторите.">
               {result.unknown.map((p) => (
-                <div key={p.externalId} className="text-sm text-slate-600 py-1.5">
-                  {[p.name, p.model, p.manufacturer].filter(Boolean).join(' · ') || p.externalId}
-                  <span className="ml-2 text-xs text-slate-400">{p.workCount} раб.</span>
+                <div key={p.externalId} className="py-1.5">
+                  <div className="text-sm text-slate-600">
+                    {[p.name, p.model, p.manufacturer].filter(Boolean).join(' · ') || p.externalId}
+                  </div>
+                  <WorksPreview works={p.works} />
                 </div>
               ))}
             </Section>
@@ -129,9 +135,9 @@ function PendingRow({ item, onLink }: {
     <div className="py-2.5">
       <div className="text-sm text-slate-900">
         {[item.name, item.model, item.manufacturer].filter(Boolean).join(' · ') || item.externalId}
-        <span className="ml-2 text-xs text-slate-400">{item.workCount} раб.</span>
       </div>
-      <div className="text-xs text-slate-500 mt-0.5">{item.reason}</div>
+      <WorksPreview works={item.works} />
+      <div className="text-xs text-slate-500 mt-1">{item.reason}</div>
       <div className="flex gap-2 flex-wrap mt-2">
         {item.candidates.map((c) => (
           <button key={c.uniqueEquipmentId} className="btn-ghost text-xs border border-slate-200"
@@ -140,6 +146,28 @@ function PendingRow({ item, onLink }: {
           </button>
         ))}
       </div>
+    </div>
+  )
+}
+
+/** Состав работ Midio прямо в отчёте — видно, что именно привязываешь. */
+function WorksPreview({ works }: { works?: MidioWorkPreview[] }) {
+  if (!works || works.length === 0) return null
+  return (
+    <div className="mt-1 space-y-0.5">
+      {works.map((w, i) => (
+        <div key={i} className="text-xs text-slate-500 flex items-center gap-2">
+          <span className="text-slate-300">•</span>
+          <span>{w.name}</span>
+          {w.periodicity && <span className="text-slate-400">— {w.periodicity}</span>}
+          {w.mandatory === true && (
+            <span className="rounded-full bg-emerald-50 text-emerald-700 px-1.5 py-px text-[10px]">обязательная</span>
+          )}
+          {w.mandatory === false && (
+            <span className="rounded-full bg-amber-50 text-amber-700 px-1.5 py-px text-[10px]">рекомендуемая</span>
+          )}
+        </div>
+      ))}
     </div>
   )
 }

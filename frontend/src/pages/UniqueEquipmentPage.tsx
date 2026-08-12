@@ -66,6 +66,7 @@ export default function UniqueEquipmentPage() {
               <tr className="text-left text-xs text-slate-400 border-b border-slate-100">
                 <th className="py-2 px-4 font-medium">Тип</th>
                 <th className="py-2 px-4 font-medium">Наименование</th>
+                <th className="py-2 px-4 font-medium">Категория</th>
                 <th className="py-2 px-4 font-medium">Периодичность</th>
                 <th className="py-2 px-4 font-medium text-right">раз/год</th>
                 <th className="py-2 px-4 font-medium">Основание</th>
@@ -77,14 +78,14 @@ export default function UniqueEquipmentPage() {
                 <tr key={w.id} className="border-b border-slate-50 hover:bg-slate-50 cursor-pointer"
                     onClick={() => setEditing(w)}>
                   <td className="py-2 px-4 text-xs text-slate-500 whitespace-nowrap">{w.workType || '—'}</td>
-                  <td className="py-2 px-4">
-                    {w.name}
+                  <td className="py-2 px-4">{w.name}</td>
+                  <td className="py-2 px-4 text-xs whitespace-nowrap">
+                    {w.mandatory === true && <span className="text-emerald-600">обязательная</span>}
                     {w.mandatory === false && (
-                      <span className="ml-2 text-[10px] text-amber-600 align-middle"
-                            title="Рекомендуемая работа — заказчик не обязан её оплачивать">
-                        рекомендуемая
-                      </span>
+                      <span className="text-amber-600"
+                            title="Заказчик не обязан оплачивать рекомендуемые работы">рекомендуемая</span>
                     )}
+                    {(w.mandatory === null || w.mandatory === undefined) && <span className="text-slate-300">—</span>}
                   </td>
                   <td className="py-2 px-4 whitespace-nowrap">{w.periodicity || '—'}</td>
                   <td className="py-2 px-4 text-right">{w.periodicityPerYear ?? '—'}</td>
@@ -98,7 +99,7 @@ export default function UniqueEquipmentPage() {
                 </tr>
               ))}
               {works.length === 0 && (
-                <tr><td colSpan={6} className="text-center text-slate-400 py-10">
+                <tr><td colSpan={7} className="text-center text-slate-400 py-10">
                   Плановых работ нет. Загрузите паспорт для авто-извлечения или добавьте вручную.
                 </td></tr>
               )}
