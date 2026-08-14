@@ -270,12 +270,14 @@ export interface MidioCandidate {
   name?: string
   model?: string
   manufacturer?: string
+  linked?: boolean
 }
 
 export interface MidioWorkPreview {
   name: string
   periodicity?: string
   mandatory?: boolean | null
+  composition?: string
 }
 
 export interface MidioPending {
@@ -295,6 +297,7 @@ export interface MidioSyncResult {
   skippedWorks: number
   pending: MidioPending[]
   unknown: MidioPending[]
+  review?: MidioPending[]
 }
 
 export interface PassportModels {

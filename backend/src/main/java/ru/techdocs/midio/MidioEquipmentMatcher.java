@@ -44,7 +44,13 @@ public class MidioEquipmentMatcher {
     }
 
     public record Match(ExternalEquipment source, UniqueEquipment target, Kind kind,
-                        double score, List<UniqueEquipment> candidates) {
+                        double score, List<UniqueEquipment> candidates,
+                        List<UniqueEquipment> unlinkedSimilar) {
+
+        public Match(ExternalEquipment source, UniqueEquipment target, Kind kind,
+                     double score, List<UniqueEquipment> candidates) {
+            this(source, target, kind, score, candidates, List.of());
+        }
 
         public boolean isResolved() {
             return target != null && kind != Kind.AMBIGUOUS;
@@ -70,10 +76,21 @@ public class MidioEquipmentMatcher {
                 if (e.externalId().equals(ue.getMidioId())) linked.add(ue);
             }
             if (!linked.isEmpty()) {
-                return new Match(e, linked.getFirst(), Kind.LINKED, 1.0, List.copyOf(linked));
+                // привязанность не должна прятать новые похожие записи: в реестре
+                // могла появиться та же модель другой ревизии (…-R2 против …-R3) —
+                // это спорный случай, его показываем, а не молчим
+                List<UniqueEquipment> unlinkedOnly = registry.stream()
+                        .filter(ue -> ue.getMidioId() == null).toList();
+                Match probe = textMatch(e, unlinkedOnly);
+                List<UniqueEquipment> similar = probe.kind() == Kind.NONE ? List.of() : probe.candidates();
+                return new Match(e, linked.getFirst(), Kind.LINKED, 1.0, List.copyOf(linked), similar);
             }
         }
+        return textMatch(e, registry);
+    }
 
+    /** Узнавание по тексту (без учёта существующих связей): ключ реестра, затем модель. */
+    private Match textMatch(ExternalEquipment e, List<UniqueEquipment> registry) {
         // 2) точный ключ реестра: сначала с системой, затем без неё — раздел на
         //    стороне Midio может называться иначе, и терять из-за этого связь глупо
         String withSystem = UniqueEquipmentService.normKey(e.name(), e.model(), e.manufacturer(), e.system());

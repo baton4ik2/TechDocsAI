@@ -95,6 +95,7 @@ public class MidioHttpClient implements MidioClient {
         int planCount = 0;
         int noEquipmentLink = 0;
         int noRecurrence = 0;
+        int zoneSkipped = 0;
         JsonNode samplePlan = null;
         JsonNode sampleNoRecurrence = null;
         for (JsonNode plan : array(plans, "maintenancePlans", "plans", "items")) {
@@ -109,6 +110,12 @@ public class MidioHttpClient implements MidioClient {
             for (JsonNode item : array(incidents, "items", "plannedIncidents", "incidents")) {
                 String title = text(item, "title", "name");
                 if (title == null || title.isBlank()) continue;
+                // работы про пожарную ЗОНУ — сущность диспетчеризации, не изделие;
+                // в регламент оборудования они не переносятся
+                if (MidioMapping.mentionsZone(title)) {
+                    zoneSkipped++;
+                    continue;
+                }
                 // у работы может стоять собственная ссылка на оборудование; без неё
                 // работа относится ко всему оборудованию плана — план в Midio накрывает
                 // несколько изделий сразу (equipmentIds: [372, 144, …])
@@ -140,7 +147,8 @@ public class MidioHttpClient implements MidioClient {
         }
         log.info("Midio: получено {} регламентных работ из {} планов обслуживания"
                         + (noEquipmentLink > 0 ? ", из них БЕЗ привязки к оборудованию: " + noEquipmentLink : "")
-                        + (noRecurrence > 0 ? ", без периодичности: " + noRecurrence : ""),
+                        + (noRecurrence > 0 ? ", без периодичности: " + noRecurrence : "")
+                        + (zoneSkipped > 0 ? ", пропущено зонных: " + zoneSkipped : ""),
                 result.size(), planCount);
         if (samplePlan != null && noEquipmentLink > 0) {
             // структура живого ответа — прямо в лог: без неё причину не назвать

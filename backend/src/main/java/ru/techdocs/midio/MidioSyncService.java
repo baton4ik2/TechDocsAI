@@ -43,12 +43,15 @@ public class MidioSyncService {
                           List<Candidate> candidates) {}
 
     /** Работа Midio в отчёте — чтобы инженер видел, ЧТО привязывает, не заходя в Midio. */
-    public record WorkPreview(String name, String periodicity, Boolean mandatory) {}
+    public record WorkPreview(String name, String periodicity, Boolean mandatory, String composition) {}
 
-    public record Candidate(Long uniqueEquipmentId, String name, String model, String manufacturer) {}
+    /** linked — запись уже связана с этой карточкой (в спорных случаях предотмечена). */
+    public record Candidate(Long uniqueEquipmentId, String name, String model, String manufacturer,
+                            boolean linked) {}
 
+    /** review — спорные привязки: карточка привязана, но появились похожие записи без связи. */
     public record SyncResult(int linkedEquipment, int importedWorks, int skippedWorks,
-                             List<Pending> pending, List<Pending> unknown) {}
+                             List<Pending> pending, List<Pending> unknown, List<Pending> review) {}
 
     private final MidioClient client;
     private final MidioEquipmentMatcher matcher;
@@ -106,6 +109,7 @@ public class MidioSyncService {
         List<Match> matches = matcher.matchAll(external);
         List<Pending> pending = new ArrayList<>();
         List<Pending> unknown = new ArrayList<>();
+        List<Pending> review = new ArrayList<>();
         int linked = 0;
         int imported = 0;
         int skipped = 0;
@@ -133,12 +137,19 @@ public class MidioSyncService {
                         worksByEquipment.getOrDefault(e.externalId(), List.of()),
                         equipmentLabels.get(e.externalId()));
             }
+            // у привязанной карточки появились похожие записи без связи (та же модель
+            // другой ревизии) — спорный случай: работы переносим привязанным, но
+            // расхождение показываем, а не молчим
+            if (m.kind() == Kind.LINKED && !m.unlinkedSimilar().isEmpty()) {
+                List<ExternalWork> w = worksByEquipment.getOrDefault(e.externalId(), List.of());
+                if (!w.isEmpty()) review.add(reviewPending(m, w));
+            }
         }
 
         log.info("Синхронизация с Midio: привязано {} позиций, перенесено {} работ, "
                 + "на подтверждении {}, не найдено в реестре {}",
                 linked, imported, pending.size(), unknown.size());
-        SyncResult result = new SyncResult(linked, imported, skipped, pending, unknown);
+        SyncResult result = new SyncResult(linked, imported, skipped, pending, unknown, review);
         saveReport(result);
         return result;
     }
@@ -202,8 +213,12 @@ public class MidioSyncService {
         SyncResult saved = lastReport();
         if (saved == null) return;
         saveReport(new SyncResult(saved.linkedEquipment(), saved.importedWorks(), saved.skippedWorks(),
-                saved.pending().stream().filter(p -> !midioId.equals(p.externalId())).toList(),
-                saved.unknown()));
+                without(saved.pending(), midioId), saved.unknown(), without(saved.review(), midioId)));
+    }
+
+    private List<Pending> without(List<Pending> list, String midioId) {
+        if (list == null) return List.of();
+        return list.stream().filter(p -> !midioId.equals(p.externalId())).toList();
     }
 
     private void link(UniqueEquipment ue, String midioId) {
@@ -266,12 +281,31 @@ public class MidioSyncService {
             default -> "Требуется подтверждение.";
         };
         List<Candidate> candidates = m.candidates().stream()
-                .map(c -> new Candidate(c.getId(), c.getName(), c.getModel(), c.getManufacturer()))
+                .map(c -> new Candidate(c.getId(), c.getName(), c.getModel(), c.getManufacturer(), false))
                 .toList();
         List<WorkPreview> previews = works.stream()
-                .map(w -> new WorkPreview(w.name(), w.periodicity(), w.mandatory()))
+                .map(w -> new WorkPreview(w.name(), w.periodicity(), w.mandatory(), w.composition()))
                 .toList();
         return new Pending(e.externalId(), e.name(), e.model(), e.manufacturer(), reason,
+                works.size(), previews, candidates);
+    }
+
+    /** Спорная привязка: связанные записи предотмечены, похожие без связи — нет. */
+    private Pending reviewPending(Match m, List<ExternalWork> works) {
+        ExternalEquipment e = m.source();
+        List<Candidate> candidates = new ArrayList<>();
+        for (UniqueEquipment ue : m.candidates()) {
+            candidates.add(new Candidate(ue.getId(), ue.getName(), ue.getModel(), ue.getManufacturer(), true));
+        }
+        for (UniqueEquipment ue : m.unlinkedSimilar()) {
+            candidates.add(new Candidate(ue.getId(), ue.getName(), ue.getModel(), ue.getManufacturer(), false));
+        }
+        List<WorkPreview> previews = works.stream()
+                .map(w -> new WorkPreview(w.name(), w.periodicity(), w.mandatory(), w.composition()))
+                .toList();
+        return new Pending(e.externalId(), e.name(), e.model(), e.manufacturer(),
+                "Карточка уже привязана (отмечено), но в реестре есть похожие записи без связи — "
+                        + "проверьте, не эта ли это модель в другой ревизии.",
                 works.size(), previews, candidates);
     }
 }

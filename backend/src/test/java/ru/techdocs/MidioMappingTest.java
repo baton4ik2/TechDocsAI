@@ -126,6 +126,18 @@ class MidioMappingTest {
     }
 
     @Test
+    void zoneWorksAreRecognizedAndRealWordsAreNot() {
+        assertThat(MidioMapping.mentionsZone("Техническое обслуживание \"Рубеж Пожарная зона\"")).isTrue();
+        assertThat(MidioMapping.mentionsZone("Проверка зоны контроля")).isTrue();
+        assertThat(MidioMapping.mentionsZone("Обслуживание зональных оповещателей")).isTrue();
+        // «зон» внутри слова — не зона
+        assertThat(MidioMapping.mentionsZone("Сезонное обслуживание вентиляции")).isFalse();
+        assertThat(MidioMapping.mentionsZone("Чистка озонатора")).isFalse();
+        assertThat(MidioMapping.mentionsZone("Проверка горизонтальных участков")).isFalse();
+        assertThat(MidioMapping.mentionsZone(null)).isFalse();
+    }
+
+    @Test
     void workTypeComesFromTitleNotFromCategory() {
         assertThat(MidioMapping.workType("Внешний осмотр")).isEqualTo("осмотр");
         assertThat(MidioMapping.workType("Техническое обслуживание")).isEqualTo("ТО");

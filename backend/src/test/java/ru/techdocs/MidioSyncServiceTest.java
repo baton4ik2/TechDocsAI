@@ -246,6 +246,30 @@ class MidioSyncServiceTest {
     }
 
     @Test
+    void similarUnlinkedRecordNextToLinkedCardIsFlaggedForReview() {
+        // R3-запись уже привязана; появилась та же модель ревизии R2 — спорный случай
+        UniqueEquipment linked = ue(1L, "Извещатель пожарный тепловой", "ИП 101-29-PR-R3", "АПС");
+        linked.setMidioId("mid-44");
+        UniqueEquipment newcomer = ue(2L, "Извещатель пожарный тепловой", "ИП 101-29-PR прот. R2", "АПС");
+        var result = service(List.of(linked, newcomer),
+                List.of(new ExternalEquipment("mid-44", "Извещатель пожарный тепловой", "ИП 101-29-PR-R3",
+                        "Рубеж", "АПС")),
+                List.of(new ExternalWork("w-1", "mid-44", "ТО извещателя теплового ИП 101-29-PR-R3", "ТО",
+                        "раз в 6 мес.", new java.math.BigDecimal("2"), null, true, true, "План")))
+                .sync();
+
+        // работы перенесены привязанной записи, но расхождение показано
+        assertThat(result.importedWorks()).isEqualTo(1);
+        assertThat(result.review()).hasSize(1);
+        var candidates = result.review().getFirst().candidates();
+        assertThat(candidates).hasSize(2);
+        assertThat(candidates.stream().filter(MidioSyncService.Candidate::linked))
+                .extracting(MidioSyncService.Candidate::uniqueEquipmentId).containsExactly(1L);
+        assertThat(candidates.stream().filter(c -> !c.linked()))
+                .extracting(MidioSyncService.Candidate::uniqueEquipmentId).containsExactly(2L);
+    }
+
+    @Test
     void syncWithoutCredentialsFailsLoudly() {
         MidioClient offline = new MidioClient() {
             @Override public boolean isConfigured() { return false; }

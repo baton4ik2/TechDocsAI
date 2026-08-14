@@ -93,6 +93,18 @@ export default function MidioSync({ onChange, extraAction }: {
             </Section>
           )}
 
+          {(result.review?.length ?? 0) > 0 && (
+            <Section title="⚠ Спорные привязки"
+                     hint="Карточка Midio уже привязана, но в реестре появились похожие записи без связи (например, та же модель другой ревизии). Текущие привязки отмечены — добавьте недостающие или оставьте как есть.">
+              {result.review!.map((p) => (
+                <PendingRow key={p.externalId} item={p} onLink={(ids, mid) => {
+                  link(ids, mid)
+                  setResult((r) => r && { ...r, review: (r.review || []).filter((x) => x.externalId !== mid) })
+                }} />
+              ))}
+            </Section>
+          )}
+
           {result.unknown.length > 0 && (
             <div className="border-t border-slate-100 pt-3">
               <button className="flex items-center gap-2 text-sm font-medium text-slate-900"
@@ -160,8 +172,10 @@ function PendingRow({ item, onLink }: {
   item: MidioPending; onLink: (uniqueEquipmentIds: number[], midioId: string) => void
 }) {
   // одна карточка Midio законно соответствует нескольким записям реестра
-  // (одна модель под разными названиями/системами) — выбор множественный
-  const [selected, setSelected] = useState<number[]>([])
+  // (одна модель под разными названиями/системами) — выбор множественный;
+  // уже привязанные записи предотмечены — выбор трактуется как полный список
+  const [selected, setSelected] = useState<number[]>(
+    () => item.candidates.filter((c) => c.linked).map((c) => c.uniqueEquipmentId))
   const toggle = (id: number) => setSelected((s) =>
     s.includes(id) ? s.filter((x) => x !== id) : [...s, id])
 
@@ -186,6 +200,7 @@ function PendingRow({ item, onLink }: {
                    checked={selected.includes(c.uniqueEquipmentId)}
                    onChange={() => toggle(c.uniqueEquipmentId)} />
             {[c.name, c.model].filter(Boolean).join(' · ') || `#${c.uniqueEquipmentId}`}
+            {c.linked && <span className="text-[10px] text-primary-500">привязано</span>}
           </label>
         ))}
         <button className="btn-primary text-xs py-1.5" disabled={selected.length === 0}
@@ -197,21 +212,41 @@ function PendingRow({ item, onLink }: {
   )
 }
 
-/** Состав работ Midio прямо в отчёте — видно, что именно привязываешь. */
+/** Состав работ Midio прямо в отчёте: работа раскрывается кликом, как в карточке. */
 function WorksPreview({ works }: { works?: MidioWorkPreview[] }) {
+  const [open, setOpen] = useState<Set<number>>(new Set())
   if (!works || works.length === 0) return null
+  const toggle = (i: number) => setOpen((prev) => {
+    const next = new Set(prev)
+    if (next.has(i)) next.delete(i); else next.add(i)
+    return next
+  })
   return (
     <div className="mt-1 space-y-0.5">
       {works.map((w, i) => (
-        <div key={i} className="text-xs text-slate-500 flex items-center gap-2">
-          <span className="text-slate-300">•</span>
-          <span>{w.name}</span>
-          {w.periodicity && <span className="text-slate-400">— {w.periodicity}</span>}
-          {w.mandatory === true && (
-            <span className="rounded-full bg-emerald-50 text-emerald-700 px-1.5 py-px text-[10px]">обязательная</span>
-          )}
-          {w.mandatory === false && (
-            <span className="rounded-full bg-amber-50 text-amber-700 px-1.5 py-px text-[10px]">рекомендуемая</span>
+        <div key={i}>
+          <div className="text-xs text-slate-500 flex items-center gap-2">
+            {w.composition ? (
+              <button className="text-slate-400 hover:text-slate-600" title="Показать состав работ"
+                      onClick={() => toggle(i)}>
+                <span className={`inline-block transition-transform ${open.has(i) ? 'rotate-90' : ''}`}>▸</span>
+              </button>
+            ) : (
+              <span className="text-slate-300">•</span>
+            )}
+            <span>{w.name}</span>
+            {w.periodicity && <span className="text-slate-400">— {w.periodicity}</span>}
+            {w.mandatory === true && (
+              <span className="rounded-full bg-emerald-50 text-emerald-700 px-1.5 py-px text-[10px]">обязательная</span>
+            )}
+            {w.mandatory === false && (
+              <span className="rounded-full bg-amber-50 text-amber-700 px-1.5 py-px text-[10px]">рекомендуемая</span>
+            )}
+          </div>
+          {open.has(i) && w.composition && (
+            <div className="ml-6 mt-1 mb-1 text-xs text-slate-500 bg-slate-50 rounded-lg p-2.5 whitespace-pre-line">
+              {w.composition.split('; ').join('\n')}
+            </div>
           )}
         </div>
       ))}
