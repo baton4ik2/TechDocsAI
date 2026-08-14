@@ -56,6 +56,27 @@ class UniqueEquipmentSystemTest extends IntegrationTestBase {
     }
 
     @Test
+    void registryShowsStandardSystemNameForRecordsWithoutObjectEquipment() {
+        // запись из эталона знает систему только каноническим токеном («апс»);
+        // в реестре она должна называться как в справочнике, а не токеном —
+        // иначе рядом с «Пожарной сигнализацией» появляется лишний фильтр «апс»
+        UniqueEquipment fromEtalon = new UniqueEquipment();
+        fromEtalon.setName("Адресная метка");
+        fromEtalon.setModel("АМ-4 прот. R3");
+        fromEtalon.setSystemType("апс");
+        fromEtalon.setEquipKey(UniqueEquipmentService.equipKey("Адресная метка", "АМ-4 прот. R3", null));
+        fromEtalon.setNormKey(UniqueEquipmentService.normKey("Адресная метка", "АМ-4 прот. R3", null, "апс"));
+        uniqueRepository.saveAndFlush(fromEtalon);
+
+        var view = uniqueEquipmentService.list().stream()
+                .filter(v -> v.equipment().getId().equals(fromEtalon.getId()))
+                .findFirst().orElseThrow();
+
+        assertThat(view.objectCount()).isZero();
+        assertThat(view.system()).isEqualTo("Пожарная сигнализация");
+    }
+
+    @Test
     void sameModelInTwoSystemsSplitsIntoTwoRegistryEntries() {
         long facilityId = facility();
         long video = system(facilityId, "Видеонаблюдение");

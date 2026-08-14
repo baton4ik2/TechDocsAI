@@ -175,7 +175,10 @@ public class UniqueEquipmentService {
             passportService.releaseIfStale(ue);
             List<Equipment> eqs = byUnique.getOrDefault(ue.getId(), List.of());
             String system = dominantSystem(eqs, systemNames);
-            if (system == null) system = ue.getSystemType();   // запись без объектного оборудования (только паспорт/эталон)
+            // запись без объектного оборудования (только паспорт/эталон) знает свою
+            // систему лишь каноническим токеном («апс») — показываем стандартное
+            // название справочника, иначе в реестре появляется лишний фильтр
+            if (system == null) system = displaySystem(ue.getSystemType());
             views.add(new UniqueEquipmentView(ue, eqs.size(),
                     plannedWorkRepository.countByUniqueEquipmentId(ue.getId()), system));
         }
@@ -192,7 +195,18 @@ public class UniqueEquipmentService {
         return counts.entrySet().stream()
                 .max(Map.Entry.comparingByValue())
                 .map(Map.Entry::getKey)
+                .map(this::displaySystem)
                 .orElse(null);
+    }
+
+    /**
+     * Отображаемое название системы: стандартное из справочника, иначе исходное.
+     * Нераспознанное имя не выдумываем — показываем как есть.
+     */
+    private String displaySystem(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String standard = ru.techdocs.common.SystemCatalog.standardName(raw);
+        return standard != null ? standard : raw;
     }
 
     public UniqueEquipment get(Long id) {
