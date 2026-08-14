@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        История выгрузок сметы: каждая выгрузка — новая версия (v1 → v1_1 → v1_2).
+        Номер уходит в имя файла, а весь список печатается блоком «История версий»
+        на листе «Данные для расчета», чтобы у заказчика было видно, какая версия
+        расчёта у него на руках.
+    -->
+    <changeSet id="016-01-estimate-exports" author="techdocs">
+        <createTable tableName="estimate_exports">
+            <column name="id" type="BIGSERIAL">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="estimate_id" type="BIGINT">
+                <constraints nullable="false"/>
+            </column>
+            <column name="version" type="INT">
+                <constraints nullable="false"/>
+            </column>
+            <column name="exported_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addForeignKeyConstraint baseTableName="estimate_exports" baseColumnNames="estimate_id"
+                                 constraintName="fk_estimate_exports_estimate"
+                                 referencedTableName="estimates" referencedColumnNames="id"
+                                 onDelete="CASCADE"/>
+        <createIndex tableName="estimate_exports" indexName="ix_estimate_exports_estimate">
+            <column name="estimate_id"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        Разделение обоснований. Колонка I «обоснование периодичности» — документ,
+        которым установлена периодичность (ПКМ, паспорт, ГОСТ, регламент), и она
+        уходит заказчику. Служебное «как приложение подобрало расценку» (совпадение
+        по наименованию, ИИ-аналог, ручной выбор) переезжает в match_note —
+        в выгрузке это отдельная колонка AS «обоснование расценки».
+    -->
+    <changeSet id="015-01-estimate-row-match-note" author="techdocs">
+        <sql>
+            ALTER TABLE estimate_rows ADD COLUMN match_note TEXT;
+        </sql>
+    </changeSet>
+
+    <!--
+        Обоснование периодичности хранится и в памяти решений: если в эталоне
+        написано «ПКМ» или «Паспорт», то же обоснование должно попасть в новую
+        смету, а не подменяться служебным текстом о том, как подобрана расценка.
+    -->
+    <changeSet id="015-02-decision-justification" author="techdocs">
+        <sql>
+            ALTER TABLE estimate_rate_decisions ADD COLUMN justification TEXT;
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

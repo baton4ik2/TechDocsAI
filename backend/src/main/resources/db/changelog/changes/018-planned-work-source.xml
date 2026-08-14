@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        Ссылка на первоисточник плановой работы: дословная цитата из паспорта и
+        страница. Нужны для двух вещей. Первая — проверяемость: инженер видит,
+        откуда взялась периодичность, и в смету попадает настоящее обоснование
+        «Паспорт, с. 14», а не «так сказал ИИ». Вторая — контроль галлюцинаций:
+        цитату ищем в тексте паспорта, и если её там нет, работа помечается
+        неподтверждённой (quote_verified = false) вместо тихого принятия.
+    -->
+    <changeSet id="018-01-planned-work-source" author="techdocs">
+        <addColumn tableName="planned_works">
+            <column name="source_quote" type="TEXT"/>
+            <column name="source_page" type="INT"/>
+            <column name="quote_verified" type="BOOLEAN"/>
+        </addColumn>
+    </changeSet>
+
+    <!--
+        Модель, которой разобран паспорт, и способ чтения (текст / OCR / картинка).
+        Модели для паспортов переключаются в интерфейсе, поэтому без этой пометки
+        нельзя сравнить, кто как справился.
+    -->
+    <changeSet id="018-02-passport-model" author="techdocs">
+        <addColumn tableName="unique_equipment">
+            <column name="passport_model" type="TEXT"/>
+            <column name="passport_mode" type="TEXT"/>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

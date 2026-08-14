@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="009-01-estimate-rate-decisions" author="techdocs">
+        <sql>
+            CREATE TABLE estimate_rate_decisions (
+                id                  BIGSERIAL PRIMARY KEY,
+                unique_equipment_id BIGINT NOT NULL REFERENCES unique_equipment(id) ON DELETE CASCADE,
+                operation_key       VARCHAR(300) NOT NULL,   -- категория операции (то/осмотр/замена…)
+                operation_name      TEXT,                    -- как названо в смете/эталоне
+                rate_code           VARCHAR(64),
+                rate_name           TEXT,
+                periodicity         VARCHAR(200),
+                per_year            NUMERIC(6,2),
+                correction          NUMERIC(6,3),
+                source              VARCHAR(32) NOT NULL DEFAULT 'REFERENCE',  -- REFERENCE / APPROVED
+                times_used          INT NOT NULL DEFAULT 0,
+                updated_at          TIMESTAMP NOT NULL DEFAULT now(),
+                CONSTRAINT uq_decision UNIQUE (unique_equipment_id, operation_key)
+            );
+            CREATE INDEX idx_decision_equipment ON estimate_rate_decisions(unique_equipment_id);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

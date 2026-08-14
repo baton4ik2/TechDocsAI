@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="002-01-default-organization" author="techdocs">
+        <sql>
+            INSERT INTO organizations (name) VALUES ('Моя организация');
+        </sql>
+    </changeSet>
+
+    <changeSet id="002-02-document-types" author="techdocs">
+        <sql>
+            INSERT INTO document_types (name, code) VALUES
+                ('Паспорт', 'PASSPORT'),
+                ('Руководство по эксплуатации', 'MANUAL'),
+                ('Проектная документация', 'PROJECT'),
+                ('Рабочая документация', 'WORKING'),
+                ('Исполнительная документация', 'AS_BUILT'),
+                ('Спецификация', 'SPECIFICATION'),
+                ('Схема', 'SCHEME'),
+                ('Акт', 'ACT'),
+                ('Протокол', 'PROTOCOL'),
+                ('Регламент ТО', 'MAINTENANCE_REGULATION'),
+                ('Инструкция', 'INSTRUCTION'),
+                ('Коммерческое предложение', 'COMMERCIAL_OFFER'),
+                ('Прочее', 'OTHER');
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

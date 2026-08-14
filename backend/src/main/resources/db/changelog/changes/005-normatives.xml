@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="005-01-sourcebooks" author="techdocs">
+        <sql>
+            CREATE TABLE normative_sourcebooks (
+                id                BIGSERIAL PRIMARY KEY,
+                name              VARCHAR(500) NOT NULL,
+                code              VARCHAR(64),
+                original_filename VARCHAR(500),
+                storage_path      VARCHAR(1000),
+                page_count        INT,
+                rate_count        INT NOT NULL DEFAULT 0,
+                status            VARCHAR(32) NOT NULL DEFAULT 'UPLOADED',
+                error_message     TEXT,
+                created_at        TIMESTAMP NOT NULL DEFAULT now()
+            );
+        </sql>
+    </changeSet>
+
+    <changeSet id="005-02-rates" author="techdocs">
+        <sql>
+            CREATE TABLE normative_rates (
+                id                BIGSERIAL PRIMARY KEY,
+                sourcebook_id     BIGINT NOT NULL REFERENCES normative_sourcebooks(id) ON DELETE CASCADE,
+                code              VARCHAR(64) NOT NULL,
+                name              TEXT NOT NULL,
+                unit              VARCHAR(128),
+                work_composition  TEXT,
+                labor_cost        NUMERIC(14,2),   -- ЗП, руб
+                machine_cost      NUMERIC(14,2),   -- ЭМ всего, руб
+                machine_labor     NUMERIC(14,2),   -- в т.ч. ЗПМ, руб
+                material_cost     NUMERIC(14,2),   -- МР, руб
+                labor_hours       NUMERIC(12,3),   -- затраты труда, чел-ч
+                page_number       INT
+            );
+            CREATE INDEX idx_rates_sourcebook ON normative_rates(sourcebook_id);
+            CREATE INDEX idx_rates_code ON normative_rates(code);
+            ALTER TABLE normative_rates
+                ADD COLUMN search_tsv tsvector
+                GENERATED ALWAYS AS (to_tsvector('russian',
+                    coalesce(name,'') || ' ' || coalesce(code,'') || ' ' || coalesce(work_composition,''))) STORED;
+            CREATE INDEX idx_rates_tsv ON normative_rates USING GIN (search_tsv);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

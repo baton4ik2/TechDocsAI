@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="007-01-estimates" author="techdocs">
+        <sql>
+            CREATE TABLE estimates (
+                id             BIGSERIAL PRIMARY KEY,
+                facility_id    BIGINT NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,
+                system_id      BIGINT REFERENCES engineering_systems(id) ON DELETE SET NULL,
+                name           VARCHAR(500) NOT NULL,
+                status         VARCHAR(32) NOT NULL DEFAULT 'DRAFT',
+                -- снимок коэффициентов: старые сметы не «плывут» при смене ставок
+                nr_zp          NUMERIC(6,4) NOT NULL DEFAULT 0.7,   -- НР от ЗП
+                np_zp          NUMERIC(6,4) NOT NULL DEFAULT 0.1,   -- НП от ЗП
+                nr_em          NUMERIC(6,4) NOT NULL DEFAULT 0.78,  -- НР от ЭМ
+                np_em          NUMERIC(6,4) NOT NULL DEFAULT 0.3,   -- НП от ЭМ (от ЗПМ)
+                vat            NUMERIC(6,4) NOT NULL DEFAULT 0.22,  -- НДС
+                rt_coefficient NUMERIC(8,4) NOT NULL DEFAULT 1.998, -- переход в уровень РТ (ЗП/ЗПМ)
+                created_at     TIMESTAMP NOT NULL DEFAULT now(),
+                updated_at     TIMESTAMP NOT NULL DEFAULT now()
+            );
+            CREATE INDEX idx_estimates_facility ON estimates(facility_id);
+        </sql>
+    </changeSet>
+
+    <changeSet id="007-02-estimate-rows" author="techdocs">
+        <sql>
+            CREATE TABLE estimate_rows (
+                id             BIGSERIAL PRIMARY KEY,
+                estimate_id    BIGINT NOT NULL REFERENCES estimates(id) ON DELETE CASCADE,
+                position       INT,
+                section        VARCHAR(300),          -- «РАЗДЕЛ А. СКУД» (для группировки/экспорта)
+                equipment_id   BIGINT,                -- ссылка на реестр (снимок ниже — на случай изменений)
+                equipment_name TEXT,
+                equipment_type VARCHAR(500),
+                manufacturer   VARCHAR(500),
+                operation_name TEXT,                  -- E: наименование мероприятия
+                rate_code      VARCHAR(64),           -- F: шифр расценки
+                rate_name      TEXT,                  -- G: наименование расценки
+                periodicity    VARCHAR(200),          -- H: периодичность
+                justification  TEXT,                  -- I: обоснование
+                ops_per_year   NUMERIC(8,2),          -- J: операций в год
+                qty            NUMERIC(14,3),         -- K: количество оборудования
+                unit_basis     NUMERIC(14,3) NOT NULL DEFAULT 1,  -- M: на какой объём рассчитана расценка
+                price_zp       NUMERIC(14,2),         -- O: ЗП на ед.
+                price_em       NUMERIC(14,2),         -- P: ЭМ на ед.
+                price_zpm      NUMERIC(14,2),         -- Q: в т.ч. ЗПМ на ед.
+                price_mr       NUMERIC(14,2),         -- R: МР на ед.
+                correction     NUMERIC(6,3) NOT NULL DEFAULT 1,   -- S: поправочный коэффициент
+                labor_hours    NUMERIC(12,3)          -- AP: затраты труда на ед. (справочно)
+            );
+            CREATE INDEX idx_estimate_rows_estimate ON estimate_rows(estimate_id);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

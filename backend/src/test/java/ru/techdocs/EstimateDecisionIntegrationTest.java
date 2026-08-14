@@ -1,0 +1,309 @@
+package ru.techdocs;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.transaction.annotation.Transactional;
+import ru.techdocs.engineeringsystem.EngineeringSystem;
+import ru.techdocs.engineeringsystem.EngineeringSystemRepository;
+import ru.techdocs.equipment.Equipment;
+import ru.techdocs.equipment.EquipmentRepository;
+import ru.techdocs.normative.NormativeRate;
+import ru.techdocs.normative.NormativeRateRepository;
+import ru.techdocs.normative.NormativeSourcebook;
+import ru.techdocs.normative.NormativeSourcebookRepository;
+
+import java.io.ByteArrayOutputStream;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+@Transactional
+class EstimateDecisionIntegrationTest extends IntegrationTestBase {
+
+    @Autowired EngineeringSystemRepository systemRepository;
+    @Autowired EquipmentRepository equipmentRepository;
+    @Autowired NormativeSourcebookRepository sourcebookRepository;
+    @Autowired NormativeRateRepository rateRepository;
+
+    private void seedRate() {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник 22");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        NormativeRate rate = new NormativeRate();
+        rate.setSourcebookId(book.getId());
+        rate.setCode("22-2203-128-1/1");
+        rate.setName("Техническое обслуживание извещателя пожарного дымового");
+        rate.setUnit("1 шт.");
+        rate.setLaborCost(new BigDecimal("139.33"));
+        rate.setMaterialCost(new BigDecimal("50.40"));
+        rateRepository.saveAndFlush(rate);
+    }
+
+    /** Мини-эталон XLSX: заголовки + одна строка. */
+    private byte[] referenceXlsx() throws Exception {
+        try (XSSFWorkbook wb = new XSSFWorkbook()) {
+            Sheet sheet = wb.createSheet("Расчёт");
+            Row h = sheet.createRow(0);
+            h.createCell(0).setCellValue("Наименование оборудования");
+            h.createCell(1).setCellValue("Тип оборудования");
+            h.createCell(2).setCellValue("Производитель оборудования");
+            h.createCell(3).setCellValue("Наименование мероприятия");
+            h.createCell(4).setCellValue("Шифр расценки");
+            h.createCell(5).setCellValue("периодичность операции");
+            Row r = sheet.createRow(1);
+            r.createCell(0).setCellValue("Извещатель пожарный дымовой");
+            r.createCell(1).setCellValue("ИП212");
+            r.createCell(2).setCellValue("Рубеж");
+            r.createCell(3).setCellValue("Техническое обслуживание извещателя");
+            r.createCell(4).setCellValue("22-2203-128-1/1");
+            r.createCell(5).setCellValue("раз в 6 мес.");
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            wb.write(out);
+            return out.toByteArray();
+        }
+    }
+
+    private long facility(String name) throws Exception {
+        String resp = mockMvc.perform(post("/api/facilities").header("Authorization", bearer())
+                        .contentType("application/json").content("{\"name\":\"" + name + "\",\"systems\":[]}"))
+                .andReturn().getResponse().getContentAsString();
+        return json.readTree(resp).get("id").asLong();
+    }
+
+    private long system(long facilityId) {
+        EngineeringSystem s = new EngineeringSystem();
+        s.setFacilityId(facilityId);
+        s.setName("АПС");
+        return systemRepository.saveAndFlush(s).getId();
+    }
+
+    private void equipment(long facilityId, long systemId) {
+        Equipment e = new Equipment();
+        e.setFacilityId(facilityId);
+        e.setEngineeringSystemId(systemId);
+        e.setName("Извещатель пожарный дымовой");
+        e.setModel("ИП212");
+        e.setManufacturer("Рубеж");
+        e.setQuantity(new BigDecimal("7"));
+        equipmentRepository.saveAndFlush(e);
+    }
+
+    @Test
+    void importedReferenceIsReusedOnAnotherObject() throws Exception {
+        seedRate();
+        // 1) загружаем эталон — наполняем память и создаём уникальное оборудование
+        mockMvc.perform(multipart("/api/estimates/import-reference")
+                        .file(new MockMultipartFile("file", "etalon.xlsx",
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", referenceXlsx()))
+                        .header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.imported").value(1));
+
+        mockMvc.perform(get("/api/estimate-decisions").header("Authorization", bearer()))
+                .andExpect(jsonPath("$.length()").value(1));
+
+        // 2) на другом объекте то же оборудование → сборка берёт расценку из памяти, без ИИ
+        long f = facility("Новый объект");
+        long sys = system(f);
+        equipment(f, sys);
+        String est = mockMvc.perform(post("/api/estimates?facilityId=" + f).header("Authorization", bearer())
+                        .contentType("application/json").content("{\"name\":\"Смета\"}"))
+                .andReturn().getResponse().getContentAsString();
+        long estId = json.readTree(est).get("id").asLong();
+
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys)
+                        .header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(1));
+
+        JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        JsonNode row = view.get("rows").get(0).get("row");
+        org.assertj.core.api.Assertions.assertThat(row.get("rateCode").asText()).isEqualTo("22-2203-128-1/1");
+        org.assertj.core.api.Assertions.assertThat(row.get("opsPerYear").asDouble()).isEqualTo(2.0); // раз в 6 мес.
+        org.assertj.core.api.Assertions.assertThat(row.get("priceZp").asDouble()).isEqualTo(139.33); // из каталога
+        // строка из памяти эталона — проверять не нужно
+        org.assertj.core.api.Assertions.assertThat(row.get("matchSource").asText()).isEqualTo("LEARNED");
+        org.assertj.core.api.Assertions.assertThat(row.get("needsReview").asBoolean()).isFalse();
+    }
+
+    /** Реальный эталон повторяет оборудование на многих строках — не должно падать. */
+    private byte[] duplicatesXlsx() throws Exception {
+        try (XSSFWorkbook wb = new XSSFWorkbook()) {
+            Sheet sheet = wb.createSheet("Расчёт");
+            Row h = sheet.createRow(0);
+            h.createCell(0).setCellValue("Наименование оборудования");
+            h.createCell(1).setCellValue("Тип оборудования");
+            h.createCell(2).setCellValue("Производитель оборудования");
+            h.createCell(3).setCellValue("Наименование мероприятия");
+            h.createCell(4).setCellValue("Шифр расценки");
+            h.createCell(5).setCellValue("периодичность операции");
+            String[][] rows = {
+                    {"Блок питания", "БП", "Рубеж", "Технический осмотр", "22-2201-78-1/1", "раз в 1 мес."},
+                    {"Блок питания", "БП", "Рубеж", "Техническое обслуживание", "22-2203-91-1/1", "раз в 6 мес."},
+                    {"Блок питания", "БП", "Рубеж", "Техническое обслуживание", "22-2203-91-1/1", "раз в 6 мес."},
+            };
+            int r = 1;
+            for (String[] row : rows) {
+                Row rw = sheet.createRow(r++);
+                for (int c = 0; c < row.length; c++) rw.createCell(c).setCellValue(row[c]);
+            }
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            wb.write(out);
+            return out.toByteArray();
+        }
+    }
+
+    @Test
+    void importDeduplicatesRepeatedEquipment() throws Exception {
+        mockMvc.perform(multipart("/api/estimates/import-reference")
+                        .file(new MockMultipartFile("file", "etalon.xlsx",
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", duplicatesXlsx()))
+                        .header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.imported").value(2))   // осмотр + ТО (третья строка — дубль ТО)
+                .andExpect(jsonPath("$.rows").value(3));
+
+        mockMvc.perform(get("/api/estimate-decisions").header("Authorization", bearer()))
+                .andExpect(jsonPath("$.length()").value(2));
+    }
+
+    /** Одинаковое наименование, разные модели → одна расценка в пределах сметы (консистентность по типу). */
+    @Test
+    void sameNameDifferentModelsGetSameRateWithinEstimate() throws Exception {
+        NormativeSourcebook book = new NormativeSourcebook();
+        book.setName("Сборник 21");
+        book.setStatus(NormativeSourcebook.STATUS_READY);
+        book = sourcebookRepository.saveAndFlush(book);
+        for (String[] r : new String[][]{
+                {"21-100-1/1", "Техническое обслуживание источника вторичного электропитания"},
+                {"21-200-2/1", "Техническое обслуживание аккумулятора резервного питания"}}) {
+            NormativeRate rate = new NormativeRate();
+            rate.setSourcebookId(book.getId());
+            rate.setCode(r[0]);
+            rate.setName(r[1]);
+            rate.setUnit("1 шт.");
+            rate.setLaborCost(new BigDecimal("100.00"));
+            rateRepository.saveAndFlush(rate);
+        }
+
+        long f = facility("Объект с источниками");
+        EngineeringSystem s = new EngineeringSystem();
+        s.setFacilityId(f);
+        s.setName("СКУД");
+        long sys = systemRepository.saveAndFlush(s).getId();
+        // два «Источника вторичного электропитания» разных моделей
+        for (String model : new String[]{"ИВЭПР 12/2 2x7", "ИВЭПР 12/2 2x17"}) {
+            Equipment e = new Equipment();
+            e.setFacilityId(f);
+            e.setEngineeringSystemId(sys);
+            e.setName("Источник вторичного электропитания");
+            e.setModel(model);
+            e.setQuantity(new BigDecimal("1"));
+            equipmentRepository.saveAndFlush(e);
+        }
+
+        String est = mockMvc.perform(post("/api/estimates?facilityId=" + f).header("Authorization", bearer())
+                        .contentType("application/json").content("{\"name\":\"Смета\"}"))
+                .andReturn().getResponse().getContentAsString();
+        long estId = json.readTree(est).get("id").asLong();
+        mockMvc.perform(post("/api/estimates/" + estId + "/generate?systemIds=" + sys).header("Authorization", bearer()))
+                .andExpect(jsonPath("$.created").value(2));
+
+        JsonNode view = json.readTree(mockMvc.perform(get("/api/estimates/" + estId).header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        String code0 = view.get("rows").get(0).get("row").get("rateCode").asText();
+        String code1 = view.get("rows").get(1).get("row").get("rateCode").asText();
+        // обе строки одного типа получили одну и ту же расценку
+        org.assertj.core.api.Assertions.assertThat(code0).isNotBlank().isEqualTo(code1);
+    }
+
+    /** Эталон: «количество операций в год» из колонки важнее текста периодичности (осмотр — 10, не 12). */
+    @Test
+    void importUsesOpsPerYearColumnOverPeriodicityText() throws Exception {
+        byte[] xlsx;
+        try (XSSFWorkbook wb = new XSSFWorkbook()) {
+            Sheet sheet = wb.createSheet("Расчёт");
+            Row h = sheet.createRow(0);
+            h.createCell(0).setCellValue("Наименование оборудования");
+            h.createCell(1).setCellValue("Наименование мероприятия");
+            h.createCell(2).setCellValue("Шифр расценки");
+            h.createCell(3).setCellValue("периодичность операции");
+            h.createCell(4).setCellValue("количество операций в год");
+            Row r = sheet.createRow(1);
+            r.createCell(0).setCellValue("Источник питания");
+            r.createCell(1).setCellValue("Технический осмотр");
+            r.createCell(2).setCellValue("22-2201-78-1/1");
+            r.createCell(3).setCellValue("раз в месяц");   // текст → 12
+            r.createCell(4).setCellValue(10);              // но фактически 10 (ТО поглощает осмотры)
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            wb.write(out);
+            xlsx = out.toByteArray();
+        }
+        mockMvc.perform(multipart("/api/estimates/import-reference")
+                        .file(new MockMultipartFile("file", "etalon.xlsx",
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xlsx))
+                        .header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.imported").value(1));
+
+        JsonNode decisions = json.readTree(mockMvc.perform(get("/api/estimate-decisions").header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString());
+        org.assertj.core.api.Assertions.assertThat(decisions.get(0).get("decision").get("perYear").asDouble())
+                .isEqualTo(10.0);
+    }
+
+    /** Массовое удаление решений (выбор нескольких строк/систем в UI). */
+    @Test
+    void bulkDeleteRemovesSelectedDecisions() throws Exception {
+        mockMvc.perform(multipart("/api/estimates/import-reference")
+                        .file(new MockMultipartFile("file", "etalon.xlsx",
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", duplicatesXlsx()))
+                        .header("Authorization", bearer()))
+                .andExpect(status().isOk());
+
+        JsonNode all = json.readTree(mockMvc.perform(get("/api/estimate-decisions").header("Authorization", bearer()))
+                .andReturn().getResponse().getContentAsString());
+        org.assertj.core.api.Assertions.assertThat(all).hasSize(2);
+        String ids = all.get(0).get("decision").get("id").asText() + ","
+                + all.get(1).get("decision").get("id").asText();
+
+        mockMvc.perform(post("/api/estimate-decisions/bulk-delete").header("Authorization", bearer())
+                        .contentType("application/json").content("{\"ids\":[" + ids + "]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deleted").value(2));
+
+        mockMvc.perform(get("/api/estimate-decisions").header("Authorization", bearer()))
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void promoteStoresDecisionsFromEstimate() throws Exception {
+        seedRate();
+        long f = facility("Объект");
+        String est = mockMvc.perform(post("/api/estimates?facilityId=" + f).header("Authorization", bearer())
+                        .contentType("application/json").content("{\"name\":\"Смета\"}"))
+                .andReturn().getResponse().getContentAsString();
+        long estId = json.readTree(est).get("id").asLong();
+        // строка с оборудованием и расценкой
+        mockMvc.perform(post("/api/estimates/" + estId + "/rows").header("Authorization", bearer())
+                        .contentType("application/json")
+                        .content("{\"equipmentName\":\"Извещатель пожарный дымовой\",\"equipmentType\":\"ИП212\","
+                                + "\"manufacturer\":\"Рубеж\",\"operationName\":\"Техническое обслуживание\","
+                                + "\"rateCode\":\"22-2203-128-1/1\",\"qty\":1,\"periodicity\":\"раз в 6 мес.\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/estimates/" + estId + "/promote").header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.saved").value(1));
+        mockMvc.perform(get("/api/estimate-decisions").header("Authorization", bearer()))
+                .andExpect(jsonPath("$.length()").value(1));
+    }
+}

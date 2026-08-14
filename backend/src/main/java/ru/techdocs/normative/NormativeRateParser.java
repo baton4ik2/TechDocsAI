@@ -1,0 +1,280 @@
+package ru.techdocs.normative;
+
+import org.springframework.stereotype.Service;
+import ru.techdocs.processing.PageText;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Парсер расценок СН-2012 из текста PDF-сборника.
+ * <p>
+ * Структура расценки: шифр (22-2203-95-1/1) → наименование работ → 6 стоимостных
+ * значений: прямые затраты, ЗП, ЭМ всего, в т.ч. ЗПМ, МР, затраты труда (чел-ч).
+ * Все 6 — с десятичной запятой, нули обозначены прочерком «−»/«-», что позволяет
+ * отделить их от чисел в наименовании («тип 6424», «502»).
+ * <p>
+ * «Состав работ:» и «Измеритель:» относятся к таблице (группе расценок) и часто
+ * печатаются на ОТДЕЛЬНОЙ странице выше самих расценок. Поэтому наименование и
+ * стоимости берём в пределах страницы расценки, а состав/измеритель ищем по
+ * всему документу — по ближайшему заголовку выше данной расценки.
+ */
+@Service
+public class NormativeRateParser {
+
+    // шифр расценки: 22-2203-95-1/1, 1-2203-51-1/1, 24-2903-7-3/1
+    // Шифр расценки. В узкой колонке сборника длинные шифры переносятся на две строки
+    // («22-2203-104-» / «11/1»), поэтому после дефисов допускаем перенос — иначе такие
+    // расценки в каталог не попадают вовсе, а в смете остаются без цен и состава работ.
+    private static final Pattern CODE = Pattern.compile(
+            "(\\d{1,2}-\\s*\\d{3,4}-\\s*\\d{1,3}-\\s*\\d{1,2}/\\d{1,2})");
+    // стоимостной токен: число с десятичной запятой или прочерк (ноль).
+    // Пробел допускается ТОЛЬКО как разделитель тысяч (группы ровно по 3 цифры),
+    // иначе «типа 6424 502,15» слилось бы в одно число. Прочерк — отдельный символ,
+    // а не дефис внутри слова («приемно-контрольного», «чел-ч»): границы по буквам/цифрам.
+    private static final Pattern COST = Pattern.compile(
+            "(?<![\\p{L}\\d])(\\d{1,3}(?:[ \\u00A0]\\d{3})+,\\d{1,3}|\\d+,\\d{1,3}|[-—–])(?![\\p{L}\\d])");
+    private static final Pattern UNIT = Pattern.compile("Измеритель\\s*:\\s*([^\\n]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern COMPOSITION = Pattern.compile(
+            "Состав\\s+работ\\s*:\\s*(.+?)(?=Измеритель\\s*:|Наименование|$)",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+    /** Заголовок (состав/измеритель) с позицией в сквозном тексте документа. */
+    private record Marker(int offset, String value) {}
+
+    public List<NormativeRate> parse(List<PageText> pages) {
+        // сквозной текст всего документа + карта: смещение начала каждой страницы
+        StringBuilder full = new StringBuilder();
+        List<int[]> pageStarts = new ArrayList<>();   // [offset, pageNumber]
+        for (PageText page : pages) {
+            String text = page.text() == null ? "" : page.text();
+            pageStarts.add(new int[]{full.length(), page.pageNumber()});
+            full.append(text).append('\n');
+        }
+        String document = full.toString();
+
+        // заголовки «Состав работ:» и «Измеритель:» по всему документу — привяжем к
+        // расценкам по ближайшему заголовку выше (таблица может быть на другой странице)
+        List<Marker> compositions = markers(document, COMPOSITION, 2000, true);
+        List<Marker> units = markers(document, UNIT, 60, false);
+
+        // Разбираем сквозной текст, а не страницу за страницей: высокая строка таблицы
+        // переносится через разрыв страницы, и тогда шифр остаётся на одной странице,
+        // а колонки со стоимостями — на следующей. При постраничном разборе такая
+        // расценка теряла цены целиком.
+        List<NormativeRate> rates = new ArrayList<>();
+        parseDocument(document, pageStarts, compositions, units, rates);
+        return rates;
+    }
+
+    /** Номер страницы, на которой находится позиция в сквозном тексте. */
+    private int pageOf(List<int[]> pageStarts, int offset) {
+        int number = pageStarts.isEmpty() ? 1 : pageStarts.get(0)[1];
+        for (int[] start : pageStarts) {
+            if (start[0] > offset) break;
+            number = start[1];
+        }
+        return number;
+    }
+
+    private List<Marker> markers(String document, Pattern pattern, int maxLen, boolean asComposition) {
+        List<Marker> list = new ArrayList<>();
+        Matcher m = pattern.matcher(document);
+        while (m.find()) {
+            String value = m.group(1).replaceAll("[ \\t\\u00A0]+", " ")
+                    .replaceAll("\\s*\\n\\s*", " ").strip();
+            value = asComposition ? formatComposition(value) : sanitizeUnit(value);
+            if (value != null && !value.isBlank()) {
+                list.add(new Marker(m.start(), truncate(value, maxLen)));
+            }
+        }
+        return list; // упорядочены по возрастанию offset (порядок обхода Matcher.find)
+    }
+
+    /** Каждый пункт состава работ («1. …», «2. …») — с новой строки. */
+    private String formatComposition(String value) {
+        // список пунктов идёт inline после извлечения текста: ставим перенос перед «N. »
+        return value.replaceAll("\\s+(\\d{1,2})[.)]\\s+", "\n$1. ").strip();
+    }
+
+    /** Измеритель — короткая единица («шт.», «10 шт.»). Отсекаем прилипший мусор
+     *  из соседних колонок таблицы («в том числе», «Шифр», «Прямые…»). */
+    private String sanitizeUnit(String value) {
+        String v = value.split("(?i)в\\s+том\\s+числе|Шифр|Прямые|Наименование")[0].strip();
+        v = v.replaceAll("[;,]\\s*$", "").strip();
+        // явный мусор из ведомостей расхода материалов
+        if (v.length() > 40 || v.contains("(") ) return null;
+        return v.isBlank() ? null : v;
+    }
+
+    private void parseDocument(String text, List<int[]> pageStarts,
+                               List<Marker> compositions, List<Marker> units,
+                               List<NormativeRate> rates) {
+        Matcher codeMatcher = CODE.matcher(text);
+        // позиции шифров, чтобы ограничивать блок каждой расценки
+        List<int[]> codeSpans = new ArrayList<>();
+        while (codeMatcher.find()) {
+            // Шифр расценки — крайняя левая колонка таблицы, он всегда начинает строку.
+            // Шифры внутри наименования («добавлять к нормам 1.22-2203-118-1/1 и …»)
+            // новой расценкой не считаем: иначе они обрывают блок настоящей расценки
+            // до её колонок со стоимостями и плодят несуществующие записи каталога.
+            if (startsLine(text, codeMatcher.start())) {
+                codeSpans.add(new int[]{codeMatcher.start(), codeMatcher.end()});
+            }
+        }
+        for (int i = 0; i < codeSpans.size(); i++) {
+            int[] span = codeSpans.get(i);
+            // перенос внутри шифра убираем: в каталоге он должен быть одной строкой
+            String code = text.substring(span[0], span[1]).replaceAll("\\s+", "");
+            int blockEnd = (i + 1 < codeSpans.size()) ? codeSpans.get(i + 1)[0] : text.length();
+            String block = text.substring(span[1], blockEnd);
+
+            // все стоимостные токены с позициями
+            List<String> tokens = new ArrayList<>();
+            List<int[]> spans = new ArrayList<>();   // [start, end]
+            Matcher cm = COST.matcher(block);
+            while (cm.find()) {
+                tokens.add(cm.group(1));
+                spans.add(new int[]{cm.start(), cm.end()});
+            }
+            if (tokens.size() < 2) continue;
+
+            // 6 стоимостных колонок идут ПОДРЯД (между ними только пробелы). Прочерк
+            // периодичности «- полугодовое», числа в наименовании и лишние значения с
+            // соседних строк отделены словами/переносами и в этот прогон не попадают.
+            int[] run = selectCostRun(block, spans);
+            if (run == null) continue;
+            List<String> costs = tokens.subList(run[0], run[1]);
+
+            String name = block.substring(0, spans.get(run[0])[0]).strip()
+                    .replaceAll("\\s{2,}", " ");
+            if (name.isBlank() || !looksLikeRateName(name)) continue;
+
+            int absCodePos = span[0];
+            NormativeRate rate = new NormativeRate();
+            rate.setCode(code);
+            rate.setName(name);
+            rate.setPageNumber(pageOf(pageStarts, absCodePos));
+            rate.setUnit(lastBefore(units, absCodePos));
+            rate.setWorkComposition(lastBefore(compositions, absCodePos));
+            assignCosts(rate, costs);
+            rates.add(rate);
+        }
+    }
+
+    /**
+     * Наименование настоящей расценки — работа, начинается с буквы («Техническое
+     * обслуживание…», «Замена…»). Строки из ведомостей расхода материалов начинаются
+     * с кода материала («21.1-20-1 Бязь», «21.1-4-7 Газ…») — их отсекаем.
+     */
+    /** Позиция начинает строку (левее только пробелы). */
+    private boolean startsLine(String text, int position) {
+        for (int i = position - 1; i >= 0; i--) {
+            char c = text.charAt(i);
+            if (c == '\n' || c == '\r') return true;
+            if (!Character.isWhitespace(c)) return false;
+        }
+        return true;
+    }
+
+    private boolean looksLikeRateName(String name) {
+        String s = name.replaceFirst("^[\\s«»\"'`\\-–—]+", "");
+        return !s.isEmpty() && Character.isLetter(s.charAt(0));
+    }
+
+    /**
+     * Выбирает «прогон» стоимостных колонок расценки — соседние токены, между
+     * которыми в тексте нет букв. Берём ПЕРВЫЙ прогон длиной ≥ 4 (6 колонок идут
+     * сразу после наименования); иначе — самый длинный прогон. Возвращает
+     * [firstIdx, lastIdxExclusive] или null.
+     */
+    private int[] selectCostRun(String block, List<int[]> spans) {
+        List<int[]> runs = new ArrayList<>();
+        int runStart = 0;
+        for (int i = 1; i < spans.size(); i++) {
+            String between = block.substring(spans.get(i - 1)[1], spans.get(i)[0]);
+            if (containsLetter(between)) {
+                runs.add(new int[]{runStart, i});
+                runStart = i;
+            }
+        }
+        runs.add(new int[]{runStart, spans.size()});
+
+        // Настоящие колонки расценки — прогон ровно из 6 значений (прямые затраты, ЗП,
+        // ЭМ, ЗПМ, МР, затраты труда). Ищем его первым: короткий прогон из соседнего
+        // текста (сноска, номер таблицы) может идти РАНЬШЕ настоящего, и тогда числа
+        // раскладывались по колонкам со сдвигом — ЗП оставалась пустой, а в ЗПМ
+        // попадало чужое значение.
+        for (int[] r : runs) {
+            if (r[1] - r[0] >= 6) return r;
+        }
+        int[] best = null;
+        for (int[] r : runs) {
+            int len = r[1] - r[0];
+            if (len >= 4) return r;                       // неполный, но похожий на колонки
+            if (best == null || len > best[1] - best[0]) best = r;
+        }
+        return best != null && best[1] - best[0] >= 2 ? best : null;
+    }
+
+    private boolean containsLetter(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.isLetter(s.charAt(i))) return true;
+        }
+        return false;
+    }
+
+    /** Значение ближайшего заголовка, расположенного выше позиции расценки. */
+    private String lastBefore(List<Marker> markers, int pos) {
+        String value = null;
+        for (Marker m : markers) {
+            if (m.offset() < pos) value = m.value();
+            else break; // список упорядочен — дальше только заголовки ниже расценки
+        }
+        return value;
+    }
+
+    /**
+     * 6 значений в порядке: Прямые(всего), ЗП, ЭМ(всего), ЗПМ, МР, затраты труда.
+     * Берём ПОСЛЕДНИЕ 6 (перед ними в наименовании тоже могут быть числа с запятой).
+     */
+    private void assignCosts(NormativeRate rate, List<String> costs) {
+        // Меньше 5 значений — в прогоне нет заработной платы, значит это не колонки
+        // расценки. Раскладывать такое по колонкам нельзя: получатся расценка без ЗП
+        // и чужие числа в ЭМ/ЗПМ. Лучше оставить цены пустыми — это видно и в смете,
+        // и в проверке каталога, тогда как подставленный мусор выглядит правдоподобно.
+        if (costs.size() < 5) return;
+        List<String> tail = costs.size() > 6 ? costs.subList(costs.size() - 6, costs.size()) : costs;
+        // выравниваем по правому краю: последний — затраты труда
+        int n = tail.size();
+        rate.setLaborHours(num(get(tail, n - 1)));      // затраты труда
+        rate.setMaterialCost(num(get(tail, n - 2)));    // МР
+        rate.setMachineLabor(num(get(tail, n - 3)));    // ЗПМ
+        rate.setMachineCost(num(get(tail, n - 4)));     // ЭМ всего
+        rate.setLaborCost(num(get(tail, n - 5)));       // ЗП
+        // n-6 — Прямые затраты (производная величина), не храним
+    }
+
+    private String get(List<String> list, int idx) {
+        return idx >= 0 && idx < list.size() ? list.get(idx) : null;
+    }
+
+    private BigDecimal num(String raw) {
+        if (raw == null) return null;
+        String s = raw.strip();
+        if (s.equals("-") || s.equals("—") || s.equals("–")) return BigDecimal.ZERO;
+        s = s.replace(" ", "").replace(" ", "").replace(',', '.');
+        try {
+            return new BigDecimal(s);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private String truncate(String s, int max) {
+        return s.length() > max ? s.substring(0, max) : s;
+    }
+}

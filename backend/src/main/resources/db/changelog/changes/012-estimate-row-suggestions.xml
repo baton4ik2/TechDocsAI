@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        Варианты расценки для строки (JSON). Когда совпадение с эталоном неточное
+        (похожее наименование), строка вместо молчаливого выбора несёт список
+        вариантов: расценка из эталона + топ предложений ИИ. Инженер выбирает —
+        подставляется в строку. Снимается при ручной установке шифра.
+    -->
+    <changeSet id="012-01-estimate-row-suggestions" author="techdocs">
+        <sql>
+            ALTER TABLE estimate_rows ADD COLUMN suggestions TEXT;
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

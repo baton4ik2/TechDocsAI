@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <include file="db/changelog/changes/001-init-schema.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/002-seed-reference-data.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/003-fulltext-search.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/004-google-drive.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/005-normatives.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/006-pkm.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/007-estimates.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/008-unique-equipment.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/009-estimate-decisions.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/010-unique-equipment-system.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/011-estimate-row-review.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/012-estimate-row-suggestions.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/013-decision-rate-in-key.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/014-facility-area.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/015-estimate-row-match-note.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/016-estimate-exports.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/017-estimate-reviews.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/018-planned-work-source.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/019-passport-started-at.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/020-midio-link.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/021-planned-work-mandatory.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/022-midio-sync-report.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/023-planned-work-source-note.xml" relativeToChangelogFile="false"/>
+
+</databaseChangeLog>

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        Система — часть идентичности уникального оборудования: одна и та же модель
+        в разных инженерных системах (коммутатор LTV в Видеонаблюдении и в СКУД) —
+        это ДВЕ записи реестра. norm_key теперь = equip_key + "|" + канон(система);
+        equip_key = наименование|модель|производитель (нормализованные).
+    -->
+    <changeSet id="010-01-unique-equipment-system" author="techdocs">
+        <sql>
+            ALTER TABLE unique_equipment ADD COLUMN system_type VARCHAR(200);
+            ALTER TABLE unique_equipment ADD COLUMN equip_key VARCHAR(900);
+            -- бэкфилл: существующие ключи были без системы → equip_key = прежний norm_key
+            UPDATE unique_equipment SET equip_key = norm_key WHERE equip_key IS NULL;
+            CREATE INDEX idx_unique_equipment_equip_key ON unique_equipment(equip_key);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

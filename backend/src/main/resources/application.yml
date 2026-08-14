@@ -1,0 +1,111 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: techdocs-ai
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/techdocs}
+    username: ${DB_USERNAME:techdocs}
+    password: ${DB_PASSWORD:techdocs}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.xml
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+
+techdocs:
+  auth:
+    admin-email: ${ADMIN_EMAIL:admin@techdocs.local}
+    admin-password: ${ADMIN_PASSWORD:admin123}
+    jwt-secret: ${JWT_SECRET:change-me-in-production-please-use-a-long-random-secret-key}
+    jwt-expiration-minutes: ${JWT_EXPIRATION_MINUTES:720}
+  storage:
+    endpoint: ${STORAGE_ENDPOINT:http://localhost:9000}
+    access-key: ${STORAGE_ACCESS_KEY:techdocs}
+    secret-key: ${STORAGE_SECRET_KEY:techdocs123}
+    bucket: ${STORAGE_BUCKET:techdocs-documents}
+  ai:
+    base-url: ${AI_BASE_URL:https://api.openai.com/v1}
+    api-key: ${AI_API_KEY:}
+    chat-model: ${AI_CHAT_MODEL:gpt-4o-mini}
+    # Vision-модель для извлечения оборудования из сканов (читает картинку страницы
+    # напрямую, без OCR). Пусто — извлечение работает по распознанному тексту.
+    # Провайдер vision может отличаться от чатового: например, чат — локальный
+    # Ollama, а извлечение — облачный Gemini. Если vision-base-url пуст,
+    # используется основной провайдер (base-url).
+    vision-base-url: ${AI_VISION_BASE_URL:}
+    vision-api-key: ${AI_VISION_API_KEY:}
+    vision-model: ${AI_VISION_MODEL:}
+    # Разрешение картинки для vision. 160 — проверенный баланс: на 220 qwen2.5vl:7b
+    # начинает возвращать пустые ответы (изображение переполняет контекст модели).
+    vision-dpi: ${AI_VISION_DPI:160}
+    # Модель для подбора расценок в сметах (текстовая, не vision). Может отличаться
+    # от чатовой: например, чат — локальный Ollama, подбор — облачный Gemini 2.5,
+    # которому отдаётся только короткий список найденных расценок (дёшево). Если
+    # match-base-url пуст — используется основной провайдер (base-url).
+    match-base-url: ${AI_MATCH_BASE_URL:}
+    match-api-key: ${AI_MATCH_API_KEY:}
+    match-model: ${AI_MATCH_MODEL:}
+    # Проверка готовой сметы — задача на рассуждение по длинному контексту, а не
+    # выбор из короткого списка, поэтому модель здесь отдельная и заведомо сильнее
+    # той, что подбирает расценки. Пусто — используется основной провайдер.
+    review-base-url: ${AI_REVIEW_BASE_URL:}
+    review-api-key: ${AI_REVIEW_API_KEY:}
+    review-model: ${AI_REVIEW_MODEL:}
+    # Список моделей через запятую, между которыми можно переключаться прямо в
+    # интерфейсе. Нужен, чтобы сравнить модели на одной смете, не пересобирая
+    # контейнер. Запрос принимается только с моделью из этого списка.
+    review-models: ${AI_REVIEW_MODELS:}
+    # Модель для простого разбора замечания. Короткий разбор модель пишет прямо в
+    # ответе проверки, поэтому отдельный запрос нужен редко — и он несложный.
+    # «Разобрать глубже» сюда не относится: он существует ради глубины и всегда
+    # идёт моделью проверки. Пусто — простой разбор тоже идёт ею.
+    review-explain-model: ${AI_REVIEW_EXPLAIN_MODEL:}
+    # Разбор паспорта оборудования: короткий текст (окно вокруг раздела об
+    # обслуживании), извлечение фактов с обязательной цитатой — задача для дешёвой
+    # модели. Провайдер тот же, что у подбора расценок (match-base-url), меняется
+    # только модель. Пусто — берётся match-model, а если её нет — чатовая.
+    passport-model: ${AI_PASSPORT_MODEL:}
+    # Список моделей через запятую для переключения прямо в интерфейсе: паспорта
+    # разные, и дешёвая модель справляется не со всеми. Запрос принимается только
+    # с моделью из списка.
+    passport-models: ${AI_PASSPORT_MODELS:}
+  document:
+    max-file-size-mb: 100
+    max-pages: 500
+  ocr:
+    command: ${OCR_COMMAND:tesseract}
+    languages: ${OCR_LANGUAGES:rus+eng}
+    # 300 dpi заметно точнее для кириллицы (двуязычные сканы), но медленнее
+    dpi: ${OCR_DPI:300}
+    max-pages: ${OCR_MAX_PAGES:100}
+    page-timeout-seconds: ${OCR_PAGE_TIMEOUT:120}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  drive:
+    # путь к JSON-ключу сервисного аккаунта Google (пусто — интеграция выключена).
+    # Расшарьте папки Drive на email сервисного аккаунта, затем синхронизируйте.
+    service-account-key-path: ${DRIVE_SERVICE_ACCOUNT_KEY:}
+  midio:
+    # Интеграция с Midio: оттуда забираются готовые регламенты обслуживания
+    # (планы ТО и типы плановых работ). Они старше извлечённых ИИ из паспорта —
+    # там регламент вела команда. Пусто — интеграция выключена, работает разбор
+    # паспортов. Синхронизация только читает: ничего в Midio не создаёт и не удаляет.
+    base-url: ${MIDIO_BASE_URL:}
+    login: ${MIDIO_LOGIN:}
+    password: ${MIDIO_PASSWORD:}
+    # Готовый authToken вместо логина с паролем, если он выдан отдельно.
+    token: ${MIDIO_TOKEN:}
+
+logging:
+  level:
+    ru.techdocs: INFO

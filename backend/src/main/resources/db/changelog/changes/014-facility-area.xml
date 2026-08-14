@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        Площадь объекта, м². Нужна расценкам с измерителем в м² (напр. 22-2203-117-1/1
+        «Проверка работоспособности систем противопожарной защиты», измеритель 1000 м²):
+        количество для них берётся из площади, а не из перечня оборудования.
+        Поле необязательное — заполняется вручную.
+    -->
+    <changeSet id="014-01-facility-area" author="techdocs">
+        <sql>
+            ALTER TABLE facilities ADD COLUMN area_sqm NUMERIC(12,2);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="001-01-organizations" author="techdocs">
+        <sql>
+            CREATE TABLE organizations (
+                id          BIGSERIAL PRIMARY KEY,
+                name        VARCHAR(255) NOT NULL,
+                created_at  TIMESTAMP NOT NULL DEFAULT now()
+            );
+        </sql>
+    </changeSet>
+
+    <changeSet id="001-02-users" author="techdocs">
+        <sql>
+            CREATE TABLE users (
+                id              BIGSERIAL PRIMARY KEY,
+                organization_id BIGINT NOT NULL REFERENCES organizations(id),
+                email           VARCHAR(255) NOT NULL UNIQUE,
+                password_hash   VARCHAR(255) NOT NULL,
+                role            VARCHAR(32) NOT NULL DEFAULT 'ADMIN',
+                created_at      TIMESTAMP NOT NULL DEFAULT now()
+            );
+        </sql>
+    </changeSet>
+
+    <changeSet id="001-03-facilities" author="techdocs">
+        <sql>
+            CREATE TABLE facilities (
+                id              BIGSERIAL PRIMARY KEY,
+                organization_id BIGINT NOT NULL REFERENCES organizations(id),
+                name            VARCHAR(255) NOT NULL,
+                address         VARCHAR(500),
+                description     TEXT,
+                status          VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+                created_at      TIMESTAMP NOT NULL DEFAULT now()
+            );
+            CREATE INDEX idx_facilities_org ON facilities(organization_id);
+        </sql>
+    </changeSet>
+
+    <changeSet id="001-04-engineering-systems" author="techdocs">
+        <sql>
+            CREATE TABLE engineering_systems (
+                id          BIGSERIAL PRIMARY KEY,
+                facility_id BIGINT NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,
+                name        VARCHAR(255) NOT NULL,
+                code        VARCHAR(64),
+                description TEXT
+            );
+            CREATE INDEX idx_systems_facility ON engineering_systems(facility_id);
+        </sql>
+    </changeSet>
+
+    <changeSet id="001-05-document-types" author="techdocs">
+        <sql>
+            CREATE TABLE document_types (
+                id   BIGSERIAL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                code VARCHAR(64) NOT NULL UNIQUE
+            );
+        </sql>
+    </changeSet>
+
+    <changeSet id="001-06-documents" author="techdocs">
+        <sql>
+            CREATE TABLE documents (
+                id                    BIGSERIAL PRIMARY KEY,
+                facility_id           BIGINT NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,
+                engineering_system_id BIGINT REFERENCES engineering_systems(id) ON DELETE SET NULL,
+                document_type_id      BIGINT REFERENCES document_types(id),
+                name                  VARCHAR(500) NOT NULL,
+                original_filename     VARCHAR(500) NOT NULL,
+                storage_path          VARCHAR(1000) NOT NULL,
+                mime_type             VARCHAR(255),
+                size                  BIGINT NOT NULL DEFAULT 0,
+                page_count            INT,
+                status                VARCHAR(32) NOT NULL DEFAULT 'UPLOADED',
+                error_message         TEXT,
+                actuality_status      VARCHAR(32) NOT NULL DEFAULT 'ACTUAL',
+                version               VARCHAR(64),
+                document_date         DATE,
+                checksum              VARCHAR(128),
+                created_at            TIMESTAMP NOT NULL DEFAULT now()
+            );
+            CREATE INDEX idx_documents_facility ON documents(facility_id);
+            CREATE INDEX idx_documents_system ON documents(engineering_system_id);
+            CREATE INDEX idx_documents_type ON documents(document_type_id);
+            CREATE INDEX idx_documents_status ON documents(status);
+        </sql>
+    </changeSet>
+
+    <changeSet id="001-07-document-pages" author="techdocs">
+        <sql>
+            CREATE TABLE document_pages (
+                id          BIGSERIAL PRIMARY KEY,
+                document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                page_number INT NOT NULL,
+                text        TEXT,
+                ocr_used    BOOLEAN NOT NULL DEFAULT FALSE
+            );
+            CREATE INDEX idx_pages_document ON document_pages(document_id);
+        </sql>
+    </changeSet>
+
+    <changeSet id="001-08-document-chunks" author="techdocs">
+        <sql>
+            CREATE TABLE document_chunks (
+                id          BIGSERIAL PRIMARY KEY,
+                document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                page_from   INT,
+                page_to     INT,
+                content     TEXT NOT NULL,
+                metadata    TEXT
+            );
+            CREATE INDEX idx_chunks_document ON document_chunks(document_id);
+        </sql>
+    </changeSet>
+
+    <changeSet id="001-09-equipment" author="techdocs">
+        <sql>
+            CREATE TABLE equipment (
+                id                    BIGSERIAL PRIMARY KEY,
+                facility_id           BIGINT NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,
+                engineering_system_id BIGINT REFERENCES engineering_systems(id) ON DELETE SET NULL,
+                manufacturer          VARCHAR(255),
+                name                  VARCHAR(500),
+                model                 VARCHAR(255),
+                modification          VARCHAR(255),
+                quantity              NUMERIC(12,2) NOT NULL DEFAULT 0,
+                unit                  VARCHAR(32) NOT NULL DEFAULT 'шт.',
+                location              VARCHAR(500),
+                comment               TEXT,
+                status                VARCHAR(32) NOT NULL DEFAULT 'AUTO_EXTRACTED',
+                created_at            TIMESTAMP NOT NULL DEFAULT now()
+            );
+            CREATE INDEX idx_equipment_facility ON equipment(facility_id);
+            CREATE INDEX idx_equipment_system ON equipment(engineering_system_id);
+        </sql>
+    </changeSet>
+
+    <changeSet id="001-10-equipment-sources" author="techdocs">
+        <sql>
+            CREATE TABLE equipment_sources (
+                id           BIGSERIAL PRIMARY KEY,
+                equipment_id BIGINT NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
+                document_id  BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                page_number  INT,
+                source_text  TEXT
+            );
+            CREATE INDEX idx_eq_sources_equipment ON equipment_sources(equipment_id);
+        </sql>
+    </changeSet>
+
+    <changeSet id="001-11-chats" author="techdocs">
+        <sql>
+            CREATE TABLE chats (
+                id                    BIGSERIAL PRIMARY KEY,
+                user_id               BIGINT NOT NULL REFERENCES users(id),
+                facility_id           BIGINT REFERENCES facilities(id) ON DELETE CASCADE,
+                engineering_system_id BIGINT REFERENCES engineering_systems(id) ON DELETE SET NULL,
+                document_id           BIGINT REFERENCES documents(id) ON DELETE CASCADE,
+                title                 VARCHAR(500),
+                created_at            TIMESTAMP NOT NULL DEFAULT now()
+            );
+            CREATE INDEX idx_chats_user ON chats(user_id);
+        </sql>
+    </changeSet>
+
+    <changeSet id="001-12-chat-messages" author="techdocs">
+        <sql>
+            CREATE TABLE chat_messages (
+                id         BIGSERIAL PRIMARY KEY,
+                chat_id    BIGINT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+                role       VARCHAR(16) NOT NULL,
+                content    TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT now()
+            );
+            CREATE INDEX idx_messages_chat ON chat_messages(chat_id);
+        </sql>
+    </changeSet>
+
+    <changeSet id="001-13-answer-sources" author="techdocs">
+        <sql>
+            CREATE TABLE answer_sources (
+                id              BIGSERIAL PRIMARY KEY,
+                chat_message_id BIGINT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+                document_id     BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                page_number     INT,
+                chunk_id        BIGINT REFERENCES document_chunks(id) ON DELETE SET NULL,
+                relevance_score REAL
+            );
+            CREATE INDEX idx_answer_sources_message ON answer_sources(chat_message_id);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>

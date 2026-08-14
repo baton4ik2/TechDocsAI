@@ -1,0 +1,411 @@
+package ru.techdocs.estimate;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import ru.techdocs.common.BadRequestException;
+import ru.techdocs.common.NotFoundException;
+import ru.techdocs.common.Periodicity;
+import ru.techdocs.normative.NormativeRate;
+import ru.techdocs.normative.NormativeRateRepository;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+public class EstimateService {
+
+    private final EstimateRepository estimateRepository;
+    private final EstimateRowRepository rowRepository;
+    private final NormativeRateRepository rateRepository;
+    private final EstimateCalculator calculator;
+    private final ru.techdocs.normative.NormativeAiMatchService aiMatchService;
+
+    // ---- запросы на изменение ----
+
+    public record EstimateInput(String name, Long systemId,
+                                BigDecimal nrZp, BigDecimal npZp, BigDecimal nrEm,
+                                BigDecimal npEm, BigDecimal vat, BigDecimal rtCoefficient,
+                                String status) {}
+
+    public record RowInput(String section, Long equipmentId, String equipmentName,
+                           String equipmentType, String manufacturer, String operationName,
+                           String rateCode, String rateName, String periodicity, String justification,
+                           BigDecimal opsPerYear, BigDecimal qty, BigDecimal unitBasis,
+                           BigDecimal priceZp, BigDecimal priceEm, BigDecimal priceZpm, BigDecimal priceMr,
+                           BigDecimal correction, BigDecimal laborHours,
+                           Boolean needsReview, String matchSource, String suggestions,
+                           String matchNote) {}
+
+    // ---- представление ----
+
+    public record RowView(EstimateRow row, EstimateCalculator.RowResult calc) {}
+
+    public record Totals(BigDecimal totalNoVat, BigDecimal vat, BigDecimal totalWithVat,
+                         BigDecimal totalNoVatRt, BigDecimal vatRt, BigDecimal totalWithVatRt,
+                         BigDecimal laborHoursTotal) {}
+
+    public record EstimateView(Estimate estimate, List<RowView> rows, Totals totals) {}
+
+    // ---- смета ----
+
+    /** Создание сметы для объекта (facilityId обязателен). */
+    public Estimate create(Long facilityId, EstimateInput input) {
+        if (facilityId == null) throw new BadRequestException("Не указан объект.");
+        if (input == null || input.name() == null || input.name().isBlank()) {
+            throw new BadRequestException("Укажите название сметы.");
+        }
+        Estimate e = new Estimate();
+        e.setFacilityId(facilityId);
+        e.setName(input.name().strip());
+        e.setSystemId(input.systemId());
+        applyCoefficients(e, input);
+        return estimateRepository.save(e);
+    }
+
+    public List<Estimate> list(Long facilityId) {
+        return facilityId == null
+                ? estimateRepository.findAllByOrderByCreatedAtDesc()
+                : estimateRepository.findByFacilityIdOrderByCreatedAtDesc(facilityId);
+    }
+
+    public Estimate get(Long id) {
+        return estimateRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Смета не найдена"));
+    }
+
+    public EstimateView view(Long id) {
+        Estimate estimate = get(id);
+        var coeffs = EstimateCalculator.Coefficients.of(estimate);
+        List<RowView> views = new ArrayList<>();
+        BigDecimal noVat = BigDecimal.ZERO, vat = BigDecimal.ZERO, withVat = BigDecimal.ZERO;
+        BigDecimal noVatRt = BigDecimal.ZERO, vatRt = BigDecimal.ZERO, withVatRt = BigDecimal.ZERO;
+        BigDecimal labor = BigDecimal.ZERO;
+        for (EstimateRow row : rowRepository.findByEstimateIdOrderByPosition(id)) {
+            EstimateCalculator.RowResult calc = calculator.compute(row, coeffs);
+            views.add(new RowView(row, calc));
+            noVat = noVat.add(calc.totalNoVat());
+            vat = vat.add(calc.vat());
+            withVat = withVat.add(calc.totalWithVat());
+            noVatRt = noVatRt.add(calc.totalNoVatRt());
+            vatRt = vatRt.add(calc.vatRt());
+            withVatRt = withVatRt.add(calc.totalWithVatRt());
+            labor = labor.add(calc.laborHoursTotal());
+        }
+        Totals totals = new Totals(noVat, vat, withVat, noVatRt, vatRt, withVatRt, labor);
+        return new EstimateView(estimate, views, totals);
+    }
+
+    public Estimate update(Long id, EstimateInput input) {
+        Estimate e = get(id);
+        if (input.name() != null && !input.name().isBlank()) e.setName(input.name().strip());
+        if (input.systemId() != null) e.setSystemId(input.systemId());
+        if (input.status() != null) e.setStatus(input.status());
+        applyCoefficients(e, input);
+        e.setUpdatedAt(Instant.now());
+        return estimateRepository.save(e);
+    }
+
+    public void delete(Long id) {
+        Estimate e = get(id);
+        estimateRepository.delete(e);
+    }
+
+    private void applyCoefficients(Estimate e, EstimateInput in) {
+        if (in.nrZp() != null) e.setNrZp(in.nrZp());
+        if (in.npZp() != null) e.setNpZp(in.npZp());
+        if (in.nrEm() != null) e.setNrEm(in.nrEm());
+        if (in.npEm() != null) e.setNpEm(in.npEm());
+        if (in.vat() != null) e.setVat(in.vat());
+        if (in.rtCoefficient() != null) e.setRtCoefficient(in.rtCoefficient());
+    }
+
+    // ---- строки ----
+
+    public EstimateRow addRow(Long estimateId, RowInput input) {
+        get(estimateId);
+        EstimateRow row = new EstimateRow();
+        row.setEstimateId(estimateId);
+        row.setPosition((int) (rowRepository.countByEstimateId(estimateId) + 1));
+        row.setUnitBasis(BigDecimal.ONE);
+        row.setCorrection(BigDecimal.ONE);
+        applyRow(row, input, true);
+        return rowRepository.save(row);
+    }
+
+    public EstimateRow updateRow(Long rowId, RowInput input) {
+        EstimateRow row = rowRepository.findById(rowId)
+                .orElseThrow(() -> new NotFoundException("Строка сметы не найдена"));
+        applyRow(row, input, false);
+        return rowRepository.save(row);
+    }
+
+    public void deleteRow(Long rowId) {
+        if (!rowRepository.existsById(rowId)) throw new NotFoundException("Строка сметы не найдена");
+        rowRepository.deleteById(rowId);
+    }
+
+    /** Сколько аналогов предлагать инженеру: больше — уже не выбор, а список. */
+    private static final int ALTERNATIVES_LIMIT = 3;
+
+    /**
+     * Аналоги расценки для строки. Запрос к ИИ идёт по короткому списку расценок,
+     * найденных в каталоге по описанию оборудования и работы, — модель видит не весь
+     * сборник, а десятки строк, поэтому опция дешёвая. Текущая расценка исключается.
+     */
+    public EstimateController.Alternatives alternatives(Long rowId) {
+        EstimateRow row = rowRepository.findById(rowId)
+                .orElseThrow(() -> new NotFoundException("Строка сметы не найдена"));
+        StringBuilder query = new StringBuilder();
+        if (row.getEquipmentName() != null) query.append(row.getEquipmentName()).append(' ');
+        if (row.getEquipmentType() != null) query.append(row.getEquipmentType()).append(' ');
+        if (row.getOperationName() != null) query.append(row.getOperationName());
+        if (query.isEmpty()) {
+            return new EstimateController.Alternatives(List.of(), aiMatchService.isAvailable());
+        }
+
+        var match = aiMatchService.match(query.toString().strip(), List.of(), row.getSection());
+        List<EstimateController.Alternative> options = new ArrayList<>();
+        for (var m : match.matches()) {
+            if (m.rate() == null || m.rate().getCode().equals(row.getRateCode())) continue;
+            NormativeRate r = m.rate();
+            options.add(new EstimateController.Alternative(
+                    r.getCode(), r.getName(), m.reason(), r.getUnit(),
+                    r.getLaborCost(), r.getMachineCost(), r.getMachineLabor(),
+                    r.getMaterialCost(), r.getLaborHours(), r.getWorkComposition()));
+            if (options.size() >= ALTERNATIVES_LIMIT) break;
+        }
+        return new EstimateController.Alternatives(options, match.aiConfigured());
+    }
+
+    /**
+     * Группа строк-кандидатов на объединение. equipmentNames — что именно сольётся:
+     * расценка может быть общей у нескольких моделей (дымовые извещатели ИП 212-64 и
+     * ИП 212-45 обслуживаются по одной), и инженер должен это видеть до объединения.
+     */
+    public record DuplicateGroup(String equipmentName, List<String> equipmentNames,
+                                 String rateCode, String periodicity,
+                                 BigDecimal totalQty, List<Long> rowIds) {}
+
+    /**
+     * Строки, которые считаются в смете одной позицией: одна расценка, одна
+     * периодичность, одно число операций в год и одни и те же цены. Наименование
+     * оборудования при этом может отличаться — расценка часто общая для нескольких
+     * моделей, и в смете это одна строка с суммарным количеством.
+     */
+    public List<DuplicateGroup> duplicateGroups(Long estimateId) {
+        get(estimateId);
+        java.util.Map<String, List<EstimateRow>> groups = new java.util.LinkedHashMap<>();
+        for (EstimateRow row : rowRepository.findByEstimateIdOrderByPosition(estimateId)) {
+            if (row.getRateCode() == null || row.getRateCode().isBlank()) continue;
+            groups.computeIfAbsent(mergeKey(row), k -> new ArrayList<>()).add(row);
+        }
+        List<DuplicateGroup> result = new ArrayList<>();
+        for (List<EstimateRow> rows : groups.values()) {
+            if (rows.size() < 2) continue;
+            BigDecimal total = BigDecimal.ZERO;
+            List<Long> ids = new ArrayList<>();
+            java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+            for (EstimateRow row : rows) {
+                total = total.add(row.getQty() == null ? BigDecimal.ZERO : row.getQty());
+                ids.add(row.getId());
+                names.add(describeEquipment(row));
+            }
+            EstimateRow first = rows.get(0);
+            result.add(new DuplicateGroup(first.getEquipmentName(), new ArrayList<>(names),
+                    first.getRateCode(), first.getPeriodicity(), total, ids));
+        }
+        return result;
+    }
+
+    /** «Извещатель пожарный дымовой (ИП 212-64)» — для списка объединяемых позиций. */
+    private String describeEquipment(EstimateRow row) {
+        String name = nz(row.getEquipmentName());
+        String type = nz(row.getEquipmentType());
+        if (name.isEmpty()) return type.isEmpty() ? "—" : type;
+        return type.isEmpty() ? name : name + " (" + type + ")";
+    }
+
+    /**
+     * Ключ объединения: раздел, расценка, режим работ и цены. Наименование
+     * оборудования в ключ НЕ входит — иначе не сливались бы разные модели, которые
+     * обслуживаются по одной расценке. Цены входят: если инженер правил их вручную,
+     * количество нельзя складывать — сумма пошла бы по чужой цене.
+     */
+    private String mergeKey(EstimateRow row) {
+        return String.join("|",
+                nz(row.getSection()), nz(row.getRateCode()), nz(row.getPeriodicity()),
+                num(row.getOpsPerYear()), num(row.getCorrection()), num(row.getUnitBasis()),
+                num(row.getPriceZp()), num(row.getPriceEm()), num(row.getPriceZpm()), num(row.getPriceMr()));
+    }
+
+    private String num(BigDecimal v) {
+        return v == null ? "" : v.stripTrailingZeros().toPlainString();
+    }
+
+    private String nz(String s) {
+        return s == null ? "" : s.strip();
+    }
+
+    /**
+     * Объединяет строки в одну: количество суммируется, остальные удаляются.
+     * Расценка и режим работ у всех строк должны совпадать — иначе сумма количеств
+     * посчиталась бы по чужой расценке.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public EstimateRow mergeRows(Long estimateId, List<Long> rowIds) {
+        get(estimateId);
+        if (rowIds == null || rowIds.size() < 2) {
+            throw new BadRequestException("Для объединения нужно выбрать хотя бы две строки.");
+        }
+        List<EstimateRow> rows = rowRepository.findAllById(rowIds);
+        if (rows.size() != rowIds.size()) throw new NotFoundException("Строка сметы не найдена");
+        for (EstimateRow row : rows) {
+            if (!estimateId.equals(row.getEstimateId())) {
+                throw new BadRequestException("Строки принадлежат разным сметам.");
+            }
+        }
+        rows.sort(java.util.Comparator.comparing(EstimateRow::getPosition,
+                java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())));
+        EstimateRow target = rows.get(0);
+        String key = mergeKey(target);
+        for (EstimateRow row : rows) {
+            if (!key.equals(mergeKey(row))) {
+                throw new BadRequestException(
+                        "Объединять можно только строки с одинаковой расценкой, периодичностью, "
+                                + "числом операций и ценами.");
+            }
+        }
+        BigDecimal total = BigDecimal.ZERO;
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+        for (EstimateRow row : rows) {
+            total = total.add(row.getQty() == null ? BigDecimal.ZERO : row.getQty());
+            names.add(describeEquipment(row));
+        }
+        target.setQty(total);
+        // расценка бывает общей у нескольких моделей — что именно слито, должно
+        // остаться видно, иначе из строки уже не понять, откуда взялось количество
+        if (names.size() > 1) {
+            target.setMatchNote("Объединено позиций: " + rows.size() + " — " + String.join("; ", names)
+                    + (target.getMatchNote() == null ? "" : ". " + target.getMatchNote()));
+        }
+        rowRepository.save(target);
+        for (int i = 1; i < rows.size(); i++) rowRepository.delete(rows.get(i));
+        renumber(estimateId);
+        return target;
+    }
+
+    /** Сквозная нумерация строк после удаления. */
+    private void renumber(Long estimateId) {
+        int position = 1;
+        for (EstimateRow row : rowRepository.findByEstimateIdOrderByPosition(estimateId)) {
+            row.setPosition(position++);
+            rowRepository.save(row);
+        }
+    }
+
+    /**
+     * Применяет входные поля к строке. Если задан шифр расценки — подтягивает из
+     * каталога наименование, цены (ЗП/ЭМ/ЗПМ/МР), измеритель и трудозатраты
+     * (кроме полей, явно переданных вручную). Периодичность → операций в год.
+     */
+    private void applyRow(EstimateRow row, RowInput in, boolean creating) {
+        if (in == null) return;
+        if (in.section() != null) row.setSection(blank(in.section()));
+        if (in.equipmentId() != null) row.setEquipmentId(in.equipmentId());
+        if (in.equipmentName() != null) row.setEquipmentName(blank(in.equipmentName()));
+        if (in.equipmentType() != null) row.setEquipmentType(blank(in.equipmentType()));
+        if (in.manufacturer() != null) row.setManufacturer(blank(in.manufacturer()));
+        if (in.operationName() != null) row.setOperationName(blank(in.operationName()));
+        if (in.periodicity() != null) row.setPeriodicity(blank(in.periodicity()));
+        if (in.justification() != null) row.setJustification(blank(in.justification()));
+        if (in.qty() != null) row.setQty(in.qty());
+        if (in.correction() != null) row.setCorrection(in.correction());
+
+        boolean rateChanged = in.rateCode() != null && !in.rateCode().equals(row.getRateCode());
+        if (in.rateCode() != null) row.setRateCode(blank(in.rateCode()));
+
+        // автозаполнение из каталога по шифру (при создании или смене шифра)
+        boolean unknownRate = false;
+        if (row.getRateCode() != null && (creating || rateChanged)) {
+            unknownRate = !fillFromCatalog(row);
+        }
+
+        // явные ручные значения перекрывают автозаполнение
+        if (in.rateName() != null) row.setRateName(blank(in.rateName()));
+        if (in.unitBasis() != null) row.setUnitBasis(in.unitBasis());
+        if (in.priceZp() != null) row.setPriceZp(in.priceZp());
+        if (in.priceEm() != null) row.setPriceEm(in.priceEm());
+        if (in.priceZpm() != null) row.setPriceZpm(in.priceZpm());
+        if (in.priceMr() != null) row.setPriceMr(in.priceMr());
+        if (in.laborHours() != null) row.setLaborHours(in.laborHours());
+        if (in.needsReview() != null) row.setNeedsReview(in.needsReview());
+        if (in.matchSource() != null) row.setMatchSource(blank(in.matchSource()));
+        if (in.suggestions() != null) row.setSuggestions(blank(in.suggestions()));
+        if (in.matchNote() != null) row.setMatchNote(blank(in.matchNote()));
+
+        // Ручная правка шифра снимает пометку «на проверку» и варианты выбора —
+        // но не тогда, когда шифра нет в каталоге: такая строка не посчитается.
+        if (rateChanged && !creating) {
+            row.setMatchSource("MANUAL");
+            row.setSuggestions(null);
+            if (!unknownRate) {
+                row.setNeedsReview(false);
+                if (in.matchNote() == null) row.setMatchNote("Расценка выбрана инженером вручную.");
+            }
+        }
+
+        // периодичность → операций в год (если явно не задано)
+        if (in.opsPerYear() != null) {
+            row.setOpsPerYear(in.opsPerYear());
+        } else if (in.periodicity() != null) {
+            BigDecimal perYear = Periodicity.perYear(in.periodicity());
+            if (perYear != null) row.setOpsPerYear(perYear);
+        }
+    }
+
+    /**
+     * Подставляет в строку данные расценки из каталога. Если шифра в каталоге нет,
+     * цены прежней расценки НЕ остаются: иначе деньги одной расценки молча
+     * приписывались бы другому шифру. Строка обнуляется и помечается на проверку.
+     *
+     * @return true, если расценка найдена в каталоге
+     */
+    private boolean fillFromCatalog(EstimateRow row) {
+        NormativeRate rate = rateRepository.findFirstByCodeOrderById(row.getRateCode()).orElse(null);
+        if (rate == null) {
+            row.setRateName(null);
+            row.setPriceZp(null);
+            row.setPriceEm(null);
+            row.setPriceZpm(null);
+            row.setPriceMr(null);
+            row.setLaborHours(null);
+            row.setNeedsReview(true);
+            row.setMatchNote("⚠ НА ПРОВЕРКУ: шифра " + row.getRateCode() + " нет в каталоге СН-2012 — "
+                    + "цены не подставлены. Проверьте шифр или загрузите нужный сборник.");
+            return false;
+        }
+        row.setRateName(rate.getName());
+        row.setPriceZp(rate.getLaborCost());
+        row.setPriceEm(rate.getMachineCost());
+        row.setPriceZpm(rate.getMachineLabor());
+        row.setPriceMr(rate.getMaterialCost());
+        row.setLaborHours(rate.getLaborHours());
+        row.setUnitBasis(RateUnits.basis(rate.getUnit()));
+        // расценка есть, но цены из сборника не распознались — строка посчиталась бы
+        // в ноль и выглядела бы при этом заполненной
+        if (rate.getLaborCost() == null) {
+            row.setNeedsReview(true);
+            row.setMatchNote("⚠ НА ПРОВЕРКУ: у расценки " + rate.getCode()
+                    + " в каталоге не распознана заработная плата — проверьте цены по сборнику.");
+            return false;
+        }
+        return true;
+    }
+
+    private String blank(String s) {
+        return s == null || s.isBlank() ? null : s.strip();
+    }
+}

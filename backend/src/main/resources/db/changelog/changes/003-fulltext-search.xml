@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <changeSet id="003-01-chunks-tsvector" author="techdocs">
+        <sql>
+            ALTER TABLE document_chunks
+                ADD COLUMN content_tsv tsvector
+                GENERATED ALWAYS AS (to_tsvector('russian', coalesce(content, ''))) STORED;
+
+            CREATE INDEX idx_chunks_tsv ON document_chunks USING GIN (content_tsv);
+        </sql>
+    </changeSet>
+
+    <changeSet id="003-02-trgm-extension" author="techdocs">
+        <sql>
+            CREATE EXTENSION IF NOT EXISTS pg_trgm;
+            CREATE INDEX idx_equipment_model_trgm ON equipment USING GIN (model gin_trgm_ops);
+            CREATE INDEX idx_equipment_name_trgm ON equipment USING GIN (name gin_trgm_ops);
+        </sql>
+    </changeSet>
+
+</databaseChangeLog>
