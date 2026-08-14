@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.20.xsd">
+
+    <!--
+        Происхождение работы во внешней системе: из какого плана Midio она пришла
+        и к какому изделию там относилась. Без этого ошибку привязки не проверить:
+        видно ЧТО привязано, но не видно ОТКУДА — а спорные случаи (работы
+        тревожной кнопки на адресной метке) разбираются именно по источнику.
+    -->
+    <changeSet id="023-01-planned-work-source-note" author="techdocs">
+        <addColumn tableName="planned_works">
+            <column name="source_note" type="TEXT"/>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

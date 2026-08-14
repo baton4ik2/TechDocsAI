@@ -67,6 +67,13 @@ public class PlannedWork {
     private String externalId;
 
     /**
+     * Происхождение во внешней системе: план Midio и изделие, к которому работа
+     * там относилась. По нему проверяются спорные привязки.
+     */
+    @Column(name = "source_note", columnDefinition = "text")
+    private String sourceNote;
+
+    /**
      * Обязательная работа или рекомендуемая. null — источник этого не различает
      * (паспорт, ручной ввод), и додумывать за него нельзя.
      */

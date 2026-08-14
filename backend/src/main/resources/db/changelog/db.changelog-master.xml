@@ -27,5 +27,6 @@
     <include file="db/changelog/changes/020-midio-link.xml" relativeToChangelogFile="false"/>
     <include file="db/changelog/changes/021-planned-work-mandatory.xml" relativeToChangelogFile="false"/>
     <include file="db/changelog/changes/022-midio-sync-report.xml" relativeToChangelogFile="false"/>
+    <include file="db/changelog/changes/023-planned-work-source-note.xml" relativeToChangelogFile="false"/>
 
 </databaseChangeLog>

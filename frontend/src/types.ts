@@ -261,6 +261,7 @@ export interface PlannedWork {
   sourceQuote?: string
   sourcePage?: number
   quoteVerified?: boolean | null
+  sourceNote?: string
   sourceLabel?: string
 }
 

@@ -102,6 +102,7 @@ public class MidioHttpClient implements MidioClient {
             if (planId == null) continue;
             planCount++;
             List<String> planEquipmentIds = equipmentRefs(plan);
+            String planName = text(plan, "name", "title");
             if (samplePlan == null && planEquipmentIds.isEmpty()) samplePlan = plan;
             JsonNode incidents = execute("PlannedIncidents.GetByMaintenancePlan",
                     Map.of("maintenancePlanId", asNumberOrText(planId)));
@@ -133,7 +134,7 @@ public class MidioHttpClient implements MidioClient {
                             MidioMapping.workType(title), recurrence.text(), recurrence.perYear(),
                             composition(item),
                             MidioMapping.mandatory(text(item, "category", "incidentCategory", "type")),
-                            dedicated));
+                            dedicated, planName));
                 }
             }
         }

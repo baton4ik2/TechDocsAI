@@ -36,12 +36,18 @@ public class MidioController {
         return saved == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(saved);
     }
 
-    public record LinkRequest(Long uniqueEquipmentId, String midioId) {}
+    /** uniqueEquipmentIds — полный список записей для этой карточки Midio. */
+    public record LinkRequest(Long uniqueEquipmentId, java.util.List<Long> uniqueEquipmentIds,
+                              String midioId) {}
 
-    /** Подтверждение связи для позиции, которую не удалось узнать однозначно. */
+    /** Подтверждение связи; карточка Midio может соответствовать нескольким записям. */
     @PostMapping("/link")
     public ResponseEntity<Void> link(@RequestBody LinkRequest request) {
-        syncService.link(request.uniqueEquipmentId(), request.midioId());
+        java.util.List<Long> ids = request.uniqueEquipmentIds() != null && !request.uniqueEquipmentIds().isEmpty()
+                ? request.uniqueEquipmentIds()
+                : (request.uniqueEquipmentId() == null ? java.util.List.of()
+                    : java.util.List.of(request.uniqueEquipmentId()));
+        syncService.link(ids, request.midioId());
         return ResponseEntity.noContent().build();
     }
 }

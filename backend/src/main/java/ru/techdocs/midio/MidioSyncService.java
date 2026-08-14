@@ -95,6 +95,14 @@ public class MidioSyncService {
                     strayWorks, sampleWorkKey, knownIds.stream().findFirst().orElse("?"));
         }
 
+        // подписи изделий Midio — для происхождения работы («откуда она пришла»)
+        Map<String, String> equipmentLabels = new LinkedHashMap<>();
+        for (ExternalEquipment e : external) {
+            equipmentLabels.put(e.externalId(),
+                    java.util.stream.Stream.of(e.name(), e.model())
+                            .filter(java.util.Objects::nonNull).reduce((a, b) -> a + " " + b).orElse(e.externalId()));
+        }
+
         List<Match> matches = matcher.matchAll(external);
         List<Pending> pending = new ArrayList<>();
         List<Pending> unknown = new ArrayList<>();
@@ -115,10 +123,16 @@ public class MidioSyncService {
                 }
                 continue;
             }
-            UniqueEquipment target = m.target();
-            link(target, e.externalId());
-            linked++;
-            imported += importWorks(target.getId(), worksByEquipment.getOrDefault(e.externalId(), List.of()));
+            // одна карточка Midio может быть привязана к нескольким записям реестра —
+            // работы получает каждая
+            List<UniqueEquipment> targets = m.kind() == Kind.LINKED ? m.candidates() : List.of(m.target());
+            for (UniqueEquipment target : targets) {
+                link(target, e.externalId());
+                linked++;
+                imported += importWorks(target.getId(),
+                        worksByEquipment.getOrDefault(e.externalId(), List.of()),
+                        equipmentLabels.get(e.externalId()));
+            }
         }
 
         log.info("Синхронизация с Midio: привязано {} позиций, перенесено {} работ, "
@@ -157,22 +171,29 @@ public class MidioSyncService {
     }
 
     /**
-     * Ручное подтверждение связи для неоднозначной позиции. После него
-     * синхронизация идёт по идентификатору и больше не гадает.
+     * Ручное подтверждение связи. Выбор — полный список записей реестра для этой
+     * карточки Midio: одна карточка законно соответствует нескольким записям
+     * (одна модель под разными названиями или системами), а с записей вне списка
+     * связь снимается — иначе работы задвоились бы у случайно оставшихся.
      */
     @Transactional
-    public void link(Long uniqueEquipmentId, String midioId) {
-        UniqueEquipment ue = equipmentRepository.findById(uniqueEquipmentId)
-                .orElseThrow(() -> new BadRequestException("Оборудование не найдено в реестре"));
-        // тот же идентификатор на другой записи означал бы две связи на одно
-        // оборудование Midio — снимаем прежнюю, иначе работы задвоятся
+    public void link(List<Long> uniqueEquipmentIds, String midioId) {
+        if (uniqueEquipmentIds == null || uniqueEquipmentIds.isEmpty()) {
+            throw new BadRequestException("Выберите хотя бы одну запись реестра.");
+        }
+        List<UniqueEquipment> chosen = new ArrayList<>();
+        for (Long id : uniqueEquipmentIds) {
+            chosen.add(equipmentRepository.findById(id)
+                    .orElseThrow(() -> new BadRequestException("Оборудование не найдено в реестре")));
+        }
         equipmentRepository.findAll().stream()
-                .filter(other -> !other.getId().equals(uniqueEquipmentId) && midioId.equals(other.getMidioId()))
+                .filter(other -> !uniqueEquipmentIds.contains(other.getId())
+                        && midioId.equals(other.getMidioId()))
                 .forEach(other -> {
                     other.setMidioId(null);
                     equipmentRepository.save(other);
                 });
-        link(ue, midioId);
+        for (UniqueEquipment ue : chosen) link(ue, midioId);
         removeFromReport(midioId);
     }
 
@@ -196,7 +217,7 @@ public class MidioSyncService {
      * трогаем: паспортные вытесняются приоритетом при расчёте сметы, а ручные
      * инженер завёл сам.
      */
-    private int importWorks(Long uniqueEquipmentId, List<ExternalWork> works) {
+    private int importWorks(Long uniqueEquipmentId, List<ExternalWork> works, String midioEquipmentLabel) {
         plannedWorkRepository.deleteByUniqueEquipmentIdAndSource(uniqueEquipmentId, PlannedWork.SOURCE_MIDIO);
         if (works.isEmpty()) return 0;
 
@@ -217,10 +238,24 @@ public class MidioSyncService {
             pw.setMandatory(w.mandatory());
             pw.setSource(PlannedWork.SOURCE_MIDIO);
             pw.setExternalId(w.externalId());
+            pw.setSourceNote(sourceNote(w, midioEquipmentLabel));
             saved.add(pw);
         }
         plannedWorkRepository.saveAll(saved);
         return saved.size();
+    }
+
+    /** Происхождение работы: план Midio и изделие, к которому она там относилась. */
+    private String sourceNote(ExternalWork w, String midioEquipmentLabel) {
+        StringBuilder sb = new StringBuilder();
+        if (w.planName() != null && !w.planName().isBlank()) {
+            sb.append("План Midio: «").append(w.planName().strip()).append('»');
+        }
+        if (midioEquipmentLabel != null && !midioEquipmentLabel.isBlank()) {
+            if (!sb.isEmpty()) sb.append(" · ");
+            sb.append("изделие Midio: ").append(midioEquipmentLabel);
+        }
+        return sb.isEmpty() ? null : sb.toString();
     }
 
     private Pending pending(Match m, List<ExternalWork> works) {

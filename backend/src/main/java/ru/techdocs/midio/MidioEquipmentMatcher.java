@@ -61,12 +61,16 @@ public class MidioEquipmentMatcher {
     }
 
     public Match match(ExternalEquipment e, List<UniqueEquipment> registry) {
-        // 1) уже привязано — по идентификатору, а не по тексту
+        // 1) уже привязано — по идентификатору, а не по тексту. Записей может
+        //    быть несколько: одна карточка Midio ↔ две записи реестра (одна
+        //    модель под разными названиями или в разных системах)
         if (e.externalId() != null && !e.externalId().isBlank()) {
+            List<UniqueEquipment> linked = new ArrayList<>();
             for (UniqueEquipment ue : registry) {
-                if (e.externalId().equals(ue.getMidioId())) {
-                    return new Match(e, ue, Kind.LINKED, 1.0, List.of(ue));
-                }
+                if (e.externalId().equals(ue.getMidioId())) linked.add(ue);
+            }
+            if (!linked.isEmpty()) {
+                return new Match(e, linked.getFirst(), Kind.LINKED, 1.0, List.copyOf(linked));
             }
         }
 

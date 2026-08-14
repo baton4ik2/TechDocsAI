@@ -85,18 +85,12 @@ export default function EquipmentRegistryPage() {
       {error && <div className="text-red-600 text-sm">{error}</div>}
 
       {tab === 'midio' && (
-        <>
-          <MidioSync onChange={load} />
-          <div className="card p-4 flex items-center gap-3 flex-wrap">
-            <div className="text-xs text-slate-500 flex-1 min-w-60">
-              Отвязка убирает работы этого источника у всего оборудования реестра. Связи
-              с Midio остаются — следующая синхронизация перенесёт работы заново.
-            </div>
-            <button className="btn-ghost text-sm text-red-600" onClick={() => setUnlinking('MIDIO')}>
-              Отвязать все работы из Midio
-            </button>
-          </div>
-        </>
+        <MidioSync onChange={load} extraAction={
+          <button className="btn-ghost text-sm text-red-600" onClick={() => setUnlinking('MIDIO')}
+                  title="Убирает работы Midio у всего оборудования реестра. Связи остаются — следующая синхронизация перенесёт работы заново.">
+            Отвязать все
+          </button>
+        } />
       )}
 
       {tab === 'registry' && (<>

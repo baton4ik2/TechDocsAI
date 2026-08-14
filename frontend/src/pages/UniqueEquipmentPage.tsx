@@ -14,6 +14,12 @@ export default function UniqueEquipmentPage() {
   const [works, setWorks] = useState<PlannedWork[]>([])
   const [editing, setEditing] = useState<PlannedWork | null | 'new'>(null)
   const [deleting, setDeleting] = useState<PlannedWork | null>(null)
+  const [expanded, setExpanded] = useState<Set<number>>(new Set())
+  const toggleExpand = (id: number) => setExpanded((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  })
   const [error, setError] = useState('')
 
   const load = () => {
@@ -64,6 +70,7 @@ export default function UniqueEquipmentPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                <th className="py-2 px-2 w-8"></th>
                 <th className="py-2 px-4 font-medium">Тип</th>
                 <th className="py-2 px-4 font-medium">Наименование</th>
                 <th className="py-2 px-4 font-medium">Категория</th>
@@ -75,8 +82,16 @@ export default function UniqueEquipmentPage() {
             </thead>
             <tbody>
               {works.map((w) => (
+                <>
                 <tr key={w.id} className="border-b border-slate-50 hover:bg-slate-50 cursor-pointer"
                     onClick={() => setEditing(w)}>
+                  <td className="py-2 px-2 text-center">
+                    <button className="text-slate-400 hover:text-slate-600"
+                            title="Раскрыть: состав работ и происхождение"
+                            onClick={(e) => { e.stopPropagation(); toggleExpand(w.id) }}>
+                      <span className={`inline-block transition-transform ${expanded.has(w.id) ? 'rotate-90' : ''}`}>▸</span>
+                    </button>
+                  </td>
                   <td className="py-2 px-4 text-xs text-slate-500 whitespace-nowrap">{w.workType || '—'}</td>
                   <td className="py-2 px-4">{w.name}</td>
                   <td className="py-2 px-4 text-xs whitespace-nowrap">
@@ -97,9 +112,32 @@ export default function UniqueEquipmentPage() {
                             onClick={(e) => { e.stopPropagation(); setDeleting(w) }}>✕</button>
                   </td>
                 </tr>
+                {expanded.has(w.id) && (
+                  <tr key={`${w.id}-detail`} className="border-b border-slate-50 bg-slate-50/60">
+                    <td></td>
+                    <td colSpan={6} className="py-3 px-4 text-xs text-slate-600 space-y-2">
+                      <div>
+                        <span className="font-medium text-slate-700">Состав работ: </span>
+                        {w.workComposition || <span className="text-slate-400">не указан</span>}
+                      </div>
+                      {w.sourceNote && (
+                        <div>
+                          <span className="font-medium text-slate-700">Откуда: </span>{w.sourceNote}
+                        </div>
+                      )}
+                      {w.sourceQuote && (
+                        <div>
+                          <span className="font-medium text-slate-700">Цитата из паспорта: </span>
+                          <span className="italic">«{w.sourceQuote}»</span>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )}
+                </>
               ))}
               {works.length === 0 && (
-                <tr><td colSpan={7} className="text-center text-slate-400 py-10">
+                <tr><td colSpan={8} className="text-center text-slate-400 py-10">
                   Плановых работ нет. Загрузите паспорт для авто-извлечения или добавьте вручную.
                 </td></tr>
               )}

@@ -24,7 +24,8 @@ public interface MidioClient {
      */
     record ExternalWork(String externalId, String equipmentExternalId, String name,
                         String workType, String periodicity, java.math.BigDecimal perYear,
-                        String composition, Boolean mandatory, boolean dedicatedPlan) {}
+                        String composition, Boolean mandatory, boolean dedicatedPlan,
+                        String planName) {}
 
     /** Настроен ли доступ: без реквизитов синхронизацию не предлагаем. */
     boolean isConfigured();
