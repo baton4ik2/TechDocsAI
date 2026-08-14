@@ -109,6 +109,50 @@ public final class MidioMapping {
     }
 
     /**
+     * Каким изделиям плана принадлежит работа. Работа в Midio не несёт ссылки на
+     * оборудование — только план знает свой список изделий. Но название работы
+     * обычно называет модель («ТО извещателя теплового ИП 101-29-PR-R3»), и по
+     * ней работу можно отдать своему изделию, а не всем подряд: иначе тепловой
+     * извещатель получил бы ТО ручного, дымового и линейного из того же плана.
+     * <p>
+     * Модель не распознана или распознана неоднозначно — работа общая, идёт всем
+     * изделиям плана («Проверка функционирования системы»).
+     */
+    public static java.util.List<String> workTargets(String title, java.util.List<String> equipmentIds,
+                                                     java.util.Map<String, String> modelsById) {
+        if (equipmentIds.size() <= 1) return equipmentIds;
+        String titleKey = ru.techdocs.common.ModelMatching.modelKey(title);
+        java.util.List<String> strong = new java.util.ArrayList<>();
+        java.util.List<String> weak = new java.util.ArrayList<>();
+        for (String id : equipmentIds) {
+            String key = ru.techdocs.common.ModelMatching.modelKey(modelsById.getOrDefault(id, ""));
+            if (key.length() < 3) continue;
+            if (titleKey.contains(key)) {
+                strong.add(id);
+                continue;
+            }
+            // модели пишут по-разному («264/1» в работе, «264.1-100» в карточке):
+            // хватает букв изделия и первой числовой группы — «ипдл264»
+            String needle = letterAndFirstDigits(modelsById.get(id));
+            if (needle != null && needle.length() >= 3 && titleKey.contains(needle)) weak.add(id);
+        }
+        if (!strong.isEmpty()) return strong;
+        if (weak.size() == 1) return weak;
+        return equipmentIds;
+    }
+
+    /**
+     * Префикс сырой модели до конца первой числовой группы: «ИПДЛ-264.1-100» →
+     * «ипдл264». Считать по нормализованному ключу нельзя — он склеивает цифры
+     * подряд, и «первая группа» захватила бы всё («2641100»).
+     */
+    private static String letterAndFirstDigits(String rawModel) {
+        if (rawModel == null) return null;
+        var m = java.util.regex.Pattern.compile("^[^0-9]*[0-9]+").matcher(rawModel);
+        return m.find() ? ru.techdocs.common.ModelMatching.modelKey(m.group()) : null;
+    }
+
+    /**
      * Вид работы по её названию — то же деление, что и в наших плановых работах.
      * Midio категорией называет другое (обязательность), поэтому берём из заголовка.
      */

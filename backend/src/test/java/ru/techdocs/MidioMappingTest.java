@@ -85,6 +85,47 @@ class MidioMappingTest {
     }
 
     @Test
+    void workFindsItsDeviceInsideGroupPlanByTitle() {
+        var models = java.util.Map.of(
+                "372", "ИПР 513-11ИКЗ-А-R3",
+                "144", "ИП 101-29-PR-R3",
+                "95", "ИП 212-64-R3",
+                "211", "ИПДЛ-264.1-100-R3",
+                "337", "УДП 513-11ИКЗ-R3");
+        var ids = java.util.List.of("372", "144", "95", "211", "337");
+
+        // полное вхождение модели в название — работа идёт своему изделию
+        assertThat(MidioMapping.workTargets(
+                "Техническое обслуживание извещателя пожарного теплового ИП 101-29-PR-R3", ids, models))
+                .containsExactly("144");
+        assertThat(MidioMapping.workTargets(
+                "Техническое обслуживание извещателя пожарного ручного ИПР 513-11ИКЗ-А-R3", ids, models))
+                .containsExactly("372");
+        // УДП и ИПР делят числа 513-11 — различаются буквами
+        assertThat(MidioMapping.workTargets(
+                "Техническое обслуживание \"Устройство дистанционного пуска УДП 513-11 ИКЗ-R3\"", ids, models))
+                .containsExactly("337");
+    }
+
+    @Test
+    void differentModelSpellingStillFindsTheDevice() {
+        var models = java.util.Map.of("211", "ИПДЛ-264.1-100-R3", "95", "ИП 212-64-R3");
+        // в работе «264/1», в карточке «264.1-100» — совпадение по буквам и первой числовой группе
+        assertThat(MidioMapping.workTargets(
+                "Технические обслуживание ИПДЛ-264/1-R3", java.util.List.of("211", "95"), models))
+                .containsExactly("211");
+    }
+
+    @Test
+    void genericWorkGoesToTheWholePlan() {
+        var models = java.util.Map.of("372", "ИПР 513-11ИКЗ-А-R3", "95", "ИП 212-64-R3");
+        var ids = java.util.List.of("372", "95");
+        // модель в названии не указана — работа общая для всех изделий плана
+        assertThat(MidioMapping.workTargets("Проверка функционирования системы", ids, models))
+                .containsExactlyElementsOf(ids);
+    }
+
+    @Test
     void workTypeComesFromTitleNotFromCategory() {
         assertThat(MidioMapping.workType("Внешний осмотр")).isEqualTo("осмотр");
         assertThat(MidioMapping.workType("Техническое обслуживание")).isEqualTo("ТО");

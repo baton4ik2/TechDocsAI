@@ -33,6 +33,8 @@ public class MidioHttpClient implements MidioClient {
     private final AppProperties.Midio props;
     private final RestClient http;
     private volatile String token;
+    /** id карточки → модель: нужна работам, чтобы найти своё изделие в плане. */
+    private volatile Map<String, String> equipmentModels;
 
     public MidioHttpClient(AppProperties props) {
         this.props = props.midio();
@@ -63,15 +65,27 @@ public class MidioHttpClient implements MidioClient {
     public List<ExternalEquipment> equipment() {
         JsonNode response = execute("Equipment.GetEquipmentList", Map.of());
         List<ExternalEquipment> result = new ArrayList<>();
+        Map<String, String> models = new HashMap<>();
         for (JsonNode node : array(response, "equipmentList", "equipment", "items")) {
             String id = text(node, "equipmentId", "id");
             if (id == null) continue;
             var split = MidioMapping.splitModel(text(node, "model"));
+            if (split.model() != null) models.put(id, split.model());
             result.add(new ExternalEquipment(id, split.name(), split.model(),
                     manufacturer(node), MidioMapping.systemName(text(node, "engineeringSystemType"))));
         }
+        equipmentModels = models;
         log.info("Midio: получено {} карточек оборудования", result.size());
         return result;
+    }
+
+    private Map<String, String> models() {
+        Map<String, String> cached = equipmentModels;
+        if (cached == null) {
+            equipment();
+            cached = equipmentModels;
+        }
+        return cached == null ? Map.of() : cached;
     }
 
     @Override
@@ -98,7 +112,9 @@ public class MidioHttpClient implements MidioClient {
                 // работа относится ко всему оборудованию плана — план в Midio накрывает
                 // несколько изделий сразу (equipmentIds: [372, 144, …])
                 List<String> targets = equipmentRefs(item);
-                if (targets.isEmpty()) targets = planEquipmentIds;
+                // работа плана сама изделия не знает — находим его по модели в названии;
+                // не нашли или работа общая — идёт всем изделиям плана
+                if (targets.isEmpty()) targets = MidioMapping.workTargets(title, planEquipmentIds, models());
                 if (targets.isEmpty()) {
                     noEquipmentLink++;
                     targets = java.util.Collections.singletonList(null);
@@ -140,7 +156,7 @@ public class MidioHttpClient implements MidioClient {
         Integer interval = integer(item, "recurrenceInterval");
         String unit = text(item, "recurrenceIntervalUnit", "recurrenceUnit");
         if (interval == null || unit == null) {
-            for (String key : new String[]{"recurrence", "recurrenceRule", "schedule"}) {
+            for (String key : new String[]{"recurrenceConfig", "recurrence", "recurrenceRule", "schedule"}) {
                 JsonNode nested = item.get(key);
                 if (nested == null || !nested.isObject()) continue;
                 if (interval == null) interval = integer(nested, "recurrenceInterval", "interval");
