@@ -65,10 +65,10 @@ class MidioSyncServiceTest {
         var result = service(List.of(target),
                 List.of(new ExternalEquipment("mid-5", "Извещатель пожарный дымовой", "ИП 212-64", "Рубеж", "АПС")),
                 List.of(new ExternalWork("w-1", "mid-5", "Технический осмотр", "осмотр", "Ежемесячно",
-                                new java.math.BigDecimal("12"), null, true),
+                                new java.math.BigDecimal("12"), null, true, true),
                         new ExternalWork("w-2", "mid-5", "Проверка работоспособности", "проверка",
                                 "раз в 6 мес.", new java.math.BigDecimal("2"),
-                                "Продувка оптической системы", false))).sync();
+                                "Продувка оптической системы", false, true))).sync();
 
         assertThat(result.linkedEquipment()).isEqualTo(1);
         assertThat(result.importedWorks()).isEqualTo(2);
@@ -89,7 +89,7 @@ class MidioSyncServiceTest {
         service(List.of(target),
                 List.of(new ExternalEquipment("mid-5", "Извещатель пожарный дымовой", "ИП 212-64", "Рубеж", "АПС")),
                 List.of(new ExternalWork("w-1", "mid-5", "Технический осмотр", "осмотр", "Ежемесячно",
-                                new java.math.BigDecimal("12"), null, true)))
+                                new java.math.BigDecimal("12"), null, true, true)))
                 .sync();
 
         // паспортные и ручные работы синхронизация не трогает
@@ -105,7 +105,7 @@ class MidioSyncServiceTest {
         var result = service(List.of(rm1, rm4),
                 List.of(new ExternalEquipment("mid-9", "Модуль релейный", "РМ-2К", "Рубеж", "АПС")),
                 List.of(new ExternalWork("w-9", "mid-9", "Техническое обслуживание", "ТО", "Ежемесячно",
-                                new java.math.BigDecimal("12"), null, true)))
+                                new java.math.BigDecimal("12"), null, true, true)))
                 .sync();
 
         assertThat(result.linkedEquipment()).isZero();
@@ -130,7 +130,7 @@ class MidioSyncServiceTest {
                 List.of(new ExternalEquipment("mid-77", "Насос дренажный", "GRUNDFOS UNILIFT", "Grundfos", "ВК"),
                         new ExternalEquipment("mid-78", "Щит без работ", "ЩУ-1", "Прочее", "ВК")),
                 List.of(new ExternalWork("w-77", "mid-77", "Техническое обслуживание", "ТО", "Ежемесячно",
-                        new java.math.BigDecimal("12"), null, true))).sync();
+                        new java.math.BigDecimal("12"), null, true, true))).sync();
 
         // это не «неоднозначно», а «нет в реестре» — и лечится синхронизацией с объектами
         assertThat(result.pending()).isEmpty();
@@ -156,13 +156,46 @@ class MidioSyncServiceTest {
     }
 
     @Test
+    void dedicatedPlanWorksBeatZonePlanWorks() {
+        UniqueEquipment target = ue(1L, "Извещатель пожарный дымовой", "ИП 212-64", "АПС");
+        var result = service(List.of(target),
+                List.of(new ExternalEquipment("mid-5", "Извещатель пожарный дымовой", "ИП 212-64", "Рубеж", "АПС")),
+                List.of(
+                        // работа из зонного плана (несколько изделий)
+                        new ExternalWork("w-zone", "mid-5", "ТО оборудования пожарной зоны", "ТО",
+                                "Ежемесячно", new java.math.BigDecimal("12"), null, true, false),
+                        // своя работа из плана на одно изделие
+                        new ExternalWork("w-own", "mid-5", "Технический осмотр ИП 212-64", "осмотр",
+                                "раз в 6 мес.", new java.math.BigDecimal("2"), null, true, true)))
+                .sync();
+
+        // своя работа важнее зонной: зонная не переносится, иначе задвоение
+        assertThat(result.importedWorks()).isEqualTo(1);
+        assertThat(savedWorks()).hasSize(1);
+        assertThat(savedWorks().getFirst().getExternalId()).isEqualTo("w-own");
+    }
+
+    @Test
+    void zonePlanWorksAreUsedWhenNoDedicatedOnesExist() {
+        UniqueEquipment target = ue(1L, "Извещатель пожарный дымовой", "ИП 212-64", "АПС");
+        var result = service(List.of(target),
+                List.of(new ExternalEquipment("mid-5", "Извещатель пожарный дымовой", "ИП 212-64", "Рубеж", "АПС")),
+                List.of(new ExternalWork("w-zone", "mid-5", "ТО оборудования пожарной зоны", "ТО",
+                        "Ежемесячно", new java.math.BigDecimal("12"), null, true, false)))
+                .sync();
+
+        assertThat(result.importedWorks()).isEqualTo(1);
+        assertThat(savedWorks().getFirst().getExternalId()).isEqualTo("w-zone");
+    }
+
+    @Test
     void reportSurvivesAndConfirmationCrossesOutThePosition() throws Exception {
         UniqueEquipment rm1 = ue(1L, "Модуль релейный", "РМ-1К", "АПС");
         UniqueEquipment rm4 = ue(2L, "Модуль релейный", "РМ-4К", "АПС");
         MidioSyncService service = service(List.of(rm1, rm4),
                 List.of(new ExternalEquipment("mid-9", "Модуль релейный", "РМ-2К", "Рубеж", "АПС")),
                 List.of(new ExternalWork("w-9", "mid-9", "Техническое обслуживание", "ТО", "Ежемесячно",
-                        new java.math.BigDecimal("12"), null, true)));
+                        new java.math.BigDecimal("12"), null, true, true)));
 
         // sync сохраняет отчёт; репозиторий-мок возвращает то, что сохранили
         ArgumentCaptor<ru.techdocs.midio.MidioSyncReport> saved =

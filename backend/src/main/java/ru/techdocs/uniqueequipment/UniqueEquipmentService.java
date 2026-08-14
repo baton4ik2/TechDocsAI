@@ -213,6 +213,20 @@ public class UniqueEquipmentService {
         return repository.findAll();
     }
 
+    /**
+     * Массовая отвязка плановых работ одного источника по всему реестру:
+     * PASSPORT — извлечённые из паспортов, MIDIO — перенесённые из Midio.
+     * Ручные работы намеренно недоступны: их инженер завёл штучно, и снести их
+     * одной кнопкой значит потерять невосстановимое.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public long unlinkBySource(String source) {
+        if (!PlannedWork.SOURCE_PASSPORT.equals(source) && !PlannedWork.SOURCE_MIDIO.equals(source)) {
+            throw new BadRequestException("Массовая отвязка доступна для источников PASSPORT и MIDIO.");
+        }
+        return plannedWorkRepository.deleteBySource(source);
+    }
+
     public List<PlannedWork> plannedWorks(Long id) {
         get(id);
         return plannedWorkRepository.findByUniqueEquipmentIdOrderByPosition(id);

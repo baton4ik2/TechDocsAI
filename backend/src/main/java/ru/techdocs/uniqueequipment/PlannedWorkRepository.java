@@ -15,4 +15,7 @@ public interface PlannedWorkRepository extends JpaRepository<PlannedWork, Long> 
     @Modifying
     @Transactional
     void deleteByUniqueEquipmentIdAndSource(Long uniqueEquipmentId, String source);
+
+    /** Массовая отвязка работ одного источника по всему реестру. */
+    long deleteBySource(String source);
 }

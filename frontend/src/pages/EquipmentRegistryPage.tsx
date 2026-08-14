@@ -1,15 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { UniqueEquipmentView } from '../types'
 import { toast } from '../components/Toast'
 import MidioSync from '../components/MidioSync'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 export default function EquipmentRegistryPage() {
   const [items, setItems] = useState<UniqueEquipmentView[]>([])
   const [syncing, setSyncing] = useState(false)
   const [filter, setFilter] = useState('')   // '' = все, 'none' = без системы, иначе имя системы
   const [error, setError] = useState('')
+  const [unlinking, setUnlinking] = useState<'PASSPORT' | 'MIDIO' | null>(null)
+  // вкладка живёт в URL: «назад» возвращает и на страницу, и на вкладку
+  const [params, setParams] = useSearchParams()
+  const tab = params.get('tab') === 'midio' ? 'midio' : 'registry'
+  const setTab = (t: string) => setParams(t === 'midio' ? { tab: 'midio' } : {})
 
   const load = () => {
     api.get<UniqueEquipmentView[]>('/api/unique-equipment').then(setItems).catch((e) => setError(e.message))
@@ -38,25 +44,71 @@ export default function EquipmentRegistryPage() {
     }
   }
 
+  const unlinkAll = async () => {
+    if (!unlinking) return
+    try {
+      const res = await api.delete<{ deleted: number }>(
+        `/api/unique-equipment/planned-works?source=${unlinking}`)
+      toast(`Отвязано работ: ${res.deleted}`, 'success')
+      setUnlinking(null)
+      load()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Ошибка', 'error')
+    }
+  }
+
+  const Tab = ({ id, label }: { id: string; label: string }) => (
+    <button onClick={() => setTab(id)}
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+              tab === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}>
+      {label}
+    </button>
+  )
+
   return (
     <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Реестр уникального оборудования</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Одна запись на модель — общая для всех объектов. Паспорт загружается здесь,
-            кнопкой в строке: из него ИИ вытащит плановые работы с периодичностью, и они
-            подставятся в сметы везде, где это оборудование встречается.
-          </p>
-        </div>
-        <button className="btn-primary" onClick={sync} disabled={syncing}>
-          {syncing ? 'Синхронизация…' : '⟳ Синхронизировать с объектами'}
-        </button>
+      <div>
+        <h1 className="text-2xl font-semibold text-slate-900">Реестр уникального оборудования</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Одна запись на модель — общая для всех объектов. Плановые работы к ней приходят
+          из Midio, из паспорта или вручную — и подставятся в сметы везде, где это
+          оборудование встречается.
+        </p>
+      </div>
+
+      <div className="inline-flex gap-1 rounded-xl bg-slate-100 p-1">
+        <Tab id="registry" label="🔧 Оборудование" />
+        <Tab id="midio" label="🔗 Синхронизация с Midio" />
       </div>
 
       {error && <div className="text-red-600 text-sm">{error}</div>}
 
-      <MidioSync onChange={load} />
+      {tab === 'midio' && (
+        <>
+          <MidioSync onChange={load} />
+          <div className="card p-4 flex items-center gap-3 flex-wrap">
+            <div className="text-xs text-slate-500 flex-1 min-w-60">
+              Отвязка убирает работы этого источника у всего оборудования реестра. Связи
+              с Midio остаются — следующая синхронизация перенесёт работы заново.
+            </div>
+            <button className="btn-ghost text-sm text-red-600" onClick={() => setUnlinking('MIDIO')}>
+              Отвязать все работы из Midio
+            </button>
+          </div>
+        </>
+      )}
+
+      {tab === 'registry' && (<>
+      <div className="flex items-center gap-3 flex-wrap">
+        <button className="btn-primary" onClick={sync} disabled={syncing}>
+          {syncing ? 'Синхронизация…' : '⟳ Синхронизировать с объектами'}
+        </button>
+        <div className="flex-1" />
+        <button className="btn-ghost text-sm text-red-600" onClick={() => setUnlinking('PASSPORT')}>
+          Отвязать все работы из паспортов
+        </button>
+      </div>
 
       {items.length === 0 ? (
         <div className="card text-center text-slate-400 py-16">
@@ -90,6 +142,16 @@ export default function EquipmentRegistryPage() {
             ))}
           </div>
         </>
+      )}
+      </>)}
+
+      {unlinking && (
+        <ConfirmDialog
+          title={unlinking === 'MIDIO' ? 'Отвязать все работы из Midio?' : 'Отвязать все работы из паспортов?'}
+          message={unlinking === 'MIDIO'
+            ? 'У всего оборудования реестра будут удалены плановые работы, перенесённые из Midio. Работы из паспортов и ручные останутся. Связи с Midio сохранятся — повторная синхронизация перенесёт работы заново.'
+            : 'У всего оборудования реестра будут удалены плановые работы, извлечённые из паспортов. Работы из Midio и ручные останутся. Паспорта не удаляются — «Пересобрать работы» извлечёт их заново.'}
+          confirmLabel="Отвязать" danger onConfirm={unlinkAll} onClose={() => setUnlinking(null)} />
       )}
     </div>
   )

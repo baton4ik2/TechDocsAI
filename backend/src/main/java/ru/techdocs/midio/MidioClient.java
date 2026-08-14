@@ -17,9 +17,14 @@ public interface MidioClient {
      * «раз в 2 года» наш парсер текста не понимает, и через строку значение
      * потерялось бы.
      */
+    /**
+     * dedicatedPlan — работа из плана на ОДНО изделие (или с явной ссылкой на
+     * него). Зонные планы привязывают всё оборудование зоны сразу, поэтому свои
+     * работы важнее зонных: зонные берутся, только когда своих нет.
+     */
     record ExternalWork(String externalId, String equipmentExternalId, String name,
                         String workType, String periodicity, java.math.BigDecimal perYear,
-                        String composition, Boolean mandatory) {}
+                        String composition, Boolean mandatory, boolean dedicatedPlan) {}
 
     /** Настроен ли доступ: без реквизитов синхронизацию не предлагаем. */
     boolean isConfigured();

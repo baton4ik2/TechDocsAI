@@ -70,6 +70,14 @@ public class MidioSyncService {
             if (w.equipmentExternalId() == null) continue;
             worksByEquipment.computeIfAbsent(w.equipmentExternalId(), k -> new ArrayList<>()).add(w);
         }
+        // у изделия есть свой план (на одно оборудование) — он и описывает его
+        // обслуживание; работы зонных планов при этом лишние, иначе задвоятся
+        for (Map.Entry<String, List<ExternalWork>> en : worksByEquipment.entrySet()) {
+            List<ExternalWork> list = en.getValue();
+            if (list.stream().anyMatch(ExternalWork::dedicatedPlan)) {
+                en.setValue(list.stream().filter(ExternalWork::dedicatedPlan).toList());
+            }
+        }
 
         // работы, ссылающиеся на оборудование вне полученного списка карточек, —
         // признак несовпадения идентификаторов между методами; молча пропадать не должны

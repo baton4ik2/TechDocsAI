@@ -49,6 +49,12 @@ public class UniqueEquipmentController {
         return service.updatePlannedWork(workId, input);
     }
 
+    /** Массовая отвязка работ источника (PASSPORT / MIDIO) по всему реестру. */
+    @DeleteMapping("/planned-works")
+    public Map<String, Long> unlinkBySource(@RequestParam String source) {
+        return Map.of("deleted", service.unlinkBySource(source));
+    }
+
     @DeleteMapping("/planned-works/{workId}")
     public ResponseEntity<Void> deletePlannedWork(@PathVariable Long workId) {
         service.deletePlannedWork(workId);

@@ -11,6 +11,9 @@ export default function MidioSync({ onChange }: { onChange: () => void }) {
   const [configured, setConfigured] = useState(false)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<MidioSyncResult | null>(null)
+  // «Нет в реестре» длинный и требует не решения, а синхронизации с объектами —
+  // по умолчанию свёрнут, чтобы не топить список настоящих подтверждений
+  const [showUnknown, setShowUnknown] = useState(false)
 
   useEffect(() => {
     api.get<{ configured: boolean }>('/api/midio/status')
@@ -85,17 +88,34 @@ export default function MidioSync({ onChange }: { onChange: () => void }) {
           )}
 
           {result.unknown.length > 0 && (
-            <Section title="Нет в реестре"
-                     hint="Это оборудование ещё не попало в реестр — нажмите «Синхронизировать с объектами» и повторите.">
-              {result.unknown.map((p) => (
-                <div key={p.externalId} className="py-1.5">
-                  <div className="text-sm text-slate-600">
-                    {[p.name, p.model, p.manufacturer].filter(Boolean).join(' · ') || p.externalId}
+            <div className="border-t border-slate-100 pt-3">
+              <button className="flex items-center gap-2 text-sm font-medium text-slate-900"
+                      onClick={() => setShowUnknown(!showUnknown)}>
+                <span className={`transition-transform text-slate-400 ${showUnknown ? 'rotate-90' : ''}`}>▸</span>
+                Нет в реестре
+                <span className="rounded-full bg-slate-100 text-slate-500 px-2 py-0.5 text-xs">
+                  {result.unknown.length}
+                </span>
+              </button>
+              {showUnknown && (
+                <>
+                  <div className="text-xs text-slate-500 mt-1 mb-2">
+                    Это оборудование ещё не попало в реестр — нажмите «Синхронизировать с
+                    объектами» и повторите синхронизацию с Midio.
                   </div>
-                  <WorksPreview works={p.works} />
-                </div>
-              ))}
-            </Section>
+                  <div className="divide-y divide-slate-50">
+                    {result.unknown.map((p) => (
+                      <div key={p.externalId} className="py-1.5">
+                        <div className="text-sm text-slate-600">
+                          {[p.name, p.model, p.manufacturer].filter(Boolean).join(' · ') || p.externalId}
+                        </div>
+                        <WorksPreview works={p.works} />
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           )}
 
           {result.pending.length === 0 && result.unknown.length === 0 && (

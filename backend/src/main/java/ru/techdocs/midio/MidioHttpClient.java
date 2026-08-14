@@ -112,8 +112,11 @@ public class MidioHttpClient implements MidioClient {
                 // работа относится ко всему оборудованию плана — план в Midio накрывает
                 // несколько изделий сразу (equipmentIds: [372, 144, …])
                 List<String> targets = equipmentRefs(item);
-                // работа плана сама изделия не знает — находим его по модели в названии;
-                // не нашли или работа общая — идёт всем изделиям плана
+                // своя ссылка на изделие или план на одно изделие = «своя» работа;
+                // зонный план (несколько изделий) — работа запасная
+                boolean dedicated = !targets.isEmpty() || planEquipmentIds.size() == 1;
+                // работа зонного плана сама изделия не знает — находим его по модели
+                // в названии; не нашли или работа общая — идёт всем изделиям плана
                 if (targets.isEmpty()) targets = MidioMapping.workTargets(title, planEquipmentIds, models());
                 if (targets.isEmpty()) {
                     noEquipmentLink++;
@@ -129,7 +132,8 @@ public class MidioHttpClient implements MidioClient {
                             text(item, "plannedIncidentId", "id"), equipmentId, title,
                             MidioMapping.workType(title), recurrence.text(), recurrence.perYear(),
                             composition(item),
-                            MidioMapping.mandatory(text(item, "category", "incidentCategory", "type"))));
+                            MidioMapping.mandatory(text(item, "category", "incidentCategory", "type")),
+                            dedicated));
                 }
             }
         }
