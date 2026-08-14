@@ -43,16 +43,33 @@ class FacilityIntegrationTest extends IntegrationTestBase {
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         long sysId = json.readTree(resp).get("id").asLong();
 
+        // переименование — тоже только в системы справочника, со стандартным названием
         mockMvc.perform(patch("/api/facilities/" + id + "/systems/" + sysId)
                         .header("Authorization", bearer())
-                        .contentType("application/json").content("{\"name\":\"Вентиляция и КВ\"}"))
+                        .contentType("application/json").content("{\"name\":\"Кондиционирование\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.name").value("Вентиляция и КВ"));
+                .andExpect(jsonPath("$.name").value("Кондиционирование"));
+
+        // произвольное имя вне справочника отклоняется: системы — константа приложения
+        mockMvc.perform(post("/api/facilities/" + id + "/systems")
+                        .header("Authorization", bearer())
+                        .contentType("application/json").content("{\"name\":\"Фонтаны\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void differentSpellingsOfOneSystemCollapseOnCreate() throws Exception {
+        // «апс» и «Пожарная сигнализация» — одна система: при создании объекта
+        // остаётся одна запись со стандартным названием
+        long id = createFacility("Объект-дубли", "апс", "Пожарная сигнализация");
+        mockMvc.perform(get("/api/facilities/" + id + "/systems").header("Authorization", bearer()))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].name").value("Пожарная сигнализация"));
     }
 
     @Test
     void mergesSystemsMovingEquipment() throws Exception {
-        long id = createFacility("Объект", "АПС", "Пожарная сигнализация");
+        long id = createFacility("Объект", "АПС", "Охранная сигнализация");
         JsonNode systems = json.readTree(mockMvc.perform(
                         get("/api/facilities/" + id + "/systems").header("Authorization", bearer()))
                 .andReturn().getResponse().getContentAsString());

@@ -131,10 +131,12 @@ public class EquipmentImportController {
             throw new BadRequestException("Нет позиций для импорта");
         }
 
-        // системы объекта: ищем по имени (без регистра), отсутствующие создаём
+        // системы объекта: распознанные кладём под стандартным названием справочника,
+        // прочие — по нормализованному имени; отсутствующие создаём
         Map<String, Long> systemByName = new HashMap<>();
         for (var s : systemRepository.findByFacilityIdOrderById(request.facilityId())) {
-            systemByName.put(normalize(s.getName()), s.getId());
+            String standard = ru.techdocs.common.SystemCatalog.standardName(s.getName());
+            systemByName.putIfAbsent(standard != null ? standard : normalize(s.getName()), s.getId());
         }
 
         int created = 0;
@@ -145,9 +147,12 @@ public class EquipmentImportController {
             }
             Long systemId = request.engineeringSystemId();
             if (item.systemName() != null && !item.systemName().isBlank()) {
-                String key = normalize(item.systemName());
-                // синонимы: «Пожарная сигнализация» из файла = существующая «АПС»
-                if (!systemByName.containsKey(key)) {
+                // системы — константный справочник: «Пожарная сигнализация» из файла
+                // и существующая «АПС» — одна система под стандартным названием
+                String standard = ru.techdocs.common.SystemCatalog.standardName(item.systemName());
+                String display = standard != null ? standard : item.systemName().strip();
+                String key = standard != null ? standard : normalize(item.systemName());
+                if (standard == null && !systemByName.containsKey(key)) {
                     String alias = SYSTEM_ALIASES.get(key);
                     if (alias != null && systemByName.containsKey(alias)) {
                         key = alias;
@@ -156,7 +161,7 @@ public class EquipmentImportController {
                 systemId = systemByName.computeIfAbsent(key, k -> {
                     var system = new ru.techdocs.engineeringsystem.EngineeringSystem();
                     system.setFacilityId(request.facilityId());
-                    system.setName(item.systemName().strip());
+                    system.setName(display);
                     return systemRepository.save(system).getId();
                 });
             }

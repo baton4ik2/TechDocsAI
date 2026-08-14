@@ -108,15 +108,20 @@ public class DriveSyncService {
     }
 
     private Long findOrCreateSystem(Long facilityId, String name) {
-        String norm = name.toLowerCase(Locale.ROOT).strip();
+        // папка Drive может называться как угодно («АПС», «Пожарная сигнализация») —
+        // приводим к стандартному названию справочника, чтобы система не задвоилась
+        String standard = ru.techdocs.common.SystemCatalog.standardName(name);
+        String target = standard != null ? standard : name.strip();
+        String norm = target.toLowerCase(Locale.ROOT);
         for (EngineeringSystem s : systemRepository.findByFacilityIdOrderById(facilityId)) {
-            if (s.getName().toLowerCase(Locale.ROOT).strip().equals(norm)) {
-                return s.getId();
-            }
+            if (s.getName().toLowerCase(Locale.ROOT).strip().equals(norm)) return s.getId();
+            // существующая система могла быть заведена другим написанием той же системы
+            if (standard != null && standard.equals(
+                    ru.techdocs.common.SystemCatalog.standardName(s.getName()))) return s.getId();
         }
         EngineeringSystem system = new EngineeringSystem();
         system.setFacilityId(facilityId);
-        system.setName(name.strip());
+        system.setName(target);
         return systemRepository.save(system).getId();
     }
 

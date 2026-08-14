@@ -229,6 +229,11 @@ function DriveCard({ facilityId, onSynced }: { facilityId: number; onSynced: () 
 function SystemsTab({ facilityId, onChange }: { facilityId: number; onChange: () => void }) {
   const [systems, setSystems] = useState<EngineeringSystem[]>([])
   const [name, setName] = useState('')
+  // системы — константный справочник приложения: только выбор, не свободный текст
+  const [catalog, setCatalog] = useState<string[]>([])
+  useEffect(() => {
+    api.get<string[]>('/api/facilities/system-catalog').then(setCatalog).catch(() => {})
+  }, [])
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
   const [mergeSource, setMergeSource] = useState<EngineeringSystem | null>(null)
@@ -277,8 +282,13 @@ function SystemsTab({ facilityId, onChange }: { facilityId: number; onChange: ()
   return (
     <div className="p-8 space-y-5">
       <form onSubmit={add} className="flex gap-2 max-w-md">
-        <input className="input" placeholder="Название системы (например, АПС)" value={name} onChange={(e) => setName(e.target.value)} />
-        <button type="submit" className="btn-primary shrink-0">Добавить</button>
+        <select className="input" value={name} onChange={(e) => setName(e.target.value)}>
+          <option value="">Выберите систему из справочника…</option>
+          {catalog.filter((c) => !systems.some((s) => s.name === c)).map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        <button type="submit" className="btn-primary shrink-0" disabled={!name}>Добавить</button>
       </form>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -286,9 +296,10 @@ function SystemsTab({ facilityId, onChange }: { facilityId: number; onChange: ()
           <div key={s.id} className="card p-4">
             {editingId === s.id ? (
               <div className="flex gap-2">
-                <input className="input py-1" value={editName} autoFocus
-                       onChange={(e) => setEditName(e.target.value)}
-                       onKeyDown={(e) => { if (e.key === 'Enter') saveRename(s.id) }} />
+                <select className="input py-1" value={editName} autoFocus
+                        onChange={(e) => setEditName(e.target.value)}>
+                  {catalog.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
                 <button className="btn-primary py-1 px-3 shrink-0" onClick={() => saveRename(s.id)}>✓</button>
                 <button className="btn-secondary py-1 px-3 shrink-0" onClick={() => setEditingId(null)}>×</button>
               </div>

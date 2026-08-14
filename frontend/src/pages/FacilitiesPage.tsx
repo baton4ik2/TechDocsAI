@@ -5,8 +5,7 @@ import { Facility } from '../types'
 import Modal from '../components/Modal'
 import StatusBadge from '../components/StatusBadge'
 
-const DEFAULT_SYSTEMS = ['АПС', 'СОУЭ', 'СКУД', 'ОС', 'Видеонаблюдение', 'Домофония', 'Вентиляция',
-  'Холодоснабжение', 'ИТП', 'Отопление', 'Водоснабжение', 'Канализация', 'АСКУЭ', 'Лифты', 'Диспетчеризация']
+
 
 export default function FacilitiesPage() {
   const [facilities, setFacilities] = useState<Facility[]>([])
@@ -89,7 +88,11 @@ function CreateFacilityModal({ onClose, onCreated }: { onClose: () => void; onCr
   const [areaSqm, setAreaSqm] = useState('')
   const [description, setDescription] = useState('')
   const [systems, setSystems] = useState<string[]>([])
-  const [customSystem, setCustomSystem] = useState('')
+  // системы — константный справочник приложения, свой текст не вводится
+  const [catalog, setCatalog] = useState<string[]>([])
+  useEffect(() => {
+    api.get<string[]>('/api/facilities/system-catalog').then(setCatalog).catch(() => {})
+  }, [])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -102,12 +105,10 @@ function CreateFacilityModal({ onClose, onCreated }: { onClose: () => void; onCr
     setLoading(true)
     setError('')
     try {
-      const allSystems = [...systems]
-      if (customSystem.trim()) allSystems.push(customSystem.trim())
       await api.post('/api/facilities', {
         name, address, description,
         areaSqm: areaSqm.trim() ? Number(areaSqm.replace(',', '.')) : null,
-        systems: allSystems,
+        systems,
       })
       onCreated()
     } catch (err) {
@@ -143,7 +144,7 @@ function CreateFacilityModal({ onClose, onCreated }: { onClose: () => void; onCr
         <div>
           <label className="label">Инженерные системы</label>
           <div className="flex flex-wrap gap-2">
-            {DEFAULT_SYSTEMS.map((s) => (
+            {catalog.map((s) => (
               <button
                 type="button"
                 key={s}
@@ -158,12 +159,6 @@ function CreateFacilityModal({ onClose, onCreated }: { onClose: () => void; onCr
               </button>
             ))}
           </div>
-          <input
-            className="input mt-2"
-            placeholder="Своя система (введите название)"
-            value={customSystem}
-            onChange={(e) => setCustomSystem(e.target.value)}
-          />
         </div>
         {error && <div className="text-sm text-red-600">{error}</div>}
         <div className="flex justify-end gap-2">

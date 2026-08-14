@@ -55,11 +55,19 @@ public class FacilityController {
         facility = facilityRepository.save(facility);
 
         if (request.systems() != null) {
+            java.util.Set<String> added = new java.util.HashSet<>();
             for (String systemName : request.systems()) {
                 if (systemName == null || systemName.isBlank()) continue;
+                // системы — константный справочник, произвольные имена не заводятся
+                String standard = ru.techdocs.common.SystemCatalog.standardName(systemName);
+                if (standard == null) {
+                    throw new BadRequestException("Системы «" + systemName.trim()
+                            + "» нет в справочнике инженерных систем.");
+                }
+                if (!added.add(standard)) continue;
                 EngineeringSystem system = new EngineeringSystem();
                 system.setFacilityId(facility.getId());
-                system.setName(systemName.trim());
+                system.setName(standard);
                 systemRepository.save(system);
             }
         }
@@ -93,6 +101,26 @@ public class FacilityController {
 
     public record SystemRequest(@NotBlank String name, String code, String description) {}
 
+    /**
+     * Справочник инженерных систем — константа приложения. Система на объекте
+     * заводится только из этого списка: свободные имена дали «апс» и «Пожарная
+     * сигнализация» как две разные системы, и реестр оборудования раздвоился.
+     */
+    @GetMapping("/system-catalog")
+    public List<String> systemCatalog() {
+        return ru.techdocs.common.SystemCatalog.names();
+    }
+
+    /** Стандартное название из справочника или ошибка с внятным текстом. */
+    private String standardSystemName(String raw) {
+        String standard = ru.techdocs.common.SystemCatalog.standardName(raw);
+        if (standard == null) {
+            throw new BadRequestException("Системы «" + raw.trim()
+                    + "» нет в справочнике. Выберите систему из списка.");
+        }
+        return standard;
+    }
+
     @GetMapping("/{id}/systems")
     public List<FacilityStatsService.SystemWithStats> systems(@PathVariable Long id) {
         return statsService.systemsWithStats(id);
@@ -103,9 +131,15 @@ public class FacilityController {
         if (!facilityRepository.existsById(id)) {
             throw new NotFoundException("Объект не найден");
         }
+        String standard = standardSystemName(request.name());
+        boolean exists = systemRepository.findByFacilityIdOrderById(id).stream()
+                .anyMatch(s -> standard.equals(s.getName()));
+        if (exists) {
+            throw new BadRequestException("Система «" + standard + "» на объекте уже есть.");
+        }
         EngineeringSystem system = new EngineeringSystem();
         system.setFacilityId(id);
-        system.setName(request.name().trim());
+        system.setName(standard);
         system.setCode(request.code());
         system.setDescription(request.description());
         return systemRepository.save(system);
@@ -116,7 +150,7 @@ public class FacilityController {
                                           @Valid @RequestBody SystemRequest request) {
         EngineeringSystem system = systemRepository.findById(systemId)
                 .orElseThrow(() -> new NotFoundException("Система не найдена"));
-        system.setName(request.name().trim());
+        system.setName(standardSystemName(request.name()));
         return systemRepository.save(system);
     }
 

@@ -41,6 +41,11 @@ public final class SystemNormalizer {
         if (has(s, "пожарн", "сигнализ") || compact.contains("апс") || compact.contains("спс")
                 || compact.contains("аупс")) return "апс";
         if (has(s, "охранн", "сигнализ") || compact.equals("ос")) return "ос";
+        if (compact.contains("аду") && compact.length() <= 5 || s.contains("дымоудал")) return "аду";
+        if (compact.equals("аов") || has(s, "автоматика", "отоплен")) return "аов";
+        if (s.contains("кондиционир")) return "кондиционирование";
+        if (compact.equals("пнс") || has(s, "пожарн", "насосн")) return "пнс";
+        if (compact.equals("кнс") || has(s, "канализацион", "насосн")) return "кнс";
         if (s.contains("вентиляц")) return "вентиляция";
         if (s.contains("отоплен")) return "отопление";
         if (s.contains("холодоснаб")) return "холодоснабжение";
